@@ -45,3 +45,6 @@ data/
 *.pkl
 *.h5
 *.joblib
+
+# Word temporary files
+~$*
