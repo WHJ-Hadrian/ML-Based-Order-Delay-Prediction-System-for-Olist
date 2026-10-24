@@ -1,0 +1,10 @@
+CREATE DATABASE olist_orders OWNER olist;
+CREATE DATABASE olist_datasets OWNER olist;
+CREATE DATABASE olist_jobs OWNER olist;
+CREATE DATABASE olist_predictions OWNER olist;
+CREATE DATABASE olist_models OWNER olist;
+CREATE DATABASE olist_analytics OWNER olist;
+CREATE DATABASE keycloak OWNER olist;
+CREATE DATABASE mlflow OWNER olist;
+CREATE DATABASE temporal OWNER olist;
+CREATE DATABASE temporal_visibility OWNER olist;

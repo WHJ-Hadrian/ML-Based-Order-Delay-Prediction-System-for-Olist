@@ -1,0 +1,20 @@
+{{- if .Values.queueAutoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "olist-service.name" . }}
+  labels:
+    {{- include "olist-service.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "olist-service.name" . }}
+  minReplicaCount: {{ .Values.queueAutoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.queueAutoscaling.maxReplicas }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.queueAutoscaling.serverAddress | quote }}
+        metricName: {{ .Values.queueAutoscaling.metricName | quote }}
+        threshold: {{ .Values.queueAutoscaling.threshold | quote }}
+        query: {{ .Values.queueAutoscaling.query | quote }}
+{{- end }}
