@@ -1,0 +1,124 @@
+# 当前系统架构设计
+
+## 1. 文档范围
+
+本文描述当前仓库已经确定的系统边界、服务职责、基础设施和代码实现状态。仓库目前主要完成项目骨架与本地运行配置，业务接口和数据处理流程尚未实现；文中会区分架构职责与已落地代码。
+
+## 2. 总体架构
+
+系统采用前后端分离和独立部署的微服务结构。Vue 前端通过 API Gateway 访问 Java 业务服务；Java 服务按业务领域划分并分别拥有数据库。Python 运行时承载模型推理及数据处理任务，离线批计算和实时流计算分别由 Spark 与 Flink 承担。
+
+```mermaid
+flowchart LR
+    Browser[浏览器]
+    Frontend[Vue 前端]
+    Gateway["API Gateway<br/>Spring Cloud Gateway"]
+    Keycloak["Keycloak<br/>OIDC / JWT"]
+
+    subgraph JavaServices[Java Spring Boot 微服务]
+        Order[订单服务]
+        Dataset[数据集服务]
+        Job[任务服务]
+        Prediction[预测服务]
+        Model[模型管理服务]
+        Analytics[分析查询服务]
+    end
+
+    Serving["模型服务<br/>FastAPI"]
+    Workers[Python Worker]
+
+    subgraph DataPlatform[数据与消息基础设施]
+        PostgreSQL[(PostgreSQL)]
+        Kafka[(Kafka)]
+        ObjectStore[(S3 对象存储)]
+        Temporal[Temporal]
+        ClickHouse[(ClickHouse)]
+        MLflow[MLflow]
+        Redis[(Redis)]
+    end
+
+    Spark[Spark 批处理]
+    Flink[Flink 流处理]
+
+    Browser --> Frontend --> Gateway
+    Keycloak -. 身份令牌与公钥配置 .-> Gateway
+    Gateway --> Order
+    Gateway --> Dataset
+    Gateway --> Job
+    Gateway --> Prediction
+    Gateway --> Model
+    Gateway --> Analytics
+
+    Order -. 订单领域数据 .-> PostgreSQL
+    Dataset -. 数据集元数据 .-> PostgreSQL
+    Job -. 任务数据 .-> PostgreSQL
+    Prediction -. 预测审计数据 .-> PostgreSQL
+    Model -. 模型元数据 .-> PostgreSQL
+    Analytics -. 查询分析数据 .-> ClickHouse
+    Prediction -. 在线推理调用 .-> Serving
+    Job -. 工作流控制 .-> Temporal
+    Workers -. 工作流任务 .-> Temporal
+    Dataset -. 原始文件与数据产物 .-> ObjectStore
+    Workers -. 读取和写入数据文件 .-> ObjectStore
+    Order -. 领域事件 .-> Kafka
+    Model -. 实验与模型注册 .-> MLflow
+    Serving -. 在线特征 .-> Redis
+    Workers -. 离线计算 .-> Spark
+    Workers -. 流式计算 .-> Flink
+```
+
+图中展示的是仓库声明的逻辑职责和依赖关系。当前并非所有服务间调用、消息消费者和计算任务都已有业务代码。
+
+## 3. 服务职责
+
+| 服务或运行单元 | 技术 | 当前职责边界 |
+| --- | --- | --- |
+| `api-gateway` | Spring Cloud Gateway | 对外统一 API 入口，校验 JWT，并将 `/api/v1/...` 路由到对应 Java 服务。 |
+| `order-service` | Spring Boot | 管理订单及订单状态，拥有订单服务数据。 |
+| `dataset-service` | Spring Boot | 管理上传文件相关元数据、数据集版本及校验记录。文件内容存放于对象存储。 |
+| `job-service` | Spring Boot、Temporal Client | 管理长任务状态并连接 Temporal 工作流服务。 |
+| `prediction-service` | Spring Boot | 提供在线预测业务入口、预测记录和审计，并调用模型服务。 |
+| `model-management-service` | Spring Boot | 管理模型审核、上线、回滚及版本元数据。 |
+| `analytics-query-service` | Spring Boot | 为前端分析看板提供查询 API。 |
+| `model-serving` | Python、FastAPI | 独立提供在线模型推理运行时。 |
+| Python Worker Pools | Python、Temporal SDK | 承载数据集处理、模型训练和批量预测等异步任务。 |
+| Spark / Flink Jobs | PySpark、Flink SQL 或 Java | Spark 执行离线批处理，Flink 执行持续流处理；二者是计算运行时，不是业务微服务。 |
+
+## 4. 数据与基础设施
+
+| 组件 | 当前用途与本地部署方式 |
+| --- | --- |
+| PostgreSQL 17 | Java 服务的关系型数据存储。本地 Compose 使用同一 PostgreSQL 实例，并按服务配置独立数据库，如 `olist_orders`、`olist_datasets`、`olist_jobs`、`olist_predictions`、`olist_models` 和 `olist_analytics`。 |
+| Kafka 4.4 | 订单领域事件的消息基础设施。当前 AsyncAPI 契约定义了 `orders.status-changed.v1` 事件。 |
+| LocalStack S3 | 本地 S3 兼容对象存储，初始化 `olist-artifacts` 与 `olist-lakehouse` 两个 bucket。文件和模型产物通过对象存储保存，而不是通过消息队列传输。 |
+| Temporal 1.29 | 长流程工作流运行时，供任务服务及 Worker 使用。 |
+| Redis 7.4 | 在线特征存储基础设施。Python `features` 依赖组包含 Feast/Redis 集成。 |
+| ClickHouse 26.10 | 分析查询存储。 |
+| MLflow | 实验跟踪及模型注册；通过 `ml` 或 `apps` Compose profile 启动。模型产物存于 S3 兼容存储。 |
+| Keycloak 26 | OIDC 身份提供方；Gateway 与 Java 服务配置 JWT 校验。 |
+| Prometheus / Grafana | 通过 `observability` profile 启动，收集与展示服务指标。 |
+| Spark 4.1 | 通过 `batch` profile 启动的本地批处理运行时。 |
+| Flink 2.3 | 通过 `stream` profile 启动的本地流处理运行时。 |
+
+Kafka 用于可回放的领域事件；Temporal 用于有状态、可重试的长流程编排，两者承担不同职责。
+
+## 5. 代码仓库结构
+
+| 路径 | 内容 |
+| --- | --- |
+| `ML-Based-Order-Delay-Prediction-System-for-Olist-frontend/` | Vue 前端项目。 |
+| `ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend/` | Java Maven 聚合工程，包含 Gateway、业务服务和共享 `platform-runtime` 模块；每个服务模块独立构建镜像。 |
+| `ML-Based-Order-Delay-Prediction-System-for-Olist-backend/` | Python FastAPI 模型服务及 Python 应用包。 |
+| `contracts/` | 跨服务消息契约，目前包含订单状态事件的 AsyncAPI 定义。 |
+| `infra/` | PostgreSQL 初始化、Keycloak Realm、MLflow、Prometheus 和 Grafana 本地配置。 |
+| `deploy/helm/` | Kubernetes Helm 部署模板。 |
+| `compose.yaml` | 本地基础设施和应用服务编排；Spark、Flink、MLflow、Prometheus/Grafana 按 Compose profile 启动。 |
+
+## 6. 当前实现状态
+
+- Java Maven 工程和各服务启动类、基础安全及健康检查配置已经建立；服务模块边界和 Gateway 路由已配置。
+- Java 服务尚未实现订单、数据集上传、任务编排、预测、模型管理或分析查询等业务接口。
+- Python FastAPI 当前提供健康检查与指标基础；模型推理业务和 Temporal Worker 活动尚未实现。
+- `app/workers/` 与 `app/pipelines/` 当前包含职责说明，没有实际 Worker 或数据处理任务实现。
+- Kafka 基础设施与订单状态事件契约已配置；契约不代表订单事件的生产者和消费者业务逻辑已实现。
+- Compose 与 Helm 描述本地及 Kubernetes 运行基础；实际运行时行为仍取决于对应服务代码和环境配置。
