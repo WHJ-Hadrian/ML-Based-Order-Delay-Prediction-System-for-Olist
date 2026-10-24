@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: java-services
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - "api-gateway:8080"
+          - "order-service:8081"
+          - "dataset-service:8082"
+          - "job-service:8083"
+          - "prediction-service:8084"
+          - "model-management-service:8085"
+          - "analytics-query-service:8086"
+
+  - job_name: model-serving
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["model-serving:8090"]

@@ -1,50 +1,42 @@
-# ===== General =====
+# General and IDE files
 .DS_Store
 Thumbs.db
 *.log
 *.tmp
-*.temp
-
-# ===== Frontend =====
-node_modules/
-.pnpm-store/
-dist/
-dist-ssr/
-*.local
-.vite/
-coverage/
-.vscode/*
-!.vscode/extensions.json
 .idea/
+.vscode/
 
-# ===== Backend Python =====
+# Local environment variables
+**/.env
+!**/.env.example
+
+# Java and Maven
+**/target/
+
+# Python
 __pycache__/
 *.py[cod]
-*.so
 .venv/
 venv/
-env/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
 *.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 
-# ===== Environment variables (IMPORTANT) =====
-.env
-.env.*
-!.env.example
+# Frontend
+**/node_modules/
+**/dist/
+**/.vite/
+**/coverage/
 
-# ===== ML artifacts =====
-ML-Based-Order-Delay-Prediction-System-for-Olist-backend/app/ml/artifacts/*
-!ML-Based-Order-Delay-Prediction-System-for-Olist-backend/app/ml/artifacts/.gitkeep
-
-# ===== Data and models (large files) =====
+# Local datasets and model artifacts
 data/
 *.csv
 *.parquet
-*.pkl
-*.h5
 *.joblib
+*.pkl
+**/mlruns/
+**/artifacts/
 
 # Word temporary files
 ~$*

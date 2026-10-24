@@ -1,0 +1,28 @@
+{
+  "realm": "olist",
+  "enabled": true,
+  "displayName": "Olist Platform",
+  "clients": [
+    {
+      "clientId": "olist-web",
+      "name": "Olist Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:5173"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {"name": "platform-user", "description": "Can use platform features"},
+      {"name": "platform-admin", "description": "Can manage platform resources"}
+    ]
+  }
+}

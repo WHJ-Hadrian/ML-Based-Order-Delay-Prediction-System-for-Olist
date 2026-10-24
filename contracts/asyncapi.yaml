@@ -1,0 +1,68 @@
+asyncapi: 3.0.0
+info:
+  title: Olist Domain Event Contract
+  version: 1.0.0
+  description: Versioned Kafka events exchanged by independently deployed services.
+defaultContentType: application/json
+servers:
+  local:
+    host: localhost:29092
+    protocol: kafka
+    description: Single-broker local development cluster
+channels:
+  orderStatusChanged:
+    address: orders.status-changed.v1
+    messages:
+      orderStatusChanged:
+        $ref: '#/components/messages/OrderStatusChanged'
+operations:
+  publishOrderStatusChanged:
+    action: send
+    channel:
+      $ref: '#/channels/orderStatusChanged'
+    messages:
+      - $ref: '#/channels/orderStatusChanged/messages/orderStatusChanged'
+  consumeOrderStatusChanged:
+    action: receive
+    channel:
+      $ref: '#/channels/orderStatusChanged'
+    messages:
+      - $ref: '#/channels/orderStatusChanged/messages/orderStatusChanged'
+components:
+  messages:
+    OrderStatusChanged:
+      name: OrderStatusChanged
+      title: Order status changed
+      contentType: application/json
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - eventId
+          - eventType
+          - occurredAt
+          - schemaVersion
+          - orderId
+          - status
+        properties:
+          eventId:
+            type: string
+            format: uuid
+          eventType:
+            type: string
+            const: order.status-changed
+          occurredAt:
+            type: string
+            format: date-time
+          schemaVersion:
+            type: integer
+            const: 1
+          traceId:
+            type: string
+          orderId:
+            type: string
+          status:
+            type: string
+          estimatedDeliveryAt:
+            type: [string, 'null']
+            format: date-time
