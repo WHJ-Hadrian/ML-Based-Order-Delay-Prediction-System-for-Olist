@@ -84,6 +84,22 @@ flowchart LR
 | Python Worker Pools | Python、Temporal SDK | 承载数据集处理、模型训练和批量预测等异步任务。 |
 | Spark / Flink Jobs | PySpark、Flink SQL 或 Java | Spark 执行离线批处理，Flink 执行持续流处理；二者是计算运行时，不是业务微服务。 |
 
+### 服务入口
+
+| 服务 | Compose 内部端口 | 当前可用入口 |
+| --- | --- | --- |
+| `api-gateway` | `8080` | 宿主机映射为 `http://localhost:8080`；路由 `/api/v1/orders/**`、`/api/v1/datasets/**`、`/api/v1/jobs/**`、`/api/v1/predictions/**`、`/api/v1/models/**`、`/api/v1/analytics/**`。 |
+| `order-service` | `8081` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
+| `dataset-service` | `8082` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
+| `job-service` | `8083` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
+| `prediction-service` | `8084` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
+| `model-management-service` | `8085` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
+| `analytics-query-service` | `8086` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
+| `model-serving` | `8090` | 宿主机映射为 `http://localhost:8090`；当前有 `/health/live`、`/health/ready` 和 `/metrics`。 |
+| Python Worker Pools | 无 HTTP 端口 | 当前只有目录和职责说明，Worker 程序尚未实现。 |
+
+除 Gateway 和模型服务外，Compose 中的 Java 服务端口只在 Compose 网络内开放。直接在本机用 Maven 启动 Java 服务时，可通过对应的 `localhost` 端口访问。
+
 ## 4. 数据与基础设施
 
 | 组件 | 当前用途与本地部署方式 |
@@ -114,7 +130,98 @@ Kafka 用于可回放的领域事件；Temporal 用于有状态、可重试的�
 | `deploy/helm/` | Kubernetes Helm 部署模板。 |
 | `compose.yaml` | 本地基础设施和应用服务编排；Spark、Flink、MLflow、Prometheus/Grafana 按 Compose profile 启动。 |
 
-## 6. 当前实现状态
+## 6. 本地启动与运行
+
+### 环境要求
+
+- Docker Desktop 与 Docker Compose
+- Java 17
+- Node.js 22.18 或更高版本（或 24.12 或更高版本）与 pnpm
+- Python 3.11 或更高版本
+
+### 启动基础设施与全部服务
+
+以下命令均从仓库根目录使用 PowerShell 执行：
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d
+docker compose --profile apps up --build -d
+```
+
+第一条 Compose 命令启动 PostgreSQL、Kafka、Redis、LocalStack S3、ClickHouse、Temporal 和 Keycloak 等基础设施。第二条构建并启动 Gateway、全部 Java 服务、MLflow 和 Python 模型服务。首次构建需要下载镜像和依赖。
+
+常用检查命令：
+
+```powershell
+docker compose ps
+docker compose logs -f api-gateway dataset-service
+```
+
+停止容器但保留本地数据卷：
+
+```powershell
+docker compose down
+```
+
+### 启动单个 Java 服务
+
+在 Docker Compose 中启动单个服务及其依赖，例如数据集服务：
+
+```powershell
+docker compose --profile apps up --build -d dataset-service
+```
+
+也可以在本机直接运行。默认配置使用内存 H2 数据库；以下示例从 Java Maven 工程目录启动 `dataset-service`：
+
+```powershell
+Set-Location .\ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
+.\mvnw.cmd -pl dataset-service -am spring-boot:run
+```
+
+将 `dataset-service` 替换为 `order-service`、`job-service`、`prediction-service`、`model-management-service` 或 `analytics-query-service`，可运行对应模块。直接运行的模块端口见“服务入口”表。完整 Java 构建与测试：
+
+```powershell
+Set-Location .\ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
+.\mvnw.cmd -B test
+```
+
+### 单独运行 Python 模型服务
+
+在 Python 工程目录创建虚拟环境、安装轻量运行依赖并启动 FastAPI：
+
+```powershell
+Set-Location .\ML-Based-Order-Delay-Prediction-System-for-Olist-backend
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8090
+```
+
+健康检查地址为 `http://localhost:8090/health/live` 和 `http://localhost:8090/health/ready`。当前模型服务只提供健康检查和指标端点，预测业务接口尚未实现。
+
+### 启动前端
+
+在前端工程目录执行：
+
+```powershell
+Set-Location .\ML-Based-Order-Delay-Prediction-System-for-Olist-frontend
+pnpm install
+pnpm dev
+```
+
+Vite 开发服务器默认位于 `http://localhost:5173`，前端 `/api` 请求代理到本机 Gateway `http://localhost:8080`。运行完整前端联调时，需要同时启动 Compose 中的 Gateway 和对应后端服务。
+
+### 可选运行配置
+
+```powershell
+docker compose --profile apps --profile batch up --build -d
+docker compose --profile apps --profile stream up --build -d
+docker compose --profile observability up -d
+```
+
+`batch` 启动 Spark，`stream` 启动 Flink，`observability` 启动 Prometheus 与 Grafana。Grafana 地址为 `http://localhost:3000`，Prometheus 地址为 `http://localhost:9090`。Temporal UI 地址为 `http://localhost:8233`，Keycloak 地址为 `http://localhost:8180`。
+
+## 7. 当前实现状态
 
 - Java Maven 工程和各服务启动类、基础安全及健康检查配置已经建立；服务模块边界和 Gateway 路由已配置。
 - Java 服务尚未实现订单、数据集上传、任务编排、预测、模型管理或分析查询等业务接口。
