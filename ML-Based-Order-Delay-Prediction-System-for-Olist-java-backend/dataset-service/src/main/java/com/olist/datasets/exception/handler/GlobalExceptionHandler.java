@@ -8,6 +8,7 @@ import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -48,6 +49,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     ResponseEntity<ProblemDetail> handleTypeMismatch(MethodArgumentTypeMismatchException exception) {
         return problem(HttpStatus.BAD_REQUEST, "请求参数无效", "参数 " + exception.getName() + " 的取值无效");
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<ProblemDetail> handleUnreadableBody(HttpMessageNotReadableException exception) {
+        return problem(HttpStatus.BAD_REQUEST, "请求参数无效", "请求正文格式不正确");
     }
 
     @ExceptionHandler(MultipartException.class)

@@ -50,6 +50,8 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -133,7 +135,7 @@ public class DatasetServiceImpl implements DatasetService {
         if (datasetVersionMapper.deleteById(id) != 1) {
             throw new StorageException("数据集删除失败");
         }
-        storageKeys.forEach(this::deleteQuietly);
+        deleteAfterCommit(storageKeys);
     }
 
     @Override
@@ -169,7 +171,9 @@ public class DatasetServiceImpl implements DatasetService {
                 continue;
             }
             if (datasetFileMapper.deleteByIdAndDatasetId(file.getId(), datasetId) == 1) {
-                deleteQuietly(file.getStorageKey());
+                if (file.getStorageKey() != null && !file.getStorageKey().isBlank()) {
+                    deleteAfterCommit(Set.of(file.getStorageKey()));
+                }
                 remainingFiles.remove(file);
             }
         }
@@ -318,7 +322,7 @@ public class DatasetServiceImpl implements DatasetService {
         DatasetQuery effectiveQuery = query == null ? new DatasetQuery() : query;
         int page = Math.max(effectiveQuery.getPage(), 0);
         int size = Math.min(Math.max(effectiveQuery.getSize(), MIN_PAGE_SIZE), MAX_PAGE_SIZE);
-        int offset = page * size;
+        long offset = (long) page * size;
         String keywordPattern = keywordPattern(effectiveQuery.getKeyword());
         String formatPattern = formatPattern(effectiveQuery.getFormat());
         List<DatasetVersion> entities = datasetVersionMapper.findPage(
@@ -365,6 +369,7 @@ public class DatasetServiceImpl implements DatasetService {
         DatasetProfile profile = datasetProfiler.profile(file, originalFilename);
         String storageKey = "datasets/" + datasetId + "/files/" + fileId + "/" + originalFilename;
         String sha256 = store(storageKey, file);
+        boolean cleanupOnRollback = deleteAfterRollback(storageKey);
         Instant now = Instant.now();
 
         try {
@@ -402,7 +407,9 @@ public class DatasetServiceImpl implements DatasetService {
             ensureUpdated(entity);
             return toDetail(entity);
         } catch (RuntimeException exception) {
-            deleteQuietly(storageKey);
+            if (!cleanupOnRollback) {
+                deleteQuietly(storageKey);
+            }
             throw exception;
         }
     }
@@ -597,5 +604,36 @@ public class DatasetServiceImpl implements DatasetService {
         } catch (RuntimeException exception) {
             LOGGER.warn("Failed to clean up dataset object {}", key, exception);
         }
+    }
+
+    private void deleteAfterCommit(Set<String> storageKeys) {
+        if (storageKeys.isEmpty()) {
+            return;
+        }
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            storageKeys.forEach(this::deleteQuietly);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                storageKeys.forEach(DatasetServiceImpl.this::deleteQuietly);
+            }
+        });
+    }
+
+    private boolean deleteAfterRollback(String storageKey) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return false;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != STATUS_COMMITTED) {
+                    deleteQuietly(storageKey);
+                }
+            }
+        });
+        return true;
     }
 }

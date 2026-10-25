@@ -39,6 +39,7 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DefaultDatasetProfiler.class);
     private static final int MAX_TABLES = 200;
+    private static final int MAX_ARCHIVE_ENTRIES = 10_000;
     private static final long MAX_XLSX_BYTES = 100L * 1024L * 1024L;
     private static final long MAX_TOTAL_UNCOMPRESSED_BYTES = 2L * 1024L * 1024L * 1024L;
     private static final int MAX_TABLE_NAME_LENGTH = 500;
@@ -103,17 +104,36 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
 
     private List<TableProfile> profileZip(InputStream input) throws Exception {
         List<TableProfile> tables = new ArrayList<>();
-        long declaredUncompressed = 0;
+        long[] totalUncompressed = {0};
+        int entryCount = 0;
         try (ZipInputStream zip = new ZipInputStream(input, StandardCharsets.UTF_8)) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
+                if (++entryCount > MAX_ARCHIVE_ENTRIES) {
+                    throw new InvalidDatasetException(
+                            "压缩包内文件数量不能超过 " + MAX_ARCHIVE_ENTRIES + " 个");
+                }
                 String entryName = entry.getName().replace('\\', '/');
+                DatasetFormat format = DatasetFormat.fromFilename(entryName).orElse(null);
+                long entryLimit = format == DatasetFormat.XLSX
+                        ? MAX_XLSX_BYTES
+                        : Long.MAX_VALUE;
+                InputStream boundedEntry = new BoundedZipEntryInputStream(
+                        new NonClosingInputStream(zip),
+                        totalUncompressed,
+                        entryLimit,
+                        MAX_TOTAL_UNCOMPRESSED_BYTES,
+                        "压缩包解压后总大小不能超过 2GB",
+                        format == DatasetFormat.XLSX
+                                ? "压缩包内单个 XLSX 文件不能超过 100MB"
+                                : null);
                 if (entry.isDirectory() || shouldIgnore(entryName)) {
+                    drain(boundedEntry);
                     zip.closeEntry();
                     continue;
                 }
-                DatasetFormat format = DatasetFormat.fromFilename(entryName).orElse(null);
                 if (format == null || format == DatasetFormat.ZIP) {
+                    drain(boundedEntry);
                     zip.closeEntry();
                     continue;
                 }
@@ -121,24 +141,22 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
                     throw new InvalidDatasetException("压缩包内数据表不能超过 " + MAX_TABLES + " 个");
                 }
                 long size = entry.getSize();
-                if (size > 0) {
-                    declaredUncompressed += size;
-                    if (declaredUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) {
-                        throw new InvalidDatasetException("压缩包解压后总大小不能超过 2GB");
-                    }
-                }
                 if (format == DatasetFormat.XLSX) {
                     tables.addAll(profileXlsx(
-                            new NonClosingInputStream(zip), baseName(entryName), entryName, size));
+                            boundedEntry, baseName(entryName), entryName, size));
                 } else {
                     char delimiter = format == DatasetFormat.TSV ? '\t' : ',';
                     tables.add(profileDelimited(
-                            new NonClosingInputStream(zip),
+                            boundedEntry,
                             baseName(entryName, true),
                             entryName,
                             delimiter,
                             format));
                 }
+                if (tables.size() > MAX_TABLES) {
+                    throw new InvalidDatasetException("压缩包内数据表不能超过 " + MAX_TABLES + " 个");
+                }
+                drain(boundedEntry);
                 zip.closeEntry();
             }
         }
@@ -146,6 +164,13 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
             throw new InvalidDatasetException("压缩包中没有 CSV、TSV 或 XLSX 数据表");
         }
         return tables;
+    }
+
+    private void drain(InputStream input) throws IOException {
+        byte[] buffer = new byte[8192];
+        while (input.read(buffer) != -1) {
+            // Read the full entry so skipped data is included in the archive limit.
+        }
     }
 
     private List<TableProfile> profileXlsx(
@@ -168,6 +193,9 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
                             styles, sharedStrings, statistics, new DataFormatter(), false));
                     parser.parse(new InputSource(sheetStream));
                     if (statistics.columnCount > 0) {
+                        if (tables.size() >= MAX_TABLES) {
+                            throw new InvalidDatasetException("单个 XLSX 文件中的数据表不能超过 " + MAX_TABLES + " 个");
+                        }
                         String name = namePrefix == null || namePrefix.isBlank()
                                 ? sheetName
                                 : namePrefix + " / " + sheetName;
@@ -236,6 +264,89 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
         @Override
         public void close() {
             // The enclosing ZIP stream is closed by profileZip.
+        }
+    }
+
+    static final class BoundedZipEntryInputStream extends FilterInputStream {
+
+        private final long[] totalUncompressed;
+        private final long entryLimit;
+        private final long totalLimit;
+        private final String totalLimitMessage;
+        private final String entryLimitMessage;
+        private long entryBytes;
+
+        BoundedZipEntryInputStream(
+                InputStream input,
+                long[] totalUncompressed,
+                long entryLimit,
+                long totalLimit,
+                String totalLimitMessage,
+                String entryLimitMessage) {
+            super(input);
+            this.totalUncompressed = totalUncompressed;
+            this.entryLimit = entryLimit;
+            this.totalLimit = totalLimit;
+            this.totalLimitMessage = totalLimitMessage;
+            this.entryLimitMessage = entryLimitMessage;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = in.read();
+            if (value != -1) {
+                account(1);
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int read = in.read(buffer, offset, length);
+            if (read > 0) {
+                account(read);
+            }
+            return read;
+        }
+
+        @Override
+        public long skip(long count) throws IOException {
+            if (count <= 0) {
+                return 0;
+            }
+            byte[] buffer = new byte[(int) Math.min(count, 8192)];
+            long skipped = 0;
+            while (skipped < count) {
+                int read = read(buffer, 0, (int) Math.min(buffer.length, count - skipped));
+                if (read < 0) {
+                    break;
+                }
+                if (read == 0) {
+                    if (read() < 0) {
+                        break;
+                    }
+                    skipped++;
+                } else {
+                    skipped += read;
+                }
+            }
+            return skipped;
+        }
+
+        @Override
+        public void close() {
+            // The enclosing ZIP stream owns the entry lifecycle.
+        }
+
+        private void account(int bytesRead) {
+            entryBytes += bytesRead;
+            totalUncompressed[0] += bytesRead;
+            if (totalUncompressed[0] > totalLimit) {
+                throw new InvalidDatasetException(totalLimitMessage);
+            }
+            if (entryLimitMessage != null && entryBytes > entryLimit) {
+                throw new InvalidDatasetException(entryLimitMessage);
+            }
         }
     }
 

@@ -37,8 +37,10 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -90,6 +92,16 @@ class DatasetUploadIntegrationTest {
                         .content("{}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("数据集10"));
+    }
+
+    @Test
+    void rejectsMalformedJsonAsBadRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/datasets")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("请求参数无效"))
+                .andExpect(jsonPath("$.detail").value("请求正文格式不正确"));
     }
 
     @Test
@@ -160,6 +172,31 @@ class DatasetUploadIntegrationTest {
                 .isEqualTo(2L);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM dataset_tables", Long.class))
                 .isEqualTo(2L);
+    }
+
+    @Test
+    @Transactional
+    void removesStoredFileWhenUploadTransactionRollsBack() throws Exception {
+        UUID datasetId = createEmptyDataset("rollback-upload");
+        TestTransaction.flagForRollback();
+
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", datasetId)
+                        .file(csvFile("rollback.csv", "id,value\n1,test\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID fileId = UUID.fromString(objectMapper
+                .readTree(upload.getResponse().getContentAsString())
+                .get("files")
+                .get(0)
+                .get("id")
+                .asText());
+        Path storedFile = Path.of(
+                "target/test-datasets/datasets", datasetId.toString(), "files", fileId.toString(), "rollback.csv");
+        assertThat(storedFile).exists();
+
+        TestTransaction.end();
+
+        assertThat(storedFile).doesNotExist();
     }
 
     @Test
@@ -283,6 +320,20 @@ class DatasetUploadIntegrationTest {
                 .get("tables")
                 .get(0);
         UUID firstTableId = UUID.fromString(firstTable.get("id").asText());
+        UUID firstFileId = UUID.fromString(objectMapper
+                .readTree(firstUpload.getResponse().getContentAsString())
+                .get("files")
+                .get(0)
+                .get("id")
+                .asText());
+        UUID secondFileId = null;
+        for (JsonNode file : objectMapper
+                .readTree(secondUpload.getResponse().getContentAsString())
+                .get("files")) {
+            if ("customers.csv".equals(file.get("originalFilename").asText())) {
+                secondFileId = UUID.fromString(file.get("id").asText());
+            }
+        }
         UUID secondTableId = null;
         for (JsonNode table : objectMapper
                 .readTree(secondUpload.getResponse().getContentAsString())
@@ -291,7 +342,14 @@ class DatasetUploadIntegrationTest {
                 secondTableId = UUID.fromString(table.get("id").asText());
             }
         }
+        assertThat(secondFileId).isNotNull();
         assertThat(secondTableId).isNotNull();
+        Path firstStoredFile = Path.of(
+                "target/test-datasets/datasets", datasetId.toString(), "files", firstFileId.toString(), "orders.csv");
+        Path secondStoredFile = Path.of(
+                "target/test-datasets/datasets", datasetId.toString(), "files", secondFileId.toString(), "customers.csv");
+        assertThat(firstStoredFile).exists();
+        assertThat(secondStoredFile).exists();
 
         MvcResult renamed = mockMvc.perform(
                         patch("/api/v1/datasets/{datasetId}/tables/{tableId}", datasetId, firstTableId)
@@ -307,6 +365,8 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$.tableCount").value(1))
                 .andExpect(jsonPath("$.rowCount").value(3))
                 .andExpect(jsonPath("$.fileCount").value(1));
+        assertThat(firstStoredFile).doesNotExist();
+        assertThat(secondStoredFile).exists();
 
         mockMvc.perform(delete("/api/v1/datasets/{datasetId}/tables/{tableId}", datasetId, secondTableId))
                 .andExpect(status().isOk())
@@ -314,6 +374,7 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$.rowCount").value(0))
                 .andExpect(jsonPath("$.fileCount").value(0))
                 .andExpect(jsonPath("$.status").value("EMPTY"));
+        assertThat(secondStoredFile).doesNotExist();
 
         mockMvc.perform(delete("/api/v1/datasets/{id}", datasetId))
                 .andExpect(status().isNoContent());
@@ -370,6 +431,12 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$.totalElements").value(3))
                 .andExpect(jsonPath("$.totalPages").value(2))
                 .andExpect(jsonPath("$.items", hasSize(1)));
+
+        mockMvc.perform(get("/api/v1/datasets")
+                        .param("page", String.valueOf(Integer.MAX_VALUE))
+                        .param("size", "100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items", hasSize(0)));
     }
 
     @Test

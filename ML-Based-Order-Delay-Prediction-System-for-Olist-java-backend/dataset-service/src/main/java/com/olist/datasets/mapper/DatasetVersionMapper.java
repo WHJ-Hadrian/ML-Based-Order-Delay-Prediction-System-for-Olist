@@ -19,7 +19,7 @@ public interface DatasetVersionMapper {
             @Param("keywordPattern") String keywordPattern,
             @Param("formatPattern") String formatPattern,
             @Param("hasData") Boolean hasData,
-            @Param("offset") int offset,
+            @Param("offset") long offset,
             @Param("limit") int limit);
 
     long count(
