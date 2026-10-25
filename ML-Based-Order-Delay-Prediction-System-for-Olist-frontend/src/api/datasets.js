@@ -17,7 +17,7 @@ async function request(url, options = {}) {
   try {
     response = await fetch(url, { ...options, headers })
   } catch {
-    throw new Error('无法连接后端服务，请确认 dataset-service 已在 8082 端口启动')
+    throw new Error('无法连接后端服务，请检查服务状态或网关配置')
   }
 
   let body = null
@@ -48,10 +48,10 @@ export function listDatasets({
   if (status) {
     params.set('status', status)
   }
-  if (keyword.trim()) {
+  if (typeof keyword === 'string' && keyword.trim()) {
     params.set('keyword', keyword.trim())
   }
-  if (format) {
+  if (typeof format === 'string' && format) {
     params.set('format', format)
   }
   if (hasData === true || hasData === false) {
@@ -139,7 +139,7 @@ function uploadFile(url, file, onProgress) {
     })
 
     xhr.addEventListener('error', () => {
-      reject(new Error('无法连接后端服务，请确认 dataset-service 已在 8082 端口启动'))
+      reject(new Error('无法连接后端服务，请检查服务状态或网关配置'))
     })
     xhr.addEventListener('abort', () => reject(new Error('上传已取消')))
 
@@ -163,45 +163,4 @@ export function listDatasetTableRows(datasetId, tableId, { offset = 0, limit = 2
   return request(
     `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/rows?${params.toString()}`,
   )
-}
-export function uploadDataset({ file, name = '', description = '', onProgress }) {
-  return new Promise((resolve, reject) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    if (name.trim()) {
-      formData.append('name', name.trim())
-    }
-    if (description.trim()) {
-      formData.append('description', description.trim())
-    }
-
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', API_BASE)
-    xhr.responseType = 'text'
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable && onProgress) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
-      }
-    })
-    xhr.addEventListener('load', () => {
-      let body = null
-      if (xhr.responseText) {
-        try {
-          body = JSON.parse(xhr.responseText)
-        } catch {
-          body = xhr.responseText
-        }
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(body)
-        return
-      }
-      reject(new Error(extractError(body, `上传失败（HTTP ${xhr.status}）`)))
-    })
-    xhr.addEventListener('error', () => {
-      reject(new Error('无法连接后端服务，请确认 dataset-service 已在 8082 端口启动'))
-    })
-    xhr.addEventListener('abort', () => reject(new Error('上传已取消')))
-    xhr.send(formData)
-  })
 }

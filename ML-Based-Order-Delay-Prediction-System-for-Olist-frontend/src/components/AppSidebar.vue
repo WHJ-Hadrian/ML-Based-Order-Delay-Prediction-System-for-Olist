@@ -1,25 +1,22 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import liquidGL from 'liquid-gl'
-import {
-  Collection,
-  DataAnalysis,
-  Expand,
-  Fold,
-  Grid,
-  SetUp,
-} from '@element-plus/icons-vue'
+import { DataAnalysis, Expand, Fold } from '@element-plus/icons-vue'
+import { NAVIGATION_ITEMS, findNavigationItemByPath } from '@/config/navigation'
 
 const props = defineProps({
-  active: { type: String, default: 'datasets' },
   collapsed: { type: Boolean, default: false },
   total: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['update:active', 'update:collapsed'])
+const emit = defineEmits(['update:collapsed'])
+const route = useRoute()
+const router = useRouter()
 
 let glassEffect = null
 let glassInitTimer = null
+let removeLoadListener = null
 
 const glassOptions = {
   target: '.sidebar-liquid-lens',
@@ -39,17 +36,28 @@ const glassOptions = {
   tint: 'rgba(255, 255, 255, 0.01)',
 }
 
-const activeItemOffset = computed(() => ({
-  top: `${5 + ['datasets', 'fields', 'rules'].indexOf(props.active) * 56}px`,
-}))
+const active = computed(() => route.meta.navigationKey || findNavigationItemByPath(route.path).key)
+
+const activeItemOffset = computed(() => {
+  const index = Math.max(NAVIGATION_ITEMS.findIndex((item) => item.key === active.value), 0)
+  return { top: `${5 + index * 56}px` }
+})
 
 async function waitForBackdrop() {
-  const image = document.querySelector('.app-backdrop-media')
-  if (image instanceof HTMLImageElement && !image.complete) {
-    await image.decode().catch(() => {})
+  const media = document.querySelector('.app-backdrop-media')
+  if (media instanceof HTMLImageElement && !media.complete) {
+    await media.decode().catch(() => {})
   }
-  if (image instanceof HTMLVideoElement && image.readyState < 2) {
-    await new Promise((resolve) => image.addEventListener('canplay', resolve, { once: true }))
+  if (media instanceof HTMLVideoElement && media.readyState < 2) {
+    await new Promise((resolve) => {
+      const finish = () => {
+        window.clearTimeout(timeout)
+        resolve()
+      }
+      const timeout = window.setTimeout(finish, 1500)
+      media.addEventListener('canplay', finish, { once: true })
+      media.addEventListener('error', finish, { once: true })
+    })
   }
   await new Promise((resolve) => {
     window.requestAnimationFrame(() => window.requestAnimationFrame(resolve))
@@ -57,18 +65,17 @@ async function waitForBackdrop() {
 }
 
 async function initLiquidGlass() {
-  if (glassEffect) {
-    return
-  }
-  const target = document.querySelector('.sidebar-liquid-lens')
-  if (!target) {
+  if (glassEffect || !document.querySelector('.sidebar-liquid-lens')) {
     return
   }
   await waitForBackdrop()
-  if (glassEffect) {
-    return
+  if (!glassEffect && document.querySelector('.sidebar-liquid-lens')) {
+    try {
+      glassEffect = liquidGL(glassOptions)
+    } catch {
+      glassEffect = null
+    }
   }
-  glassEffect = liquidGL(glassOptions)
 }
 
 onMounted(() => {
@@ -78,9 +85,10 @@ onMounted(() => {
     }
     if (document.readyState === 'complete') {
       start()
-    } else {
-      window.addEventListener('load', start, { once: true })
+      return
     }
+    window.addEventListener('load', start, { once: true })
+    removeLoadListener = () => window.removeEventListener('load', start)
   })
 })
 
@@ -88,28 +96,21 @@ onBeforeUnmount(() => {
   if (glassInitTimer) {
     window.clearTimeout(glassInitTimer)
   }
+  removeLoadListener?.()
   glassEffect?.destroy?.()
   glassEffect = null
 })
 
 watch(
-  () => props.total,
-  () => {
-    nextTick(() => {
-      glassEffect?.renderer?.captureSnapshot?.()
-    })
-  },
-)
-
-watch(
-  () => props.active,
-  () => {
-    nextTick(() => glassEffect?.renderer?.captureSnapshot?.())
-  },
+  () => [props.total, active.value],
+  () => nextTick(() => glassEffect?.renderer?.captureSnapshot?.()),
 )
 
 function selectMenu(index) {
-  emit('update:active', index)
+  const item = NAVIGATION_ITEMS.find((entry) => entry.key === index)
+  if (item && route.path !== item.path) {
+    router.push(item.path)
+  }
 }
 
 function toggle() {
@@ -139,33 +140,19 @@ function toggle() {
       @select="selectMenu"
     >
       <el-menu-item
-        index="datasets"
-        :class="{ 'is-active': active === 'datasets' }"
+        v-for="item in NAVIGATION_ITEMS"
+        :key="item.key"
+        :index="item.key"
+        :class="{ 'is-active': active === item.key }"
       >
-        <el-icon data-liquid-ignore><Collection /></el-icon>
+        <el-icon data-liquid-ignore><component :is="item.icon" /></el-icon>
         <template #title>
-          <span class="menu-title" data-liquid-ignore>数据集库</span>
-          <span v-if="!collapsed" class="menu-badge" data-liquid-ignore>{{ total }}</span>
-        </template>
-      </el-menu-item>
-
-      <el-menu-item
-        index="fields"
-        :class="{ 'is-active': active === 'fields' }"
-      >
-        <el-icon data-liquid-ignore><Grid /></el-icon>
-        <template #title>
-          <span class="menu-title" data-liquid-ignore>字段库</span>
-        </template>
-      </el-menu-item>
-
-      <el-menu-item
-        index="rules"
-        :class="{ 'is-active': active === 'rules' }"
-      >
-        <el-icon data-liquid-ignore><SetUp /></el-icon>
-        <template #title>
-          <span class="menu-title" data-liquid-ignore>规则库</span>
+          <span class="menu-title" data-liquid-ignore>{{ item.title }}</span>
+          <span
+            v-if="!collapsed && item.showTotal"
+            class="menu-badge"
+            data-liquid-ignore
+          >{{ total }}</span>
         </template>
       </el-menu-item>
 
@@ -175,7 +162,12 @@ function toggle() {
         data-liquid-ignore
         :style="activeItemOffset"
       ></span>
-      <span class="sidebar-liquid-sheen" aria-hidden="true" data-liquid-ignore :style="activeItemOffset"></span>
+      <span
+        class="sidebar-liquid-sheen"
+        aria-hidden="true"
+        data-liquid-ignore
+        :style="activeItemOffset"
+      ></span>
     </el-menu>
 
     <div class="sidebar-footer">

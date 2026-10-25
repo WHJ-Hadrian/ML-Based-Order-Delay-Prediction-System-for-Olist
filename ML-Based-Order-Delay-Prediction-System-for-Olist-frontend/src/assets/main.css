@@ -382,6 +382,24 @@ textarea {
   margin: 0 auto;
 }
 
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-fade-enter-active,
+  .page-fade-leave-active {
+    transition: none;
+  }
+}
+
 .page-breadcrumb {
   margin-bottom: 14px;
   font-size: 12px;
