@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.DatasetVersionMapper">
+
+    <resultMap id="DatasetVersionResultMap" type="com.olist.datasets.entity.DatasetVersion">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="name" property="name"/>
+        <result column="description" property="description"/>
+        <result column="original_filename" property="originalFilename"/>
+        <result column="storage_key" property="storageKey"/>
+        <result column="size_bytes" property="sizeBytes"/>
+        <result column="sha256" property="sha256"/>
+        <result column="content_type" property="contentType"/>
+        <result column="status" property="status"/>
+        <result column="table_count" property="tableCount"/>
+        <result column="row_count" property="rowCount"/>
+        <result column="file_count" property="fileCount"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="updated_at" property="updatedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <sql id="DatasetVersionColumns">
+        id, name, description, original_filename, storage_key, size_bytes, sha256,
+        content_type, status, table_count, row_count, file_count, created_at, updated_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO dataset_versions (
+            id, name, description, original_filename, storage_key, size_bytes, sha256,
+            content_type, status, table_count, row_count, file_count, created_at, updated_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{name}, #{description,jdbcType=VARCHAR}, #{originalFilename},
+            #{storageKey}, #{sizeBytes}, #{sha256}, #{contentType,jdbcType=VARCHAR}, #{status},
+            #{tableCount}, #{rowCount}, #{fileCount},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findById" resultMap="DatasetVersionResultMap">
+        SELECT <include refid="DatasetVersionColumns"/>
+        FROM dataset_versions
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </select>
+
+    <select id="findByIdForUpdate" resultMap="DatasetVersionResultMap">
+        SELECT <include refid="DatasetVersionColumns"/>
+        FROM dataset_versions
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        FOR UPDATE
+    </select>
+
+    <select id="findPage" resultMap="DatasetVersionResultMap">
+        SELECT <include refid="DatasetVersionColumns"/>
+        FROM dataset_versions
+        <where>
+            <if test="status != null">
+                status = #{status}
+            </if>
+            <if test="keywordPattern != null">
+                AND (LOWER(name) LIKE #{keywordPattern} OR LOWER(original_filename) LIKE #{keywordPattern})
+            </if>
+            <if test="formatPattern != null">
+                AND LOWER(original_filename) LIKE #{formatPattern}
+            </if>
+            <if test="hasData != null">
+                <choose>
+                    <when test="hasData">AND table_count &gt; 0</when>
+                    <otherwise>AND table_count = 0</otherwise>
+                </choose>
+            </if>
+        </where>
+        ORDER BY created_at DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(*)
+        FROM dataset_versions
+        <where>
+            <if test="status != null">
+                status = #{status}
+            </if>
+            <if test="keywordPattern != null">
+                AND (LOWER(name) LIKE #{keywordPattern} OR LOWER(original_filename) LIKE #{keywordPattern})
+            </if>
+            <if test="formatPattern != null">
+                AND LOWER(original_filename) LIKE #{formatPattern}
+            </if>
+            <if test="hasData != null">
+                <choose>
+                    <when test="hasData">AND table_count &gt; 0</when>
+                    <otherwise>AND table_count = 0</otherwise>
+                </choose>
+            </if>
+        </where>
+    </select>
+
+    <update id="update">
+        UPDATE dataset_versions
+        SET name = #{name},
+            description = #{description,jdbcType=VARCHAR},
+            original_filename = #{originalFilename},
+            storage_key = #{storageKey},
+            size_bytes = #{sizeBytes},
+            sha256 = #{sha256},
+            content_type = #{contentType,jdbcType=VARCHAR},
+            status = #{status},
+            table_count = #{tableCount},
+            row_count = #{rowCount},
+            file_count = #{fileCount},
+            updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </update>
+
+    <select id="findNamesStartingWith" resultType="string">
+        SELECT name
+        FROM dataset_versions
+        WHERE name LIKE #{pattern}
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM dataset_versions
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </delete></mapper>

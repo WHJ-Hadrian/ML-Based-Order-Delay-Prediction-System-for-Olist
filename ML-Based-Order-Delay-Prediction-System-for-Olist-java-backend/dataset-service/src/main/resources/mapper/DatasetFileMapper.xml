@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.DatasetFileMapper">
+
+    <resultMap id="DatasetFileResultMap" type="com.olist.datasets.entity.DatasetFile">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="dataset_id" property="datasetId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="original_filename" property="originalFilename"/>
+        <result column="storage_key" property="storageKey"/>
+        <result column="size_bytes" property="sizeBytes"/>
+        <result column="sha256" property="sha256"/>
+        <result column="content_type" property="contentType"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <insert id="insert">
+        INSERT INTO dataset_files (
+            id, dataset_id, original_filename, storage_key, size_bytes, sha256, content_type, created_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{originalFilename}, #{storageKey}, #{sizeBytes}, #{sha256},
+            #{contentType,jdbcType=VARCHAR},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findById" resultMap="DatasetFileResultMap">
+        SELECT id, dataset_id, original_filename, storage_key, size_bytes, sha256, content_type, created_at
+        FROM dataset_files
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </select>
+
+    <select id="findByDatasetId" resultMap="DatasetFileResultMap">
+        SELECT id, dataset_id, original_filename, storage_key, size_bytes, sha256, content_type, created_at
+        FROM dataset_files
+        WHERE dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        ORDER BY created_at
+    </select>
+
+    <delete id="deleteByIdAndDatasetId">
+        DELETE FROM dataset_files
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </delete></mapper>

@@ -1,0 +1,15 @@
+# 本地单独运行 profile：跳过 Keycloak，使用 H2 文件库和本地磁盘存储。
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.security.oauth2.resource.servlet.OAuth2ResourceServerAutoConfiguration
+  datasource:
+    url: jdbc:h2:file:./data/db/olist_datasets;MODE=MySQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+olist:
+  storage:
+    type: local
+    local-root: ./data/datasets

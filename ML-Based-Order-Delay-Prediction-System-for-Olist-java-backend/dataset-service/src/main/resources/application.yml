@@ -2,14 +2,17 @@ spring:
   application:
     name: dataset-service
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:olist_datasets;MODE=PostgreSQL;DB_CLOSE_DELAY=-1}
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:olist_datasets;MODE=MySQL;DB_CLOSE_DELAY=-1}
     username: ${SPRING_DATASOURCE_USERNAME:sa}
     password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: ${SPRING_DATASOURCE_DRIVER:org.h2.Driver}
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    open-in-view: false
+  servlet:
+    multipart:
+      max-file-size: ${DATASET_MAX_FILE_SIZE:1GB}
+      max-request-size: ${DATASET_MAX_REQUEST_SIZE:1GB}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
   security:
     oauth2:
       resourceserver:
@@ -38,3 +41,21 @@ info:
   app:
     name: ${spring.application.name}
     description: Owns uploaded data assets, dataset versions, and validation metadata
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.olist.datasets.entity
+  type-handlers-package: com.olist.datasets.typehandler
+  configuration:
+    map-underscore-to-camel-case: true
+
+olist:
+  storage:
+    type: ${OLIST_STORAGE_TYPE:local}
+    local-root: ${OLIST_STORAGE_LOCAL_ROOT:./data/datasets}
+    s3:
+      endpoint: ${OLIST_STORAGE_S3_ENDPOINT:http://localhost:4566}
+      bucket: ${OLIST_STORAGE_S3_BUCKET:olist-artifacts}
+      region: ${OLIST_STORAGE_S3_REGION:us-east-1}
+      access-key: ${AWS_ACCESS_KEY_ID:}
+      secret-key: ${AWS_SECRET_ACCESS_KEY:}
