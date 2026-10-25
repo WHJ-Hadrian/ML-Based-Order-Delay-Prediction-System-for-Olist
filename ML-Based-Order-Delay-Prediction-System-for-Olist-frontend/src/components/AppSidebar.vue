@@ -1,8 +1,9 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import liquidGL from 'liquid-gl'
-import { DataAnalysis, Expand, Fold } from '@element-plus/icons-vue'
+import { Expand, Fold } from '@element-plus/icons-vue'
+import brandArtwork from '@/assets/img/chahua.png'
 import { NAVIGATION_ITEMS, findNavigationItemByPath } from '@/config/navigation'
 
 const props = defineProps({
@@ -13,10 +14,12 @@ const props = defineProps({
 const emit = defineEmits(['update:collapsed'])
 const route = useRoute()
 const router = useRouter()
+const isMobile = ref(false)
 
 let glassEffect = null
 let glassInitTimer = null
 let removeLoadListener = null
+let mobileQuery = null
 
 const glassOptions = {
   target: '.sidebar-liquid-lens',
@@ -37,11 +40,20 @@ const glassOptions = {
 }
 
 const active = computed(() => route.meta.navigationKey || findNavigationItemByPath(route.path).key)
+const menuCollapsed = computed(() => props.collapsed && !isMobile.value)
 
 const activeItemOffset = computed(() => {
   const index = Math.max(NAVIGATION_ITEMS.findIndex((item) => item.key === active.value), 0)
-  return { top: `${5 + index * 56}px` }
+  return {
+    top: `${5 + index * 56}px`,
+    '--active-width': `${100 / NAVIGATION_ITEMS.length}%`,
+    '--active-translate': `${index * 100}%`,
+  }
 })
+
+function updateMobileState(event) {
+  isMobile.value = event.matches
+}
 
 async function waitForBackdrop() {
   const media = document.querySelector('.app-backdrop-media')
@@ -79,6 +91,10 @@ async function initLiquidGlass() {
 }
 
 onMounted(() => {
+  mobileQuery = window.matchMedia('(max-width: 760px)')
+  isMobile.value = mobileQuery.matches
+  mobileQuery.addEventListener('change', updateMobileState)
+
   nextTick(() => {
     const start = () => {
       glassInitTimer = window.setTimeout(initLiquidGlass, 180)
@@ -93,6 +109,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  mobileQuery?.removeEventListener('change', updateMobileState)
   if (glassInitTimer) {
     window.clearTimeout(glassInitTimer)
   }
@@ -122,11 +139,11 @@ function toggle() {
   <aside class="app-sidebar" :class="{ 'is-collapsed': collapsed }">
     <div class="sidebar-brand" @click="toggle">
       <div class="brand-mark">
-        <el-icon><DataAnalysis /></el-icon>
+        <img :src="brandArtwork" alt="SeekDateSet">
       </div>
       <div v-if="!collapsed" class="brand-copy">
-        <strong>Olist Data</strong>
-        <span>数据资产工作台</span>
+        <strong>SeekDateSet</strong>
+        <span>数据分析工作台</span>
       </div>
     </div>
 
@@ -135,7 +152,7 @@ function toggle() {
     <el-menu
       class="sidebar-menu"
       :default-active="active"
-      :collapse="collapsed"
+      :collapse="menuCollapsed"
       :collapse-transition="false"
       @select="selectMenu"
     >

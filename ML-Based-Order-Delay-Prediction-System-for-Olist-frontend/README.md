@@ -1,4 +1,4 @@
-# Olist 数据集中心（前端）
+# SeekDateSet 数据分析工作台（前端）
 
 基于 Vue 3 + Element Plus 的数据集管理页面，对接 `dataset-service` 的
 `/api/v1/datasets`。

@@ -25,6 +25,7 @@ import com.olist.datasets.profiler.TablePreviewOptions;
 import com.olist.datasets.profiler.TablePreviewReader;
 import com.olist.datasets.profiler.TableRows;
 import com.olist.datasets.profiler.TableProfile;
+import com.olist.datasets.security.DatasetOwnerProvider;
 import com.olist.datasets.service.DatasetService;
 import com.olist.datasets.storage.DatasetStorage;
 import com.olist.datasets.vo.DatasetDetailVO;
@@ -78,6 +79,7 @@ public class DatasetServiceImpl implements DatasetService {
     private final DatasetProfiler datasetProfiler;
     private final DatasetStorage datasetStorage;
     private final TablePreviewReader tablePreviewReader;
+    private final DatasetOwnerProvider datasetOwnerProvider;
 
     public DatasetServiceImpl(
             DatasetVersionMapper datasetVersionMapper,
@@ -85,13 +87,15 @@ public class DatasetServiceImpl implements DatasetService {
             DatasetFileMapper datasetFileMapper,
             DatasetProfiler datasetProfiler,
             DatasetStorage datasetStorage,
-            TablePreviewReader tablePreviewReader) {
+            TablePreviewReader tablePreviewReader,
+            DatasetOwnerProvider datasetOwnerProvider) {
         this.datasetVersionMapper = datasetVersionMapper;
         this.datasetTableMapper = datasetTableMapper;
         this.datasetFileMapper = datasetFileMapper;
         this.datasetProfiler = datasetProfiler;
         this.datasetStorage = datasetStorage;
         this.tablePreviewReader = tablePreviewReader;
+        this.datasetOwnerProvider = datasetOwnerProvider;
     }
 
     @Override
@@ -132,7 +136,7 @@ public class DatasetServiceImpl implements DatasetService {
                 storageKeys.add(file.getStorageKey());
             }
         }
-        if (datasetVersionMapper.deleteById(id) != 1) {
+        if (datasetVersionMapper.deleteById(id, datasetOwnerProvider.currentOwnerId()) != 1) {
             throw new StorageException("数据集删除失败");
         }
         deleteAfterCommit(storageKeys);
@@ -231,16 +235,13 @@ public class DatasetServiceImpl implements DatasetService {
     @Override
     @Transactional(readOnly = true)
     public DatasetDetailVO get(UUID id) {
-        DatasetVersion entity = datasetVersionMapper.findById(id);
-        if (entity == null) {
-            throw new DatasetNotFoundException(id);
-        }
-        return toDetail(entity);
+        return toDetail(requireDataset(id));
     }
 
     @Override
     @Transactional(readOnly = true)
     public TablePreviewVO previewTable(UUID datasetId, UUID tableId, int limit, boolean all) {
+        requireDataset(datasetId);
         DatasetTable table = datasetTableMapper.findByIdAndDatasetId(tableId, datasetId);
         if (table == null) {
             throw new DatasetTableNotFoundException(datasetId, tableId);
@@ -285,6 +286,7 @@ public class DatasetServiceImpl implements DatasetService {
     @Override
     @Transactional(readOnly = true)
     public TableRowsVO rows(UUID datasetId, UUID tableId, int offset, int limit) {
+        requireDataset(datasetId);
         DatasetTable table = datasetTableMapper.findByIdAndDatasetId(tableId, datasetId);
         if (table == null) {
             throw new DatasetTableNotFoundException(datasetId, tableId);
@@ -325,24 +327,30 @@ public class DatasetServiceImpl implements DatasetService {
         long offset = (long) page * size;
         String keywordPattern = keywordPattern(effectiveQuery.getKeyword());
         String formatPattern = formatPattern(effectiveQuery.getFormat());
+        String ownerId = datasetOwnerProvider.currentOwnerId();
         List<DatasetVersion> entities = datasetVersionMapper.findPage(
                 effectiveQuery.getStatus(),
                 keywordPattern,
                 formatPattern,
                 effectiveQuery.getHasData(),
+                ownerId,
                 offset,
                 size);
         long total = datasetVersionMapper.count(
-                effectiveQuery.getStatus(), keywordPattern, formatPattern, effectiveQuery.getHasData());
+                effectiveQuery.getStatus(), keywordPattern, formatPattern, effectiveQuery.getHasData(), ownerId);
         List<DatasetVO> items = entities.stream().map(DatasetConverter::toVO).toList();
         return PageVO.of(items, page, size, total);
     }
 
     private DatasetVersion createEmptyDataset(String name, String description) {
         Instant now = Instant.now();
+        String ownerId = datasetOwnerProvider.currentOwnerId();
+        String resolvedName = name == null || name.isBlank()
+                ? resolveCreateName(name, ownerId)
+                : normalizeName(name);
         DatasetVersion entity = new DatasetVersion(
                 UUID.randomUUID(),
-                resolveCreateName(name),
+                resolvedName,
                 normalizeDescription(description),
                 "",
                 "",
@@ -355,6 +363,7 @@ public class DatasetServiceImpl implements DatasetService {
                 0,
                 now,
                 now);
+        entity.setOwnerId(ownerId);
         int inserted = datasetVersionMapper.insert(entity);
         if (inserted != 1) {
             throw new StorageException("数据集元数据保存失败");
@@ -422,7 +431,15 @@ public class DatasetServiceImpl implements DatasetService {
     }
 
     private DatasetVersion requireDatasetForUpdate(UUID id) {
-        DatasetVersion entity = datasetVersionMapper.findByIdForUpdate(id);
+        DatasetVersion entity = datasetVersionMapper.findByIdForUpdate(id, datasetOwnerProvider.currentOwnerId());
+        if (entity == null) {
+            throw new DatasetNotFoundException(id);
+        }
+        return entity;
+    }
+
+    private DatasetVersion requireDataset(UUID id) {
+        DatasetVersion entity = datasetVersionMapper.findById(id, datasetOwnerProvider.currentOwnerId());
         if (entity == null) {
             throw new DatasetNotFoundException(id);
         }
@@ -498,12 +515,13 @@ public class DatasetServiceImpl implements DatasetService {
                 : resolved;
     }
 
-    private String resolveCreateName(String name) {
+    private String resolveCreateName(String name, String ownerId) {
         if (name != null && !name.isBlank()) {
             return normalizeName(name);
         }
         int maxSequence = 0;
-        for (String existingName : datasetVersionMapper.findNamesStartingWith(DEFAULT_NAME_PREFIX + "%")) {
+        for (String existingName : datasetVersionMapper.findNamesStartingWith(
+                DEFAULT_NAME_PREFIX + "%", ownerId)) {
             Matcher matcher = DEFAULT_NAME_PATTERN.matcher(existingName);
             if (matcher.matches()) {
                 try {

@@ -1,19 +1,39 @@
 {
   "realm": "olist",
   "enabled": true,
-  "displayName": "Olist Platform",
+  "displayName": "SeekDateSet 数据分析工作台",
+  "internationalizationEnabled": true,
+  "supportedLocales": ["zh-CN", "en"],
+  "defaultLocale": "zh-CN",
+  "loginTheme": "olist",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "registrationEmailAsUsername": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": true,
+  "resetPasswordAllowed": true,
+  "passwordPolicy": "length(10)",
+  "smtpServer": {
+    "from": "noreply@olist.local",
+    "fromDisplayName": "SeekDateSet",
+    "host": "mailpit",
+    "port": "1025",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
   "clients": [
     {
       "clientId": "olist-web",
-      "name": "Olist Web",
+      "name": "SeekDateSet Web",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "redirectUris": ["http://localhost:5173/*"],
-      "webOrigins": ["http://localhost:5173"],
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"],
+      "webOrigins": ["http://localhost:5173", "http://127.0.0.1:5173"],
       "attributes": {
         "pkce.code.challenge.method": "S256"
       }

@@ -1,8 +1,12 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { FolderAdd, Refresh, Search } from '@element-plus/icons-vue'
+import { FolderAdd, Lock, Refresh, Search } from '@element-plus/icons-vue'
+import {
+  AuthenticationRequiredError,
+  useAuth,
+} from '@/auth/keycloak'
 import DatasetRow from '@/components/DatasetRow.vue'
 import {
   DATASET_FORMATS,
@@ -24,9 +28,13 @@ import {
 import { useDatasetTotal } from '@/state/workspace'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuth()
 const section = computed(() => findNavigationItem(route.meta.navigationKey))
+const authReady = computed(() => auth.state.status !== 'checking')
 const datasets = ref([])
 const loading = ref(false)
+const authRequired = ref(false)
 const creating = ref(false)
 const page = ref(0)
 const size = ref(10)
@@ -58,9 +66,22 @@ const hasDataFilter = computed(() => {
   return undefined
 })
 
-onMounted(() => {
-  loadDatasets()
-})
+watch(
+  () => auth.state.status,
+  (status) => {
+    if (status === 'authenticated') {
+      authRequired.value = false
+      loadDatasets()
+      return
+    }
+    if (status === 'anonymous') {
+      authRequired.value = true
+      datasets.value = []
+      totalElements.value = 0
+    }
+  },
+  { immediate: true },
+)
 
 onBeforeUnmount(() => {
   datasetRequestSequence += 1
@@ -90,6 +111,10 @@ async function loadDatasets() {
     }
   } catch (error) {
     if (requestSequence !== datasetRequestSequence) {
+      return
+    }
+    if (error instanceof AuthenticationRequiredError) {
+      authRequired.value = true
       return
     }
     datasets.value = []
@@ -129,6 +154,10 @@ function changeSize(nextSize) {
   size.value = nextSize
   page.value = 0
   loadDatasets()
+}
+
+function handleSignIn() {
+  router.push({ name: 'login' })
 }
 
 async function handleCreate() {
@@ -433,6 +462,7 @@ function syncRowFromDetail(id, detail) {
           </div>
           <div class="header-actions">
             <el-button
+              v-if="auth.state.authenticated"
               type="primary"
               size="large"
               :icon="FolderAdd"
@@ -444,6 +474,24 @@ function syncRowFromDetail(id, detail) {
           </div>
         </header>
 
+        <el-card v-if="!authReady || authRequired" class="auth-required-card" shadow="never">
+          <div class="auth-required-content">
+            <span class="auth-required-icon"><el-icon><Lock /></el-icon></span>
+            <template v-if="authReady">
+              <h2>登录后查看你的数据集</h2>
+              <p>登录后可安全访问和管理属于你的数据资产。</p>
+              <el-button type="primary" size="large" @click="handleSignIn">
+                登录或创建账号
+              </el-button>
+            </template>
+            <template v-else>
+              <h2>正在确认账户状态</h2>
+              <el-skeleton animated :rows="2" />
+            </template>
+          </div>
+        </el-card>
+
+        <template v-else>
         <el-card class="toolbar-card" shadow="never">
           <div class="library-toolbar">
             <el-input
@@ -542,5 +590,47 @@ function syncRowFromDetail(id, detail) {
             </div>
           </div>
         </el-card>
+        </template>
   </div>
 </template>
+
+<style scoped>
+.auth-required-card {
+  min-height: 340px;
+}
+
+.auth-required-content {
+  display: flex;
+  min-height: 290px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.auth-required-icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 18px;
+  place-items: center;
+  color: #176b57;
+  font-size: 23px;
+  background: rgba(219, 241, 233, 0.9);
+  border-radius: 16px;
+}
+
+.auth-required-content h2 {
+  margin: 0;
+  color: #192521;
+  font-size: 19px;
+  font-weight: 650;
+}
+
+.auth-required-content p {
+  margin: 9px 0 22px;
+  color: #68766f;
+  font-size: 13px;
+}
+</style>

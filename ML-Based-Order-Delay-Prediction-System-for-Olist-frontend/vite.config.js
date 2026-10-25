@@ -12,8 +12,16 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
-      Components({ resolvers: [ElementPlusResolver()] }),
+      Components({ resolvers: [ElementPlusResolver({ importStyle: false })] }),
     ],
+    build: {
+      rolldownOptions: {
+        input: {
+          app: fileURLToPath(new URL('./index.html', import.meta.url)),
+          authStudy: fileURLToPath(new URL('./auth-study.html', import.meta.url)),
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -23,7 +31,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         '/api': {
-          target: env.VITE_API_TARGET || 'http://localhost:8082',
+          target: env.VITE_API_TARGET || 'http://localhost:8080',
           changeOrigin: true,
         },
       },

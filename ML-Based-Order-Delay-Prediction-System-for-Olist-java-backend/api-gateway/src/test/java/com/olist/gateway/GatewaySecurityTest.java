@@ -6,6 +6,8 @@ import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWeb
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
+import java.util.Map;
+
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 class GatewaySecurityTest {
@@ -29,5 +31,15 @@ class GatewaySecurityTest {
                 .exchange()
                 .expectStatus()
                 .isUnauthorized();
+    }
+
+    @Test
+    void allowsRegistrationEndpointThroughToValidationWithoutAuthentication() {
+        webTestClient.post()
+                .uri("/api/v1/auth/registration-codes")
+                .bodyValue(Map.of("email", "not-an-email"))
+                .exchange()
+                .expectStatus()
+                .isBadRequest();
     }
 }

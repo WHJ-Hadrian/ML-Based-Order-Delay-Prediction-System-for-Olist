@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.CleaningRuleMapper">
+
+    <resultMap id="CleaningRuleResultMap" type="com.olist.datasets.entity.CleaningRule">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="name" property="name"/>
+        <result column="rule_type" property="ruleType"/>
+        <result column="target_field" property="targetField"/>
+        <result column="severity" property="severity"/>
+        <result column="rule_expression" property="ruleExpression"/>
+        <result column="description" property="description"/>
+        <result column="enabled" property="enabled"/>
+        <result column="priority" property="priority"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="ruleColumns">
+        id, owner_id, name, rule_type, target_field, severity, rule_expression, description,
+        enabled, priority, created_at, updated_at
+    </sql>
+
+    <sql id="ruleFilters">
+        WHERE owner_id = #{ownerId}
+        <if test="keywordPattern != null">
+            AND (
+                LOWER(name) LIKE #{keywordPattern}
+                OR LOWER(COALESCE(target_field, '')) LIKE #{keywordPattern}
+                OR LOWER(COALESCE(description, '')) LIKE #{keywordPattern}
+            )
+        </if>
+        <if test="ruleType != null">
+            AND rule_type = #{ruleType}
+        </if>
+        <if test="enabled != null">
+            AND enabled = #{enabled}
+        </if>
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO cleaning_rules (
+            id, owner_id, name, rule_type, target_field, severity, rule_expression, description,
+            enabled, priority, created_at, updated_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId}, #{name}, #{ruleType}, #{targetField,jdbcType=VARCHAR}, #{severity},
+            #{ruleExpression,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR},
+            #{enabled}, #{priority}, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE cleaning_rules
+        SET name = #{name},
+            rule_type = #{ruleType},
+            target_field = #{targetField,jdbcType=VARCHAR},
+            severity = #{severity},
+            rule_expression = #{ruleExpression,jdbcType=VARCHAR},
+            description = #{description,jdbcType=VARCHAR},
+            enabled = #{enabled},
+            priority = #{priority},
+            updated_at = #{updatedAt}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </update>
+
+    <select id="findById" resultMap="CleaningRuleResultMap">
+        SELECT <include refid="ruleColumns"/>
+        FROM cleaning_rules
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </select>
+
+    <select id="findPage" resultMap="CleaningRuleResultMap">
+        SELECT <include refid="ruleColumns"/>
+        FROM cleaning_rules
+        <include refid="ruleFilters"/>
+        ORDER BY priority ASC, updated_at DESC, name ASC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(*)
+        FROM cleaning_rules
+        <include refid="ruleFilters"/>
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM cleaning_rules
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </delete>
+
+    <select id="countByName" resultType="long">
+        SELECT COUNT(*)
+        FROM cleaning_rules
+        WHERE owner_id = #{ownerId}
+          AND LOWER(name) = LOWER(#{name})
+        <if test="excludeId != null">
+            AND id &lt;&gt; #{excludeId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        </if>
+    </select>
+</mapper>

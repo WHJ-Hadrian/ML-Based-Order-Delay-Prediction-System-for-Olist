@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `api-gateway` | Spring Cloud Gateway | 前端统一入口、JWT 校验和路由 |
 | `order-service` | Spring Boot | 订单与订单状态，独立拥有订单库 |
-| `dataset-service` | Spring Boot | 上传元数据、数据集版本和校验记录 |
+| `dataset-service` | Spring Boot | 上传元数据、数据集版本、校验记录，以及字段库和清洗规则库 |
 | `job-service` | Spring Boot + Temporal Client | 长任务状态和工作流启动 |
 | `prediction-service` | Spring Boot | 在线预测业务、审计和模型服务调用 |
 | `model-management-service` | Spring Boot | 模型审核、上线、回滚和版本元数据 |

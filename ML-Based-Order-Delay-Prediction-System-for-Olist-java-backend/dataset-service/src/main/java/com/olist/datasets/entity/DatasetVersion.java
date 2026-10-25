@@ -7,6 +7,7 @@ import java.util.UUID;
 public class DatasetVersion {
 
     private UUID id;
+    private String ownerId;
     private String name;
     private String description;
     private String originalFilename;
@@ -57,6 +58,14 @@ public class DatasetVersion {
 
     public UUID getId() {
         return id;
+    }
+
+    public String getOwnerId() {
+        return ownerId;
+    }
+
+    public void setOwnerId(String ownerId) {
+        this.ownerId = ownerId;
     }
 
     public void setId(UUID id) {

@@ -1,6 +1,26 @@
 spring:
   application:
     name: api-gateway
+  config:
+    import:
+      - optional:file:../../.env[.properties]
+      - optional:file:../.env[.properties]
+      - optional:file:.env[.properties]
+  mail:
+    default-encoding: UTF-8
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SENDER_EMAIL:}
+    password: ${SENDER_PASS:}
+    properties:
+      mail.smtp.auth: ${SMTP_AUTH:false}
+      mail.smtp.ssl.enable: ${SMTP_SSL:false}
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
   security:
     oauth2:
       resourceserver:
@@ -20,6 +40,14 @@ spring:
               uri: ${DATASET_SERVICE_URL:http://localhost:8082}
               predicates:
                 - Path=/api/v1/datasets,/api/v1/datasets/**
+            - id: fields
+              uri: ${DATASET_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/fields,/api/v1/fields/**
+            - id: rules
+              uri: ${DATASET_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/rules,/api/v1/rules/**
             - id: jobs
               uri: ${JOB_SERVICE_URL:http://localhost:8083}
               predicates:
@@ -36,6 +64,21 @@ spring:
               uri: ${ANALYTICS_SERVICE_URL:http://localhost:8086}
               predicates:
                 - Path=/api/v1/analytics/**
+
+olist:
+  registration:
+    keycloak-base-url: ${KEYCLOAK_ADMIN_API_URL:http://localhost:8180}
+    keycloak-realm: ${KEYCLOAK_REALM:olist}
+    keycloak-client-id: ${KEYCLOAK_REGISTRATION_CLIENT_ID:olist-registration-service}
+    keycloak-client-secret: ${KEYCLOAK_REGISTRATION_CLIENT_SECRET:}
+    otp-hmac-secret: ${REGISTRATION_OTP_SECRET:}
+    mail-from: ${SENDER_EMAIL:}
+    code-ttl: ${REGISTRATION_CODE_TTL:10m}
+    resend-delay: ${REGISTRATION_RESEND_DELAY:60s}
+    verified-token-ttl: ${REGISTRATION_VERIFIED_TOKEN_TTL:10m}
+    ip-window: ${REGISTRATION_IP_WINDOW:15m}
+    max-codes-per-ip-window: ${REGISTRATION_MAX_CODES_PER_IP:10}
+    max-code-attempts: ${REGISTRATION_MAX_CODE_ATTEMPTS:5}
 
 server:
   port: ${SERVER_PORT:8080}

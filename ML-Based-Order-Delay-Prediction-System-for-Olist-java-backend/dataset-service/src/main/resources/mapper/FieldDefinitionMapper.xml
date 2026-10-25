@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.FieldDefinitionMapper">
+
+    <resultMap id="FieldDefinitionResultMap" type="com.olist.datasets.entity.FieldDefinition">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="name" property="name"/>
+        <result column="display_name" property="displayName"/>
+        <result column="data_type" property="dataType"/>
+        <result column="semantic_role" property="semanticRole"/>
+        <result column="source_table" property="sourceTable"/>
+        <result column="description" property="description"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="fieldColumns">
+        id, owner_id, name, display_name, data_type, semantic_role, source_table, description,
+        status, created_at, updated_at
+    </sql>
+
+    <sql id="fieldFilters">
+        WHERE owner_id = #{ownerId}
+        <if test="keywordPattern != null">
+            AND (
+                LOWER(name) LIKE #{keywordPattern}
+                OR LOWER(COALESCE(display_name, '')) LIKE #{keywordPattern}
+                OR LOWER(COALESCE(semantic_role, '')) LIKE #{keywordPattern}
+            )
+        </if>
+        <if test="status != null">
+            AND status = #{status}
+        </if>
+        <if test="semanticRole != null and semanticRole != ''">
+            AND semantic_role = #{semanticRole}
+        </if>
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO field_definitions (
+            id, owner_id, name, display_name, data_type, semantic_role, source_table, description,
+            status, created_at, updated_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId}, #{name}, #{displayName,jdbcType=VARCHAR}, #{dataType},
+            #{semanticRole,jdbcType=VARCHAR}, #{sourceTable,jdbcType=VARCHAR},
+            #{description,jdbcType=VARCHAR}, #{status}, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE field_definitions
+        SET name = #{name},
+            display_name = #{displayName,jdbcType=VARCHAR},
+            data_type = #{dataType},
+            semantic_role = #{semanticRole,jdbcType=VARCHAR},
+            source_table = #{sourceTable,jdbcType=VARCHAR},
+            description = #{description,jdbcType=VARCHAR},
+            status = #{status},
+            updated_at = #{updatedAt}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </update>
+
+    <select id="findById" resultMap="FieldDefinitionResultMap">
+        SELECT <include refid="fieldColumns"/>
+        FROM field_definitions
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </select>
+
+    <select id="findPage" resultMap="FieldDefinitionResultMap">
+        SELECT <include refid="fieldColumns"/>
+        FROM field_definitions
+        <include refid="fieldFilters"/>
+        ORDER BY updated_at DESC, name ASC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(*)
+        FROM field_definitions
+        <include refid="fieldFilters"/>
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM field_definitions
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </delete>
+
+    <select id="countByName" resultType="long">
+        SELECT COUNT(*)
+        FROM field_definitions
+        WHERE owner_id = #{ownerId}
+          AND LOWER(name) = LOWER(#{name})
+        <if test="excludeId != null">
+            AND id &lt;&gt; #{excludeId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        </if>
+    </select>
+</mapper>

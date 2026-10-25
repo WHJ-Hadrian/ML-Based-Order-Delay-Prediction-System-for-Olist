@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -92,6 +93,38 @@ class DatasetUploadIntegrationTest {
                         .content("{}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("数据集10"));
+    }
+
+    @Test
+    void scopesDatasetAccessToAuthenticatedOwner() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/datasets")
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"private dataset\"}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID datasetId = UUID.fromString(objectMapper
+                .readTree(created.getResponse().getContentAsString())
+                .get("id")
+                .asText());
+
+        mockMvc.perform(get("/api/v1/datasets").with(jwt().jwt(token -> token.subject("owner-b"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.items", hasSize(0)));
+
+        mockMvc.perform(get("/api/v1/datasets/{id}", datasetId)
+                        .with(jwt().jwt(token -> token.subject("owner-b"))))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(delete("/api/v1/datasets/{id}", datasetId)
+                        .with(jwt().jwt(token -> token.subject("owner-b"))))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(get("/api/v1/datasets/{id}", datasetId)
+                        .with(jwt().jwt(token -> token.subject("owner-a"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("private dataset"));
     }
 
     @Test

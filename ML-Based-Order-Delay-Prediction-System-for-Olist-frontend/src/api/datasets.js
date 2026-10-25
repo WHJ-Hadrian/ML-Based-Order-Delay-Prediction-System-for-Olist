@@ -1,4 +1,15 @@
+import {
+  AUTH_REQUIRED_EVENT,
+  AuthenticationRequiredError,
+  getAccessToken,
+} from '@/auth/keycloak'
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1/datasets'
+
+function authenticationRequired() {
+  window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT))
+  return new AuthenticationRequiredError()
+}
 
 function extractError(body, fallback) {
   if (body && typeof body === 'object') {
@@ -9,6 +20,11 @@ function extractError(body, fallback) {
 
 async function request(url, options = {}) {
   const headers = new Headers(options.headers || {})
+  const token = await getAccessToken()
+  if (!token) {
+    throw authenticationRequired()
+  }
+  headers.set('Authorization', `Bearer ${token}`)
   if (options.body && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json')
   }
@@ -31,6 +47,9 @@ async function request(url, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw authenticationRequired()
+    }
     throw new Error(extractError(body, `请求失败（HTTP ${response.status}）`))
   }
   return body
@@ -107,7 +126,12 @@ export function deleteDatasetTable(datasetId, tableId) {
   )
 }
 
-function uploadFile(url, file, onProgress) {
+async function uploadFile(url, file, onProgress) {
+  const token = await getAccessToken()
+  if (!token) {
+    throw authenticationRequired()
+  }
+
   return new Promise((resolve, reject) => {
     const formData = new FormData()
     formData.append('file', file)
@@ -115,6 +139,7 @@ function uploadFile(url, file, onProgress) {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', url)
     xhr.responseType = 'text'
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`)
 
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable && onProgress) {
@@ -133,6 +158,10 @@ function uploadFile(url, file, onProgress) {
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(body)
+        return
+      }
+      if (xhr.status === 401) {
+        reject(authenticationRequired())
         return
       }
       reject(new Error(extractError(body, `上传失败（HTTP ${xhr.status}）`)))

@@ -2,6 +2,7 @@ package com.olist.gateway;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.web.server.SecurityWebFilterChain;
@@ -19,6 +20,13 @@ public class GatewaySecurityConfiguration {
                                 "/actuator/health/**",
                                 "/actuator/info",
                                 "/actuator/prometheus")
+                        .permitAll()
+                        .pathMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/auth/accounts/lookup",
+                                "/api/v1/auth/registration-codes",
+                                "/api/v1/auth/registration-codes/verify",
+                                "/api/v1/auth/registrations")
                         .permitAll()
                         .anyExchange()
                         .authenticated())

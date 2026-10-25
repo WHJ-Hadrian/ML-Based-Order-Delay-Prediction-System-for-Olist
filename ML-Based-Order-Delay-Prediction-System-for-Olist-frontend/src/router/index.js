@@ -4,10 +4,26 @@ import {
   NAVIGATION_ITEMS,
 } from '@/config/navigation'
 
+const authStudyPage = () => import('@/views/AuthStudyView.vue')
+
 const routes = [
   {
     path: '/',
     redirect: DEFAULT_NAVIGATION_PATH,
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: authStudyPage,
+    props: { mode: 'login' },
+    meta: { fullscreen: true },
+  },
+  {
+    path: '/register',
+    name: 'register',
+    component: authStudyPage,
+    props: { mode: 'register' },
+    meta: { fullscreen: true },
   },
   ...NAVIGATION_ITEMS.map(({ component, ...item }) => ({
     path: item.path,

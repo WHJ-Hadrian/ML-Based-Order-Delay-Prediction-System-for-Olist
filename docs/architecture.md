@@ -88,7 +88,7 @@ flowchart LR
 
 | 服务 | Compose 内部端口 | 当前可用入口 |
 | --- | --- | --- |
-| `api-gateway` | `8080` | 宿主机映射为 `http://localhost:8080`；路由 `/api/v1/orders/**`、`/api/v1/datasets/**`、`/api/v1/jobs/**`、`/api/v1/predictions/**`、`/api/v1/models/**`、`/api/v1/analytics/**`。 |
+| `api-gateway` | `8080` | 宿主机映射为 `http://localhost:8080`；路由 `/api/v1/orders/**`、`/api/v1/datasets/**`、`/api/v1/fields/**`、`/api/v1/rules/**`、`/api/v1/jobs/**`、`/api/v1/predictions/**`、`/api/v1/models/**`、`/api/v1/analytics/**`。 |
 | `order-service` | `8081` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
 | `dataset-service` | `8082` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
 | `job-service` | `8083` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
@@ -112,6 +112,7 @@ flowchart LR
 | ClickHouse 26.10 | 分析查询存储。 |
 | MLflow | 实验跟踪及模型注册；通过 `ml` 或 `apps` Compose profile 启动。模型产物存于 S3 兼容存储。 |
 | Keycloak 26 | OIDC 身份提供方；Gateway 与 Java 服务配置 JWT 校验。 |
+| Mailpit | 本地 SMTP 收件箱；用于查看 Keycloak 发出的邮箱验证和密码重置邮件，不需要短信服务。 |
 | Prometheus / Grafana | 通过 `observability` profile 启动，收集与展示服务指标。 |
 | Spark 4.1 | 通过 `batch` profile 启动的本地批处理运行时。 |
 | Flink 2.3 | 通过 `stream` profile 启动的本地流处理运行时。 |
@@ -149,7 +150,19 @@ docker compose up -d
 docker compose --profile apps up --build -d
 ```
 
-第一条 Compose 命令启动 MySQL、Kafka、Redis、LocalStack S3、ClickHouse、Temporal 和 Keycloak 等基础设施。第二条构建并启动 Gateway、全部 Java 服务、MLflow 和 Python 模型服务。首次构建需要下载镜像和依赖。
+第一条 Compose 命令启动 MySQL、Kafka、Redis、LocalStack S3、ClickHouse、Temporal、Keycloak 和 Mailpit 等基础设施。第二条构建并启动 Gateway、全部 Java 服务、MLflow 和 Python 模型服务。首次构建需要下载镜像和依赖。
+
+注册验证码由 Gateway 发出。本地邮件默认进入 Mailpit，可在 `http://localhost:8025` 查看；SMTP 端口 `1025` 也映射到宿主机，供 IDEA 启动 Gateway 使用。Keycloak Realm 禁止内建自助注册，避免绕过验证码 API。Realm JSON 只会在 Realm 首次导入时初始化；已有 `olist` Realm 不需要删除数据卷，但需运行以下初始化脚本同步关闭自助注册、设置 10 位密码策略、创建最小权限客户端，并允许只填写姓名的账号登录：
+
+```powershell
+docker compose up -d mysql redis mailpit keycloak
+node --env-file=.env infra/keycloak/configure-registration-client.mjs
+node --env-file=.env infra/keycloak/configure-user-profile.mjs
+```
+
+第一个脚本只授予客户端 `manage-users`、`query-users` 和 `view-users`，并输出生成的 `KEYCLOAK_REGISTRATION_CLIENT_SECRET`。将该值写入根目录 `.env`，同时用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 生成并填写 `REGISTRATION_OTP_SECRET`，然后重启 Gateway。第二个脚本将姓氏改为选填，并启用 `birthday`、`gender`、`picture` 等自定义属性；否则 Keycloak 会以“账号未完整设置”拒绝登录，且注册时填写的生日和性别会被丢弃。不要提交 `.env` 或把这些值放进前端环境变量。
+
+从 IDEA 或命令行启动 Gateway 时会自动导入根目录 `.env`（见 `application.yml` 中的 `spring.config.import`），Redis、Keycloak 管理 API、注册客户端密钥、OTP 密钥和 SMTP 发件配置都直接读取该文件。使用 QQ SMTP 发真实邮件时，在 `.env` 中设置 `SMTP_HOST=smtp.qq.com`、`SMTP_PORT=465`、`SMTP_AUTH=true`、`SMTP_SSL=true`、`SMTP_STARTTLS=false`，并填写 `SENDER_EMAIL` 和邮箱授权码 `SENDER_PASS`。`infra/keycloak/configure-qq-smtp.mjs` 是 Keycloak 自身邮件服务器的独立配置脚本，会先发送真实测试邮件；注册验证码不依赖它。
 
 常用检查命令：
 
@@ -230,12 +243,13 @@ docker compose --profile apps --profile stream up --build -d
 docker compose --profile observability up -d
 ```
 
-`batch` 启动 Spark，`stream` 启动 Flink，`observability` 启动 Prometheus 与 Grafana。Grafana 地址为 `http://localhost:3000`，Prometheus 地址为 `http://localhost:9090`。Temporal UI 地址为 `http://localhost:8233`，Keycloak 地址为 `http://localhost:8180`。
+`batch` 启动 Spark，`stream` 启动 Flink，`observability` 启动 Prometheus 与 Grafana。Grafana 地址为 `http://localhost:3000`，Prometheus 地址为 `http://localhost:9090`。Temporal UI 地址为 `http://localhost:8233`，Keycloak 地址为 `http://localhost:8180`，本地邮件收件箱为 `http://localhost:8025`。
 
 ## 7. 当前实现状态
 
 - Java Maven 工程和各服务启动类、基础安全及健康检查配置已经建立；服务模块边界和 Gateway 路由已配置。
-- Java 服务尚未实现订单、任务编排、预测、模型管理或分析查询等业务接口；数据集服务已实现文件上传、版本元数据查询和对象存储写入。
+- 前端使用邮箱先行的分步登录/注册界面：先调用账号查找接口确认邮箱存在并加载姓名与头像，再通过 Keycloak 密码授权换取 access token；注册流程按姓名、生日与性别、密码分步完成。Keycloak 托管主题保留为兜底入口，业务 API 使用 Keycloak 签发的 access token。数据集按 JWT `sub` 隔离。
+- Java 服务尚未实现订单、任务编排、预测、模型管理或分析查询等业务接口；数据集服务已实现文件上传、版本元数据查询、对象存储写入，以及字段库和清洗规则库的维护接口。
 - Python FastAPI 当前提供健康检查与指标基础；模型推理业务和 Temporal Worker 活动尚未实现。
 - `app/workers/` 与 `app/pipelines/` 当前包含职责说明，没有实际 Worker 或数据处理任务实现。
 - Kafka 基础设施与订单状态事件契约已配置；契约不代表订单事件的生产者和消费者业务逻辑已实现。

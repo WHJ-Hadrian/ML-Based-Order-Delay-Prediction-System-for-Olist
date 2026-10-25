@@ -4,6 +4,7 @@
 
     <resultMap id="DatasetVersionResultMap" type="com.olist.datasets.entity.DatasetVersion">
         <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
         <result column="name" property="name"/>
         <result column="description" property="description"/>
         <result column="original_filename" property="originalFilename"/>
@@ -20,16 +21,17 @@
     </resultMap>
 
     <sql id="DatasetVersionColumns">
-        id, name, description, original_filename, storage_key, size_bytes, sha256,
+        id, owner_id, name, description, original_filename, storage_key, size_bytes, sha256,
         content_type, status, table_count, row_count, file_count, created_at, updated_at
     </sql>
 
     <insert id="insert">
         INSERT INTO dataset_versions (
-            id, name, description, original_filename, storage_key, size_bytes, sha256,
+            id, owner_id, name, description, original_filename, storage_key, size_bytes, sha256,
             content_type, status, table_count, row_count, file_count, created_at, updated_at
         ) VALUES (
             #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId},
             #{name}, #{description,jdbcType=VARCHAR}, #{originalFilename},
             #{storageKey}, #{sizeBytes}, #{sha256}, #{contentType,jdbcType=VARCHAR}, #{status},
             #{tableCount}, #{rowCount}, #{fileCount},
@@ -42,12 +44,14 @@
         SELECT <include refid="DatasetVersionColumns"/>
         FROM dataset_versions
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
     </select>
 
     <select id="findByIdForUpdate" resultMap="DatasetVersionResultMap">
         SELECT <include refid="DatasetVersionColumns"/>
         FROM dataset_versions
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
         FOR UPDATE
     </select>
 
@@ -55,6 +59,7 @@
         SELECT <include refid="DatasetVersionColumns"/>
         FROM dataset_versions
         <where>
+            owner_id = #{ownerId}
             <if test="status != null">
                 status = #{status}
             </if>
@@ -79,6 +84,7 @@
         SELECT COUNT(*)
         FROM dataset_versions
         <where>
+            owner_id = #{ownerId}
             <if test="status != null">
                 status = #{status}
             </if>
@@ -112,15 +118,18 @@
             file_count = #{fileCount},
             updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
     </update>
 
     <select id="findNamesStartingWith" resultType="string">
         SELECT name
         FROM dataset_versions
         WHERE name LIKE #{pattern}
+          AND owner_id = #{ownerId}
     </select>
 
     <delete id="deleteById">
         DELETE FROM dataset_versions
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
     </delete></mapper>
