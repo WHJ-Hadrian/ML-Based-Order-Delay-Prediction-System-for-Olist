@@ -28,7 +28,7 @@ flowchart LR
     Workers[Python Worker]
 
     subgraph DataPlatform[数据与消息基础设施]
-        PostgreSQL[(PostgreSQL)]
+        MySQL[(MySQL)]
         Kafka[(Kafka)]
         ObjectStore[(S3 对象存储)]
         Temporal[Temporal]
@@ -49,11 +49,11 @@ flowchart LR
     Gateway --> Model
     Gateway --> Analytics
 
-    Order -. 订单领域数据 .-> PostgreSQL
-    Dataset -. 数据集元数据 .-> PostgreSQL
-    Job -. 任务数据 .-> PostgreSQL
-    Prediction -. 预测审计数据 .-> PostgreSQL
-    Model -. 模型元数据 .-> PostgreSQL
+    Order -. 订单领域数据 .-> MySQL
+    Dataset -. 数据集元数据 .-> MySQL
+    Job -. 任务数据 .-> MySQL
+    Prediction -. 预测审计数据 .-> MySQL
+    Model -. 模型元数据 .-> MySQL
     Analytics -. 查询分析数据 .-> ClickHouse
     Prediction -. 在线推理调用 .-> Serving
     Job -. 工作流控制 .-> Temporal
@@ -104,7 +104,7 @@ flowchart LR
 
 | 组件 | 当前用途与本地部署方式 |
 | --- | --- |
-| PostgreSQL 17 | Java 服务的关系型数据存储。本地 Compose 使用同一 PostgreSQL 实例，并按服务配置独立数据库，如 `olist_orders`、`olist_datasets`、`olist_jobs`、`olist_predictions`、`olist_models` 和 `olist_analytics`。 |
+| MySQL 8.4 | Java 服务的关系型数据存储。本地 Compose 使用同一 MySQL 实例，并按服务配置独立数据库，如 `olist_orders`、`olist_datasets`、`olist_jobs`、`olist_predictions`、`olist_models` 和 `olist_analytics`。 |
 | Kafka 4.4 | 订单领域事件的消息基础设施。当前 AsyncAPI 契约定义了 `orders.status-changed.v1` 事件。 |
 | LocalStack S3 | 本地 S3 兼容对象存储，初始化 `olist-artifacts` 与 `olist-lakehouse` 两个 bucket。文件和模型产物通过对象存储保存，而不是通过消息队列传输。 |
 | Temporal 1.29 | 长流程工作流运行时，供任务服务及 Worker 使用。 |
@@ -126,7 +126,7 @@ Kafka 用于可回放的领域事件；Temporal 用于有状态、可重试的�
 | `ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend/` | Java Maven 聚合工程，包含 Gateway、业务服务和共享 `platform-runtime` 模块；每个服务模块独立构建镜像。 |
 | `ML-Based-Order-Delay-Prediction-System-for-Olist-backend/` | Python FastAPI 模型服务及 Python 应用包。 |
 | `contracts/` | 跨服务消息契约，目前包含订单状态事件的 AsyncAPI 定义。 |
-| `infra/` | PostgreSQL 初始化、Keycloak Realm、MLflow、Prometheus 和 Grafana 本地配置。 |
+| `infra/` | MySQL 初始化、Keycloak Realm、MLflow、Prometheus 和 Grafana 本地配置。 |
 | `deploy/helm/` | Kubernetes Helm 部署模板。 |
 | `compose.yaml` | 本地基础设施和应用服务编排；Spark、Flink、MLflow、Prometheus/Grafana 按 Compose profile 启动。 |
 
@@ -149,7 +149,7 @@ docker compose up -d
 docker compose --profile apps up --build -d
 ```
 
-第一条 Compose 命令启动 PostgreSQL、Kafka、Redis、LocalStack S3、ClickHouse、Temporal 和 Keycloak 等基础设施。第二条构建并启动 Gateway、全部 Java 服务、MLflow 和 Python 模型服务。首次构建需要下载镜像和依赖。
+第一条 Compose 命令启动 MySQL、Kafka、Redis、LocalStack S3、ClickHouse、Temporal 和 Keycloak 等基础设施。第二条构建并启动 Gateway、全部 Java 服务、MLflow 和 Python 模型服务。首次构建需要下载镜像和依赖。
 
 常用检查命令：
 
@@ -178,6 +178,17 @@ docker compose --profile apps up --build -d dataset-service
 Set-Location .\ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
 .\mvnw.cmd -pl dataset-service -am spring-boot:run
 ```
+
+默认 `local` profile 使用文件型 H2（MySQL 兼容模式），零依赖即可启动。需要连接真实 MySQL 时，先在仓库根目录启动 MySQL，再用 `mysql` profile 启动服务：
+
+```powershell
+docker compose up -d mysql
+Set-Location .\ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
+.\mvnw.cmd -pl dataset-service -am -DskipTests package
+java -jar dataset-service\target\dataset-service-0.1.0-SNAPSHOT.jar --spring.profiles.active=mysql
+```
+
+Compose 将 MySQL 映射到宿主机 `3307`，`mysql` profile 默认使用 `olist / local-only-change-me`。可以用 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD` 覆盖连接参数。
 
 将 `dataset-service` 替换为 `order-service`、`job-service`、`prediction-service`、`model-management-service` 或 `analytics-query-service`，可运行对应模块。直接运行的模块端口见“服务入口”表。完整 Java 构建与测试：
 
@@ -224,7 +235,7 @@ docker compose --profile observability up -d
 ## 7. 当前实现状态
 
 - Java Maven 工程和各服务启动类、基础安全及健康检查配置已经建立；服务模块边界和 Gateway 路由已配置。
-- Java 服务尚未实现订单、数据集上传、任务编排、预测、模型管理或分析查询等业务接口。
+- Java 服务尚未实现订单、任务编排、预测、模型管理或分析查询等业务接口；数据集服务已实现文件上传、版本元数据查询和对象存储写入。
 - Python FastAPI 当前提供健康检查与指标基础；模型推理业务和 Temporal Worker 活动尚未实现。
 - `app/workers/` 与 `app/pipelines/` 当前包含职责说明，没有实际 Worker 或数据处理任务实现。
 - Kafka 基础设施与订单状态事件契约已配置；契约不代表订单事件的生产者和消费者业务逻辑已实现。

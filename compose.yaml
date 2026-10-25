@@ -1,22 +1,25 @@
 name: olist-platform
 
 services:
-  postgres:
-    image: postgres:17-alpine
+
+  mysql:
+    image: mysql:8.4
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-olist}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
-      POSTGRES_DB: postgres
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-local-only-change-me}
+      MYSQL_USER: ${MYSQL_USER:-olist}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-local-only-change-me}
+      MYSQL_DATABASE: olist_orders
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     ports:
-      - "5432:5432"
+      - "3307:3306"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+      - ./infra/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
       interval: 5s
       timeout: 5s
-      retries: 15
+      retries: 20
 
   kafka:
     image: apache/kafka:4.4.0
@@ -113,14 +116,14 @@ services:
   temporal:
     image: temporalio/auto-setup:1.29.7
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     environment:
-      DB: postgres12
-      DB_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-olist}
-      POSTGRES_PWD: ${POSTGRES_PASSWORD:-local-only-change-me}
-      POSTGRES_SEEDS: postgres
+      DB: mysql8
+      DB_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-olist}
+      MYSQL_PWD: ${MYSQL_PASSWORD:-local-only-change-me}
+      MYSQL_SEEDS: mysql
       DBNAME: temporal
       VISIBILITY_DBNAME: temporal_visibility
     ports:
@@ -139,14 +142,14 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     command: ["start-dev", "--import-realm", "--http-port=8080"]
     environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: ${POSTGRES_USER:-olist}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
+      KC_DB: mysql
+      KC_DB_URL: jdbc:mysql://mysql:3306/keycloak?useSSL=false&allowPublicKeyRetrieval=true
+      KC_DB_USERNAME: ${MYSQL_USER:-olist}
+      KC_DB_PASSWORD: ${MYSQL_PASSWORD:-local-only-change-me}
       KC_HOSTNAME: http://localhost:8180
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
@@ -162,7 +165,7 @@ services:
     build:
       context: ./infra/mlflow
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       object-store-init:
         condition: service_completed_successfully
@@ -174,7 +177,7 @@ services:
       - --port
       - "5000"
       - --backend-store-uri
-      - postgresql+psycopg2://${POSTGRES_USER:-olist}:${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/mlflow
+      - mysql+pymysql://${MYSQL_USER:-olist}:${MYSQL_PASSWORD:-local-only-change-me}@mysql:3306/mlflow
       - --serve-artifacts
       - --artifacts-destination
       - s3://olist-artifacts/mlflow
@@ -252,14 +255,14 @@ services:
       args:
         SERVICE_MODULE: order-service
     environment: &java-service-environment
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/olist_orders
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-olist}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
-      SPRING_DATASOURCE_DRIVER: org.postgresql.Driver
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_orders?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-olist}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-local-only-change-me}
+      SPRING_DATASOURCE_DRIVER: com.mysql.cj.jdbc.Driver
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/olist
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/olist/protocol/openid-connect/certs
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
 
   dataset-service:
@@ -271,11 +274,19 @@ services:
         SERVICE_MODULE: dataset-service
     environment:
       <<: *java-service-environment
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/olist_datasets
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_datasets?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8082
+      OLIST_STORAGE_TYPE: s3
+      OLIST_STORAGE_S3_ENDPOINT: http://localstack:4566
+      OLIST_STORAGE_S3_BUCKET: olist-artifacts
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      AWS_DEFAULT_REGION: us-east-1
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
+      object-store-init:
+        condition: service_completed_successfully
 
   job-service:
     profiles: ["apps"]
@@ -286,12 +297,12 @@ services:
         SERVICE_MODULE: job-service
     environment:
       <<: *java-service-environment
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/olist_jobs
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_jobs?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8083
       TEMPORAL_TARGET: temporal:7233
       TEMPORAL_NAMESPACE: default
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       temporal:
         condition: service_started
@@ -305,10 +316,10 @@ services:
         SERVICE_MODULE: prediction-service
     environment:
       <<: *java-service-environment
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/olist_predictions
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_predictions?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8084
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
 
   model-management-service:
@@ -320,10 +331,10 @@ services:
         SERVICE_MODULE: model-management-service
     environment:
       <<: *java-service-environment
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/olist_models
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_models?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8085
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
 
   analytics-query-service:
@@ -335,10 +346,10 @@ services:
         SERVICE_MODULE: analytics-query-service
     environment:
       <<: *java-service-environment
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/olist_analytics
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_analytics?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8086
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
 
   model-serving:
@@ -387,7 +398,7 @@ services:
       - ./infra/grafana/provisioning/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
 
 volumes:
-  postgres-data:
+  mysql-data:
   kafka-data:
   redis-data:
   localstack-data:

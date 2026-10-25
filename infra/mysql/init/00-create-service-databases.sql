@@ -1,0 +1,22 @@
+CREATE DATABASE IF NOT EXISTS olist_orders CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS olist_datasets CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS olist_jobs CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS olist_predictions CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS olist_models CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS olist_analytics CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS keycloak CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS mlflow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS temporal CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS temporal_visibility CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+GRANT ALL PRIVILEGES ON olist_orders.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON olist_datasets.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON olist_jobs.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON olist_predictions.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON olist_models.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON olist_analytics.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON keycloak.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON mlflow.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON temporal.* TO 'olist'@'%';
+GRANT ALL PRIVILEGES ON temporal_visibility.* TO 'olist'@'%';
+FLUSH PRIVILEGES;

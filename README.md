@@ -23,7 +23,7 @@ Java 应用位于 `ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
 
 ## 数据和消息
 
-- PostgreSQL 按服务隔离数据库和写入权；本地可共用一个 PostgreSQL 实例，生产按容量独立部署。
+- MySQL 按服务隔离数据库和写入权；本地可共用一个 MySQL 实例，生产按容量独立部署。
 - LocalStack 提供本地 S3 兼容对象存储；初始化时创建 `olist-artifacts` 和 `olist-lakehouse` bucket。原始文件、模型产物和 Iceberg 数据表不经 API 或消息队列传输。
 - Kafka 保存可回放的订单领域事件；事件契约在 `contracts/asyncapi.yaml`。
 - Temporal 编排导入、训练和批量预测工作流，负责持久化状态、重试、超时和取消。Kafka 不是长任务队列。

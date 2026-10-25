@@ -2,7 +2,7 @@ spring:
   application:
     name: job-service
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:olist_jobs;MODE=PostgreSQL;DB_CLOSE_DELAY=-1}
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:olist_jobs;MODE=MySQL;DB_CLOSE_DELAY=-1}
     username: ${SPRING_DATASOURCE_USERNAME:sa}
     password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: ${SPRING_DATASOURCE_DRIVER:org.h2.Driver}
