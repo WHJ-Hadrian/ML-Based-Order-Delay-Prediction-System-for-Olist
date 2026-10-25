@@ -9,9 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "pinia": "^4.0.3",
-    "vue": "^3.5.42",
-    "vue-router": "^5.3.1"
+    "@element-plus/icons-vue": "^2.3.2",
+    "element-plus": "^2.14.7",
+    "liquid-gl": "^3.0.0",
+    "vue": "^3.5.42"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
