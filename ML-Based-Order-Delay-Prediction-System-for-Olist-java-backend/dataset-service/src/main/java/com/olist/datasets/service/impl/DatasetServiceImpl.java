@@ -362,6 +362,7 @@ public class DatasetServiceImpl implements DatasetService {
         if (files.isEmpty() || tables.isEmpty()) {
             throw new InvalidDatasetException("数据集没有可发布的数据，不能标记为 READY");
         }
+        backfillMissingColumns(entity.getId(), files, tables, columns);
         if (columns.isEmpty()) {
             throw new InvalidDatasetException("数据集缺少列元数据，不能标记为 READY");
         }
@@ -1276,6 +1277,65 @@ public class DatasetServiceImpl implements DatasetService {
                 }
             }
         });
+    }
+    private void backfillMissingColumns(
+            UUID versionId,
+            List<DatasetFile> files,
+            List<DatasetTable> tables,
+            List<DatasetColumn> columns) {
+        Map<UUID, List<DatasetColumn>> columnsByTable = new HashMap<>();
+        for (DatasetColumn column : columns) {
+            columnsByTable
+                    .computeIfAbsent(column.getTableId(), ignored -> new ArrayList<>())
+                    .add(column);
+        }
+        Map<UUID, DatasetFile> filesById = new HashMap<>();
+        for (DatasetFile file : files) {
+            filesById.put(file.getId(), file);
+        }
+        Instant now = Instant.now();
+        for (DatasetTable table : tables) {
+            if (columnsByTable.containsKey(table.getId())) {
+                continue;
+            }
+            DatasetFile file = filesById.get(table.getFileId());
+            if (file == null) {
+                throw new InvalidDatasetException("数据表 " + table.getTableName() + " 找不到来源文件");
+            }
+            List<String> headerNames;
+            try (InputStream input = datasetStorage.open(file.getStorageKey())) {
+                TablePreview preview = tablePreviewReader.read(
+                        file.getOriginalFilename(),
+                        table.getFileName(),
+                        table.getTableName(),
+                        table.getTableFormat(),
+                        input,
+                        new TablePreviewOptions(0, 0, true, 1, 0));
+                headerNames = preview.columns();
+            } catch (IOException exception) {
+                throw new StorageException("读取数据表表头失败", exception);
+            }
+            List<DatasetColumn> tableColumns = new ArrayList<>(headerNames.size());
+            for (int ordinal = 0; ordinal < headerNames.size(); ordinal++) {
+                tableColumns.add(new DatasetColumn(
+                        UUID.randomUUID(),
+                        versionId,
+                        table.getId(),
+                        headerNames.get(ordinal),
+                        ordinal,
+                        "STRING",
+                        "STRING",
+                        ClickHouseNames.column(ordinal),
+                        ClickHouseNames.type("STRING", true),
+                        true,
+                        file.getId(),
+                        now));
+            }
+            if (!tableColumns.isEmpty()) {
+                datasetColumnMapper.insertBatch(tableColumns);
+                columns.addAll(tableColumns);
+            }
+        }
     }
     private void ensurePhysicalMetadata(List<DatasetTable> tables, List<DatasetColumn> columns) {
         for (DatasetTable table : tables) {

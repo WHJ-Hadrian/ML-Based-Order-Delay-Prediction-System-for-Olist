@@ -897,6 +897,24 @@ class DatasetUploadIntegrationTest {
     }
 
     @Test
+    void backfillsColumnsForLegacyVersionOnReady() throws Exception {
+        UUID versionId = createEmptyDataset("legacy-columns");
+        mockMvc.perform(multipart("/api/v1/datasets/{id}/files", versionId)
+                        .file(csvFile("legacy.csv", "order_id,status\n1,delivered\n")))
+                .andExpect(status().isOk());
+        jdbcTemplate.update("DELETE FROM dataset_columns WHERE dataset_version_id = ?", versionId);
+
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", versionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"));
+
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_columns WHERE dataset_version_id = ?",
+                        Long.class,
+                        versionId))
+                .isEqualTo(2L);
+    }
+    @Test
     void returnsCatalogAndExecutionSnapshotForReadyVersion() throws Exception {
         UUID versionId = createEmptyDataset("catalog-dataset");
         MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", versionId)
