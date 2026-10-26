@@ -21,4 +21,9 @@ public interface DatasetTableMapper {
     int deleteByIdAndDatasetId(@Param("id") UUID id, @Param("datasetId") UUID datasetId);
 
     long countByFileId(@Param("fileId") UUID fileId);
+
+    int updatePhysicalTable(
+            @Param("id") UUID id,
+            @Param("datasetId") UUID datasetId,
+            @Param("physicalTable") String physicalTable);
 }

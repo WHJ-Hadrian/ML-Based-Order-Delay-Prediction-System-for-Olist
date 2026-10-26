@@ -2,6 +2,8 @@ package com.olist.datasets.profiler;
 
 import com.olist.datasets.enums.DatasetFormat;
 import java.io.InputStream;
+import java.util.List;
+import java.util.function.Consumer;
 
 public interface TablePreviewReader {
 
@@ -33,4 +35,12 @@ public interface TablePreviewReader {
             long offset,
             int limit,
             long maxScannedRows);
+
+    void forEachRow(
+            String datasetFilename,
+            String sourceFile,
+            String tableName,
+            DatasetFormat tableFormat,
+            InputStream input,
+            Consumer<List<String>> consumer);
 }

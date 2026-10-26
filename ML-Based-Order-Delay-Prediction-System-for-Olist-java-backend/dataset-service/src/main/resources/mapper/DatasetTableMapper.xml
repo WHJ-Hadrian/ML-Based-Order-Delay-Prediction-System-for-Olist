@@ -63,6 +63,12 @@
           AND dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
     </delete>
 
+    <update id="updatePhysicalTable">
+        UPDATE dataset_tables
+        SET physical_table = #{physicalTable}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </update>
     <select id="countByFileId" resultType="long">
         SELECT COUNT(*)
         FROM dataset_tables

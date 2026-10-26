@@ -107,6 +107,7 @@ services:
       - "9002:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      - ./infra/clickhouse/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s
@@ -309,11 +310,18 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
       AWS_DEFAULT_REGION: us-east-1
+      CLICKHOUSE_ENABLED: "true"
+      CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123
+      CLICKHOUSE_DATABASE: olist_datasets
+      CLICKHOUSE_USER: olist
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local-clickhouse-only}
     depends_on:
       mysql:
         condition: service_healthy
       object-store-init:
         condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
 
   job-service:
     profiles: ["apps"]

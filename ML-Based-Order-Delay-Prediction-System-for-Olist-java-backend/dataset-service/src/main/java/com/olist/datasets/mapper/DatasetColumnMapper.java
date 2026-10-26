@@ -13,4 +13,10 @@ public interface DatasetColumnMapper {
             @Param("datasetVersionId") UUID datasetVersionId);
 
     List<DatasetColumn> findByTableId(@Param("tableId") UUID tableId);
+
+    int updatePhysicalMetadata(
+            @Param("id") UUID id,
+            @Param("logicalType") String logicalType,
+            @Param("physicalName") String physicalName,
+            @Param("clickhouseType") String clickhouseType);
 }

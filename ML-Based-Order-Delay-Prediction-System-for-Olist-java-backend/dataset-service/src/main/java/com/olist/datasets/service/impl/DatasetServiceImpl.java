@@ -1,5 +1,7 @@
 package com.olist.datasets.service.impl;
 
+import com.olist.datasets.clickhouse.ClickHouseDatasetLoader;
+import com.olist.datasets.clickhouse.ClickHouseNames;
 import com.olist.datasets.config.ClickHouseProperties;
 import com.olist.datasets.config.TableSearchProperties;
 import com.olist.datasets.convert.DatasetConverter;
@@ -116,6 +118,7 @@ public class DatasetServiceImpl implements DatasetService {
     private final DatasetOwnerProvider datasetOwnerProvider;
     private final TableSearchProperties tableSearchProperties;
     private final ClickHouseProperties clickHouseProperties;
+    private final ClickHouseDatasetLoader clickHouseDatasetLoader;
 
     public DatasetServiceImpl(
             DatasetVersionMapper datasetVersionMapper,
@@ -131,7 +134,8 @@ public class DatasetServiceImpl implements DatasetService {
             TablePreviewReader tablePreviewReader,
             DatasetOwnerProvider datasetOwnerProvider,
             TableSearchProperties tableSearchProperties,
-            ClickHouseProperties clickHouseProperties) {
+            ClickHouseProperties clickHouseProperties,
+            ClickHouseDatasetLoader clickHouseDatasetLoader) {
         this.datasetVersionMapper = datasetVersionMapper;
         this.datasetMapper = datasetMapper;
         this.datasetColumnMapper = datasetColumnMapper;
@@ -146,6 +150,7 @@ public class DatasetServiceImpl implements DatasetService {
         this.datasetOwnerProvider = datasetOwnerProvider;
         this.tableSearchProperties = tableSearchProperties;
         this.clickHouseProperties = clickHouseProperties;
+        this.clickHouseDatasetLoader = clickHouseDatasetLoader;
     }
 
     @Override
@@ -359,6 +364,11 @@ public class DatasetServiceImpl implements DatasetService {
         }
         if (columns.isEmpty()) {
             throw new InvalidDatasetException("数据集缺少列元数据，不能标记为 READY");
+        }
+        ensurePhysicalMetadata(tables, columns);
+        clickHouseDatasetLoader.load(entity, files, tables, columns);
+        if (clickHouseDatasetLoader.isEnabled()) {
+            dropClickHouseTablesOnRollback(tables);
         }
         Instant now = Instant.now();
         entity.setName(dataset.getName());
@@ -851,7 +861,7 @@ public class DatasetServiceImpl implements DatasetService {
                     source.getColumnCount(),
                     source.getOrdinal());
             copy.setTableKey(source.getTableKey());
-            copy.setPhysicalTable(null);
+            copy.setPhysicalTable(ClickHouseNames.table(target.getId(), copy.getId()));
             targetTables.add(copy);
             tableIds.put(source.getId(), copy.getId());
         }
@@ -1156,7 +1166,7 @@ public class DatasetServiceImpl implements DatasetService {
                     profile.columnCount(),
                     ordinal++);
             table.setTableKey(tableKey(sourceFile, profile.name()));
-            table.setPhysicalTable("ds_" + compactUuid(datasetId) + "_" + compactUuid(tableId));
+            table.setPhysicalTable(ClickHouseNames.table(datasetId, tableId));
             tables.add(table);
         }
         return tables;
@@ -1180,8 +1190,8 @@ public class DatasetServiceImpl implements DatasetService {
                         profile.ordinal(),
                         profile.dataType(),
                         profile.dataType(),
-                        null,
-                        null,
+                        ClickHouseNames.column(profile.ordinal()),
+                        ClickHouseNames.type(profile.dataType(), true),
                         true,
                         fileId,
                         now));
@@ -1254,6 +1264,60 @@ public class DatasetServiceImpl implements DatasetService {
         }
     }
 
+    private void dropClickHouseTablesOnRollback(List<DatasetTable> tables) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    clickHouseDatasetLoader.drop(tables);
+                }
+            }
+        });
+    }
+    private void ensurePhysicalMetadata(List<DatasetTable> tables, List<DatasetColumn> columns) {
+        for (DatasetTable table : tables) {
+            if (table.getPhysicalTable() == null || table.getPhysicalTable().isBlank()) {
+                String physicalTable = ClickHouseNames.table(table.getDatasetId(), table.getId());
+                if (datasetTableMapper.updatePhysicalTable(
+                                table.getId(), table.getDatasetId(), physicalTable)
+                        != 1) {
+                    throw new StorageException("数据表物理元数据更新失败");
+                }
+                table.setPhysicalTable(physicalTable);
+            }
+        }
+        for (DatasetColumn column : columns) {
+            String physicalName = column.getPhysicalName();
+            String logicalType = column.getLogicalType();
+            String clickhouseType = column.getClickhouseType();
+            boolean changed = false;
+            if (physicalName == null || physicalName.isBlank()) {
+                physicalName = ClickHouseNames.column(column.getOrdinal());
+                changed = true;
+            }
+            if (logicalType == null || logicalType.isBlank()) {
+                logicalType = column.getDataType();
+                changed = true;
+            }
+            if (clickhouseType == null || clickhouseType.isBlank()) {
+                clickhouseType = ClickHouseNames.type(logicalType, column.isNullable());
+                changed = true;
+            }
+            if (changed) {
+                if (datasetColumnMapper.updatePhysicalMetadata(
+                                column.getId(), logicalType, physicalName, clickhouseType)
+                        != 1) {
+                    throw new StorageException("列物理元数据更新失败");
+                }
+                column.setLogicalType(logicalType);
+                column.setPhysicalName(physicalName);
+                column.setClickhouseType(clickhouseType);
+            }
+        }
+    }
     private void ensureMutable(DatasetVersion entity) {
         if (entity.getStatus() == DatasetStatus.READY) {
             throw new DatasetVersionImmutableException(
@@ -1266,9 +1330,6 @@ public class DatasetServiceImpl implements DatasetService {
         return key.length() > MAX_TABLE_NAME_LENGTH ? key.substring(0, MAX_TABLE_NAME_LENGTH) : key;
     }
 
-    private String compactUuid(UUID id) {
-        return id.toString().replace("-", "");
-    }
 
     private String store(String key, MultipartFile file) {
         try {

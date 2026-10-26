@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import javax.xml.parsers.SAXParserFactory;
@@ -130,6 +131,34 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
         }
     }
 
+    @Override
+    public void forEachRow(
+            String datasetFilename,
+            String sourceFile,
+            String tableName,
+            DatasetFormat tableFormat,
+            InputStream input,
+            Consumer<List<String>> consumer) {
+        DatasetFormat container = DatasetFormat.fromFilename(datasetFilename)
+                .orElseThrow(() -> new InvalidDatasetException("无法识别数据文件格式"));
+        DatasetFormat format = resolveFormat(sourceFile, tableFormat);
+        try {
+            if (container == DatasetFormat.ZIP) {
+                forEachRowFromZip(input, sourceFile, tableName, format, consumer);
+                return;
+            }
+            if (format == DatasetFormat.XLSX) {
+                forEachRowXlsx(input, tableName, consumer);
+                return;
+            }
+            forEachRowDelimited(input, delimiterOf(format), consumer);
+        } catch (InvalidDatasetException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            LOGGER.warn("Failed to stream rows for table {}", tableName, exception);
+            throw new InvalidDatasetException("读取数据表行失败，请确认文件内容完整", exception);
+        }
+    }
     private TablePreview readFromZip(
             InputStream input,
             String sourceFile,
@@ -206,6 +235,69 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
         throw new InvalidDatasetException("压缩包中找不到数据表来源文件 " + sourceFile);
     }
 
+    private void forEachRowFromZip(
+            InputStream input,
+            String sourceFile,
+            String tableName,
+            DatasetFormat format,
+            Consumer<List<String>> consumer) throws Exception {
+        String target = normalizeEntryName(sourceFile);
+        try (ZipInputStream zip = new ZipInputStream(input, StandardCharsets.UTF_8)) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                String entryName = normalizeEntryName(entry.getName());
+                if (!entryName.equals(target)) {
+                    continue;
+                }
+                if (format == DatasetFormat.XLSX) {
+                    forEachRowXlsx(zip, sheetNameOf(tableName), consumer);
+                } else {
+                    forEachRowDelimited(zip, delimiterOf(format), consumer);
+                }
+                return;
+            }
+        }
+        throw new InvalidDatasetException("压缩包中找不到数据表来源文件 " + sourceFile);
+    }
+
+    private void forEachRowDelimited(
+            InputStream input, char delimiter, Consumer<List<String>> consumer) throws IOException {
+        try (PushbackReader reader = readerOf(input);
+                CSVParser parser = new CSVParser(reader, csvFormatOf(delimiter))) {
+            List<String> columns = columnsOf(parser);
+            for (CSVRecord record : parser) {
+                consumer.accept(rawRowOf(record, columns.size()));
+            }
+        }
+    }
+
+    private void forEachRowXlsx(
+            InputStream input, String sheetName, Consumer<List<String>> consumer) throws Exception {
+        try (OPCPackage pkg = OPCPackage.open(input)) {
+            XSSFReader reader = new XSSFReader(pkg);
+            ReadOnlySharedStringsTable sharedStrings = new ReadOnlySharedStringsTable(pkg);
+            StylesTable styles = reader.getStylesTable();
+            XSSFReader.SheetIterator sheets = (XSSFReader.SheetIterator) reader.getSheetsData();
+            while (sheets.hasNext()) {
+                try (InputStream sheetStream = sheets.next()) {
+                    if (!sheets.getSheetName().equals(sheetName)) {
+                        continue;
+                    }
+                    parseSheet(sheetStream, styles, sharedStrings, new RowStreamHandler(consumer));
+                    return;
+                }
+            }
+        }
+        throw new InvalidDatasetException("Excel 文件中找不到工作表 " + sheetName);
+    }
+
+    private List<String> rawRowOf(CSVRecord record, int columns) {
+        List<String> row = new ArrayList<>(columns);
+        for (int index = 0; index < columns; index++) {
+            row.add(index < record.size() ? record.get(index) : "");
+        }
+        return row;
+    }
     private TablePreview readDelimited(
             InputStream input, char delimiter, TablePreviewOptions options) throws IOException {
         try (PushbackReader reader = readerOf(input);
@@ -519,6 +611,50 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
         return Math.max(index - 1, 0);
     }
 
+    private static final class RowStreamHandler implements XSSFSheetXMLHandler.SheetContentsHandler {
+
+        private final Consumer<List<String>> consumer;
+        private final List<String> columns = new ArrayList<>();
+        private List<String> currentRow = new ArrayList<>();
+        private boolean headerRead;
+
+        private RowStreamHandler(Consumer<List<String>> consumer) {
+            this.consumer = consumer;
+        }
+
+        @Override
+        public void startRow(int rowNum) {
+            currentRow = new ArrayList<>();
+        }
+
+        @Override
+        public void endRow(int rowNum) {
+            trimTrailingBlanks(currentRow);
+            if (currentRow.isEmpty()) {
+                return;
+            }
+            if (!headerRead) {
+                columns.addAll(currentRow);
+                headerRead = true;
+                return;
+            }
+            consumer.accept(normalizeRow(currentRow, columns.size()));
+        }
+
+        @Override
+        public void cell(String cellReference, String formattedValue, XSSFComment comment) {
+            int index = columnIndex(cellReference);
+            while (currentRow.size() <= index) {
+                currentRow.add("");
+            }
+            currentRow.set(index, formattedValue == null ? "" : formattedValue);
+        }
+
+        @Override
+        public void headerFooter(String text, boolean isHeader, String tagName) {
+            // Header and footer rows are not part of the table.
+        }
+    }
     private static final class PreviewSheetHandler implements XSSFSheetXMLHandler.SheetContentsHandler {
 
         private final TablePreviewOptions options;

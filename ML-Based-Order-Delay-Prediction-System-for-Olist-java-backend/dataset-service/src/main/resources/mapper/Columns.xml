@@ -41,6 +41,13 @@
         </foreach>
     </insert>
 
+    <update id="updatePhysicalMetadata">
+        UPDATE dataset_columns
+        SET logical_type = #{logicalType},
+            physical_name = #{physicalName},
+            clickhouse_type = #{clickhouseType}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </update>
     <select id="findByDatasetVersionId" resultMap="DatasetColumnResultMap">
         SELECT <include refid="DatasetColumnColumns"/>
         FROM dataset_columns

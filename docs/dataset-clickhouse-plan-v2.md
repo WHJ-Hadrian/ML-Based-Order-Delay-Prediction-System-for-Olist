@@ -2,7 +2,7 @@
 
 > 输入：`docs/dataset-clickhouse-handoff.md`（v1）、`dataset-clickhouse-reply.md`  
 > 日期：2026-10-26  
-> 状态：V10、列元数据、READY、`addFile` 新版本和字段绑定迁移已实现并通过 H2/MySQL 验证；ClickHouse 导入待做  
+> 状态：V10、列元数据、READY、`addFile` 新版本、字段绑定迁移、Catalog/execution snapshot 和 ClickHouse 导入已实现；H2 全量测试通过，真实 ClickHouse 端到端待 Docker 环境验证  
 > 重要：本文件取代 v1 handoff 中的默认假设。
 
 ---
@@ -785,10 +785,33 @@ V9 里 `rule_runs` 和 `rule_workbook_versions` 对 workbook 是 `ON DELETE CASC
 
 ---
 
-## 13. 下一步
+## 13. 本轮实现状态（2026-10-26）
 
-1. 做 ClickHouse 连接、`olist_datasets` 建库建表和异步导入。
-2. 做逻辑 Catalog / execution snapshot。
-3. 做输出登记 API（Parquet + manifest）。
+### 13.1 已落地
+
+- 逻辑 Catalog：`GET /api/v1/datasets/{id}/catalog`、`GET /api/v1/dataset-versions/{id}/catalog`。
+- execution snapshot：`GET /internal/dataset-versions/{id}/execution-snapshot`，只返回物理表/列和 `clickhouseDatabase`。
+- Catalog 不含 `physicalTable`、`physicalName`、`clickhouseType`，物理名只在 snapshot 暴露。
+- 两个接口都要求版本为 `READY`，否则返回 `409`（`数据集未就绪`）。
+- 上传时即生成物理元数据：`physicalTable = ds_<versionId 去横线>_<tableId 去横线>`，`physicalName = c{ordinal:03d}`，`clickhouseType = Nullable(String)`。
+- `READY` 时执行 ClickHouse 导入：建库 `olist_datasets`、建 `MergeTree` 表、批量插入、按 profiler 行数校验。
+- 导入失败会删除本次已建的表；数据库事务回滚时也会触发同样的清理。
+- `addFile` 克隆版本时为新表生成新的物理表名，v1 不共享 `physical_table`。
+- ClickHouse 连接配置：`CLICKHOUSE_ENABLED`、`CLICKHOUSE_URL`、`CLICKHOUSE_DATABASE`、`CLICKHOUSE_USER`、`CLICKHOUSE_PASSWORD`。
+- `compose.yaml` 中 `dataset-service` 已接 ClickHouse，并新增 `infra/clickhouse/init/00-create-databases.sql` 初始化 `olist_datasets`、`olist_rule_staging`。
+
+### 13.2 当前约束
+
+- 所有列暂时统一为 `Nullable(String)`；类型推断和 `FLOAT/DATE` 映射后续再做。
+- 导入在 `READY` 的数据库事务内同步执行；大文件需要改为异步任务，避免长事务和接口超时。
+- 真实 ClickHouse 端到端尚未在本机验证（Docker 未启动）；单测覆盖了导入编排、行数校验、失败清理和禁用开关。
+- 输出登记 API（Parquet + manifest）尚未实现。
+- V11 规则工作簿审计外键/软删除尚未实现。
+
+## 14. 下一步
+
+1. 在 Docker 环境跑一次真实 ClickHouse 导入的端到端验证。
+2. 做输出登记 API（Parquet + manifest），复用同一套物理元数据和 READY 校验。
+3. 把大文件导入改为异步任务，并补导入进度/失败状态。
 4. 做 V11 规则审计外键/软删除。
-5. 做权限边界、ClickHouse 集成测试和预览/查询切换。
+5. 做权限边界、ClickHouse 只读账号和预览/查询切换。

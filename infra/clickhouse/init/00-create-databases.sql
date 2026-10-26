@@ -1,0 +1,2 @@
+CREATE DATABASE IF NOT EXISTS olist_datasets;
+CREATE DATABASE IF NOT EXISTS olist_rule_staging;
