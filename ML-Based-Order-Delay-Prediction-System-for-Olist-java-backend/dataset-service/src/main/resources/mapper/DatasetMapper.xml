@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.DatasetMapper">
+
+    <resultMap id="DatasetResultMap" type="com.olist.datasets.entity.Dataset">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="name" property="name"/>
+        <result column="description" property="description"/>
+        <result column="current_version_id" property="currentVersionId"
+                typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="updated_at" property="updatedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="deleted_at" property="deletedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <sql id="DatasetColumns">
+        id, owner_id, name, description, current_version_id, created_at, updated_at, deleted_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO datasets (
+            id, owner_id, name, description, current_version_id, created_at, updated_at, deleted_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId}, #{name}, #{description,jdbcType=VARCHAR},
+            #{currentVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{deletedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findById" resultMap="DatasetResultMap">
+        SELECT <include refid="DatasetColumns"/>
+        FROM datasets
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND deleted_at IS NULL
+    </select>
+
+    <select id="findByIdForUpdate" resultMap="DatasetResultMap">
+        SELECT <include refid="DatasetColumns"/>
+        FROM datasets
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="updateMetadata">
+        UPDATE datasets
+        SET name = #{name},
+            description = #{description,jdbcType=VARCHAR},
+            updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="updateCurrentVersion">
+        UPDATE datasets
+        SET current_version_id = #{currentVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="softDelete">
+        UPDATE datasets
+        SET deleted_at = #{deletedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND deleted_at IS NULL
+    </update>
+
+    <delete id="deleteIfNoVersions">
+        DELETE FROM datasets
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND NOT EXISTS (
+              SELECT 1
+              FROM dataset_versions
+              WHERE dataset_id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          )
+    </delete>
+</mapper>

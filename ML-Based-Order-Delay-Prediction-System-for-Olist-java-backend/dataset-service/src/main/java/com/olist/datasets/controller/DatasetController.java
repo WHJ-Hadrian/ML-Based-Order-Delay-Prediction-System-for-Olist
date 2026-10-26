@@ -7,7 +7,9 @@ import com.olist.datasets.dto.DatasetUpdateRequest;
 import com.olist.datasets.dto.DatasetUploadRequest;
 import com.olist.datasets.service.DatasetService;
 import com.olist.datasets.vo.DatasetDetailVO;
+import com.olist.datasets.vo.DatasetReadinessVO;
 import com.olist.datasets.vo.DatasetVO;
+import com.olist.datasets.vo.DatasetVersionVO;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.TablePreviewVO;
 import com.olist.datasets.vo.TableRowSearchVO;
@@ -75,6 +77,16 @@ public class DatasetController {
         return datasetService.addFile(id, file);
     }
 
+    @PostMapping("/{id}/ready")
+    public DatasetReadinessVO ready(@PathVariable UUID id) {
+        return datasetService.ready(id);
+    }
+
+    @GetMapping("/{id}/readiness")
+    public DatasetReadinessVO readiness(@PathVariable UUID id) {
+        return datasetService.readiness(id);
+    }
+
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<DatasetVO> upload(@Valid @ModelAttribute DatasetUploadRequest request) {
         DatasetVO dataset = datasetService.upload(request);
@@ -113,6 +125,16 @@ public class DatasetController {
     @GetMapping("/{id}")
     public DatasetDetailVO get(@PathVariable UUID id) {
         return datasetService.get(id);
+    }
+
+    @GetMapping("/{id}/versions")
+    public java.util.List<DatasetVersionVO> versions(@PathVariable UUID id) {
+        return datasetService.versions(id);
+    }
+
+    @GetMapping("/{id}/versions/current")
+    public DatasetDetailVO currentVersion(@PathVariable UUID id) {
+        return datasetService.currentVersion(id);
     }
 
     @GetMapping

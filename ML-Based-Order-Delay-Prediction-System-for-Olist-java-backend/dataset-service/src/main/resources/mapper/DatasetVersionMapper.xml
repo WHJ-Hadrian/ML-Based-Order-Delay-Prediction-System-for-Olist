@@ -4,6 +4,9 @@
 
     <resultMap id="DatasetVersionResultMap" type="com.olist.datasets.entity.DatasetVersion">
         <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="dataset_id" property="datasetId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="version_no" property="versionNo"/>
+        <result column="parent_version_id" property="parentVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
         <result column="owner_id" property="ownerId"/>
         <result column="name" property="name"/>
         <result column="description" property="description"/>
@@ -16,25 +19,50 @@
         <result column="table_count" property="tableCount"/>
         <result column="row_count" property="rowCount"/>
         <result column="file_count" property="fileCount"/>
+        <result column="manifest_hash" property="manifestHash"/>
+        <result column="schema_hash" property="schemaHash"/>
+        <result column="source_type" property="sourceType"/>
+        <result column="source_run_id" property="sourceRunId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="source_workbook_version_id" property="sourceWorkbookVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="source_node_id" property="sourceNodeId"/>
+        <result column="ready_at" property="readyAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="archived_at" property="archivedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="deleted_at" property="deletedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
         <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
         <result column="updated_at" property="updatedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
     </resultMap>
 
     <sql id="DatasetVersionColumns">
-        id, owner_id, name, description, original_filename, storage_key, size_bytes, sha256,
-        content_type, status, table_count, row_count, file_count, created_at, updated_at
+        id, dataset_id, version_no, parent_version_id, owner_id, name, description,
+        original_filename, storage_key, size_bytes, sha256, content_type, status,
+        table_count, row_count, file_count, manifest_hash, schema_hash, source_type,
+        source_run_id, source_workbook_version_id, source_node_id, ready_at, archived_at,
+        deleted_at, created_at, updated_at
     </sql>
 
     <insert id="insert">
         INSERT INTO dataset_versions (
-            id, owner_id, name, description, original_filename, storage_key, size_bytes, sha256,
-            content_type, status, table_count, row_count, file_count, created_at, updated_at
+            id, dataset_id, version_no, parent_version_id, owner_id, name, description,
+            original_filename, storage_key, size_bytes, sha256, content_type, status,
+            table_count, row_count, file_count, manifest_hash, schema_hash, source_type,
+            source_run_id, source_workbook_version_id, source_node_id, ready_at, archived_at,
+            deleted_at, created_at, updated_at
         ) VALUES (
             #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{versionNo},
+            #{parentVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
             #{ownerId},
             #{name}, #{description,jdbcType=VARCHAR}, #{originalFilename},
             #{storageKey}, #{sizeBytes}, #{sha256}, #{contentType,jdbcType=VARCHAR}, #{status},
             #{tableCount}, #{rowCount}, #{fileCount},
+            #{manifestHash,jdbcType=CHAR}, #{schemaHash,jdbcType=CHAR}, #{sourceType,jdbcType=VARCHAR},
+            #{sourceRunId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{sourceWorkbookVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{sourceNodeId,jdbcType=VARCHAR},
+            #{readyAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{archivedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{deletedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
             #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
             #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
         )
@@ -45,6 +73,8 @@
         FROM dataset_versions
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND owner_id = #{ownerId}
+          AND archived_at IS NULL
+          AND deleted_at IS NULL
     </select>
 
     <select id="findByIdForUpdate" resultMap="DatasetVersionResultMap">
@@ -52,52 +82,72 @@
         FROM dataset_versions
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND owner_id = #{ownerId}
+          AND archived_at IS NULL
+          AND deleted_at IS NULL
         FOR UPDATE
     </select>
 
-    <select id="findPage" resultMap="DatasetVersionResultMap">
+    <select id="findByDatasetId" resultMap="DatasetVersionResultMap">
         SELECT <include refid="DatasetVersionColumns"/>
         FROM dataset_versions
+        WHERE dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+        ORDER BY version_no DESC
+    </select>
+
+    <select id="nextVersionNo" resultType="int">
+        SELECT COALESCE(MAX(version_no), 0) + 1
+        FROM dataset_versions
+        WHERE dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </select>
+
+    <select id="findPage" resultMap="DatasetVersionResultMap">
+        SELECT v.*
+        FROM dataset_versions v
+        JOIN datasets d ON d.current_version_id = v.id
         <where>
-            owner_id = #{ownerId}
+            v.owner_id = #{ownerId}
+            AND d.deleted_at IS NULL
             <if test="status != null">
-                status = #{status}
+                AND v.status = #{status}
             </if>
             <if test="keywordPattern != null">
-                AND (LOWER(name) LIKE #{keywordPattern} OR LOWER(original_filename) LIKE #{keywordPattern})
+                AND (LOWER(v.name) LIKE #{keywordPattern} OR LOWER(v.original_filename) LIKE #{keywordPattern})
             </if>
             <if test="formatPattern != null">
-                AND LOWER(original_filename) LIKE #{formatPattern}
+                AND LOWER(v.original_filename) LIKE #{formatPattern}
             </if>
             <if test="hasData != null">
                 <choose>
-                    <when test="hasData">AND table_count &gt; 0</when>
-                    <otherwise>AND table_count = 0</otherwise>
+                    <when test="hasData">AND v.table_count &gt; 0</when>
+                    <otherwise>AND v.table_count = 0</otherwise>
                 </choose>
             </if>
         </where>
-        ORDER BY created_at DESC
+        ORDER BY v.created_at DESC
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
     <select id="count" resultType="long">
         SELECT COUNT(*)
-        FROM dataset_versions
+        FROM dataset_versions v
+        JOIN datasets d ON d.current_version_id = v.id
         <where>
-            owner_id = #{ownerId}
+            v.owner_id = #{ownerId}
+            AND d.deleted_at IS NULL
             <if test="status != null">
-                status = #{status}
+                AND v.status = #{status}
             </if>
             <if test="keywordPattern != null">
-                AND (LOWER(name) LIKE #{keywordPattern} OR LOWER(original_filename) LIKE #{keywordPattern})
+                AND (LOWER(v.name) LIKE #{keywordPattern} OR LOWER(v.original_filename) LIKE #{keywordPattern})
             </if>
             <if test="formatPattern != null">
-                AND LOWER(original_filename) LIKE #{formatPattern}
+                AND LOWER(v.original_filename) LIKE #{formatPattern}
             </if>
             <if test="hasData != null">
                 <choose>
-                    <when test="hasData">AND table_count &gt; 0</when>
-                    <otherwise>AND table_count = 0</otherwise>
+                    <when test="hasData">AND v.table_count &gt; 0</when>
+                    <otherwise>AND v.table_count = 0</otherwise>
                 </choose>
             </if>
         </where>
@@ -116,6 +166,15 @@
             table_count = #{tableCount},
             row_count = #{rowCount},
             file_count = #{fileCount},
+            manifest_hash = #{manifestHash,jdbcType=CHAR},
+            schema_hash = #{schemaHash,jdbcType=CHAR},
+            source_type = #{sourceType,jdbcType=VARCHAR},
+            source_run_id = #{sourceRunId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            source_workbook_version_id = #{sourceWorkbookVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            source_node_id = #{sourceNodeId,jdbcType=VARCHAR},
+            ready_at = #{readyAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            archived_at = #{archivedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            deleted_at = #{deletedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
             updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND owner_id = #{ownerId}
@@ -132,4 +191,20 @@
         DELETE FROM dataset_versions
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND owner_id = #{ownerId}
-    </delete></mapper>
+    </delete>
+
+    <update id="archiveByDatasetId">
+        UPDATE dataset_versions
+        SET archived_at = #{archivedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND archived_at IS NULL
+    </update>
+
+    <select id="countByDatasetId" resultType="long">
+        SELECT COUNT(*)
+        FROM dataset_versions
+        WHERE dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </select>
+</mapper>

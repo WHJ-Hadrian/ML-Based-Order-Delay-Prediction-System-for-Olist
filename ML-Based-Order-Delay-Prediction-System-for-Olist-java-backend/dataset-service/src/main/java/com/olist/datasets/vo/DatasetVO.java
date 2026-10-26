@@ -19,5 +19,7 @@ public record DatasetVO(
         long rowCount,
         int fileCount,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        UUID datasetId,
+        UUID datasetVersionId) {
 }

@@ -11,6 +11,7 @@ public class DatasetFile {
     private String storageKey;
     private long sizeBytes;
     private String sha256;
+    private String blobSha256;
     private String contentType;
     private Instant createdAt;
 
@@ -82,6 +83,14 @@ public class DatasetFile {
 
     public void setSha256(String sha256) {
         this.sha256 = sha256;
+    }
+
+    public String getBlobSha256() {
+        return blobSha256;
+    }
+
+    public void setBlobSha256(String blobSha256) {
+        this.blobSha256 = blobSha256;
     }
 
     public String getContentType() {

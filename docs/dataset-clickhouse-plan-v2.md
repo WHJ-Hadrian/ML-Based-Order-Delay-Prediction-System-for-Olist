@@ -2,7 +2,7 @@
 
 > 输入：`docs/dataset-clickhouse-handoff.md`（v1）、`dataset-clickhouse-reply.md`  
 > 日期：2026-10-26  
-> 状态：契约和迁移边界已定；实现代码尚未开始  
+> 状态：V10、列元数据、READY、`addFile` 新版本和字段绑定迁移已实现并通过 H2/MySQL 验证；ClickHouse 导入待做  
 > 重要：本文件取代 v1 handoff 中的默认假设。
 
 ---
@@ -160,6 +160,7 @@ V10 无条件执行，假设 V8/V9 的 schema 已冻结；不使用 `IF EXISTS` 
   - 增加 `UNIQUE (field_id, dataset_version_id)`。
   - 保留 `UNIQUE (column_id)`。
   - 增加 `binding_status`，至少支持 `BOUND` / `NEEDS_REBIND`。
+  - `table_id` / `column_id` 允许为 NULL，仅用于 `NEEDS_REBIND`，避免绑到错误列。
 - `dataset_tables`：
   - 增加 `table_key` / `logical_table_id`。
   - 增加 `physical_table`。
@@ -187,18 +188,19 @@ V10 无条件执行，假设 V8/V9 的 schema 已冻结；不使用 `IF EXISTS` 
 
 ### 2.6 `addFile` 语义
 
-- `addFile` 不再追加到旧版本。
-- 生成新的 `datasetVersionId`。
+- `EMPTY / UPLOADED / PROCESSING` 版本仍可就地追加，保证首次上传和未发布版本可编辑。
+- `addFile` 作用于逻辑数据集的最新版本；最新版本是 `READY` 时不再追加，而是生成新的 `datasetVersionId`。
 - 新版本复制旧版本的文件/表/列元数据（新 ID，共享原始 blob），再加入新文件。
-- 旧版本永久冻结。
-- 返回新的 `datasetId + datasetVersionId`。
-- 前端和 API 需要处理“追加后版本号变化”。
+- 旧 `READY` 版本永久冻结；新版本从 `PROCESSING` 开始。
+- 返回新的 `datasetId + datasetVersionId`；就地追加时二者不变。
+- 前端和 API 需要处理“READY 后追加导致版本号变化”。
+- 版本历史：`GET /api/v1/datasets/{id}/versions`，当前版本：`GET /api/v1/datasets/{id}/versions/current`。
 
 #### 2.6.1 原始 blob 引用计数
 
 - 新旧版本可以共享同一个原始文件 blob。
 - 当前 `DatasetServiceImpl.delete()` 无条件删除 storage key 的行为必须改掉，否则删除旧版本会删掉新版本还在用的文件。
-- 用 `storage_blobs` 维护 blob 身份；`dataset_files` 和 `dataset_versions.storage_key` 都算引用。
+- 用 `storage_blobs` 维护 blob 身份，`dataset_files.blob_sha256` 作为唯一引用来源；`dataset_versions.storage_key` 仅作历史/展示，不参与计数，避免同一条主文件被重复计数。
 - 删除版本时先释放引用；只有引用数为 0 时才删除物理 blob。
 - 新上传建议内容寻址存储，例如 `blobs/{sha256}`；已有文件保留原 storage key，不做强制迁移。
 - 并发上传同一内容时按 sha256 去重，避免重复写 blob。
@@ -217,7 +219,9 @@ V10 无条件执行，假设 V8/V9 的 schema 已冻结；不使用 `IF EXISTS` 
 - 按 `table_key + source column name + logical type` 匹配旧绑定。
 - 保留 `fieldId`，换成新 `columnId`、新 `datasetVersionId`。
 - 匹配不上时标记 `NEEDS_REBIND`，不要静默绑到错误列。
+- `NEEDS_REBIND` 用 `table_id/column_id = NULL` 表示，规则库必须把 NULL 当作“未绑定”，不能解析成有效引用。
 - 新版本发布/运行前，`NEEDS_REBIND` 必须由用户确认或修复。
+- 数据集服务已提供 `DatasetFieldBindingMapper`，规则库实现绑定 CRUD 时复用，避免重复实体/Mapper。
 
 #### 2.6.4 状态、哈希与并发
 
@@ -604,9 +608,10 @@ interface DatasetReferenceChecker {
 
 - 默认软删除：`datasets.deleted_at` / `dataset_versions.archived_at` / `ARCHIVED`。
 - 被已发布规则版本或历史运行引用的 `datasetVersionId` 不允许直接硬删。
-- 硬删除有引用时返回冲突，例如 `409 DATASET_IN_USE`。
+- v1 的 `DELETE /api/v1/datasets/{id}` 行为：无引用时硬删除；有引用时自动软删/归档并返回 204，保留文件、表和运行依赖。
+- 不提供隐式强制硬删；未来如需强制硬删，必须显式 `force`，返回冲突并把运行记录标记 `SOURCE_DELETED`。
 - 只有没有任何引用、且超过保留期的版本，才允许删除 ClickHouse 表和原始文件。
-- 原始 blob 只有在 `dataset_files` 和 `dataset_versions.storage_key` 的引用都为 0 时才删除；不能因为删除旧版本就删掉新版本共享的 blob。
+- 原始 blob 只有在没有任何 `dataset_files.blob_sha256` 引用时才删除；`dataset_versions.storage_key` 不参与引用计数；不能因为删除旧版本就删掉新版本共享的 blob。
 - v1 不共享 ClickHouse `physical_table`，所以物理表随所属版本硬删除；如果以后引入物理表复用，必须补表级引用计数。
 - 输出数据集独立于输入数据集；删除输入不删除已生成的输出，lineage 仍指向已归档/删除的输入。
 - 强制硬删时，运行记录标记 `SOURCE_DELETED`，不能假装还能重放。
@@ -710,39 +715,40 @@ V9 里 `rule_runs` 和 `rule_workbook_versions` 对 workbook 是 `ON DELETE CASC
 
 ## 10. 实施清单
 
-- [ ] 规则库冻结并合入 V8/V9
-- [ ] 确认 V10 起始编号，V10 无条件从 V9 升级
-- [ ] V10 新建 `datasets` 并回填
-- [ ] `dataset_versions` 版本字段和哈希
-- [ ] `dataset_versions.id` 保持版本 ID
-- [ ] 旧 `/datasets/{id}` alias 当前版本
-- [ ] `addFile` 生成新版本
-- [ ] `storage_blobs` 与 blob 引用计数
-- [ ] v1 新版本重新导入物理表，不共享 `physical_table`
-- [ ] 字段绑定迁移 + `NEEDS_REBIND`
-- [ ] `datasets.current_version_id` 仅在新版本 READY 后切换
-- [ ] 并发 `addFile` 锁 `datasets` 行分配 `version_no`
-- [ ] `dataset_columns.dataset_id -> dataset_version_id`
-- [ ] `dataset_columns` 补 `physical_name/logical_type/clickhouse_type/nullable/file_id`
-- [ ] `dataset_field_bindings` 唯一约束修正
-- [ ] `dataset_tables.table_key` / `physical_table`
+- [x] 规则库冻结并合入 V8/V9
+- [x] 确认 V10 起始编号，V10 无条件从 V9 升级
+- [x] V10 新建 `datasets` 并回填
+- [x] `dataset_versions` 版本字段和哈希
+- [x] `dataset_versions.id` 保持版本 ID
+- [x] 旧 `/datasets/{id}` alias 当前版本
+- [x] `addFile` 在 READY 后生成新版本
+- [x] `storage_blobs` 与 blob 引用计数
+- [x] v1 新版本不共享 `physical_table`（克隆时清空，待导入生成）
+- [x] 字段绑定迁移 + `NEEDS_REBIND`
+- [x] `datasets.current_version_id` 仅在新版本 READY 后切换
+- [x] 并发 `addFile` 锁 `datasets` 行分配 `version_no`
+- [x] `dataset_columns.dataset_id -> dataset_version_id`
+- [x] `dataset_columns` 补 `physical_name/logical_type/clickhouse_type/nullable/file_id`
+- [x] `dataset_field_bindings` 唯一约束修正 + `NEEDS_REBIND` 可空列
+- [x] `dataset_tables.table_key` / `physical_table`
 - [ ] `FieldDataType.FLOAT`
 - [ ] 物理表名/列名生成规则
-- [ ] `manifest_hash` / `schema_hash`
+- [x] `manifest_hash` / `schema_hash`
 - [ ] `olist_datasets` 初始化与账号
 - [ ] ClickHouse 异步导入
-- [ ] `READY` 状态流转
-- [ ] readiness API
+- [x] 版本历史 / 当前版本 API
+- [x] `READY` 状态流转
+- [x] readiness API
 - [ ] 逻辑 Catalog
 - [ ] execution snapshot
 - [ ] 预览/分页/搜索切 ClickHouse
 - [ ] 多输出登记 API
-- [ ] `DatasetReferenceChecker`
-- [ ] 引用感知软删除/归档
+- [x] `DatasetReferenceChecker`
+- [x] 引用感知软删除/归档
 - [ ] V11 规则审计外键/软删除
 - [ ] 服务 token scope
-- [ ] 空库全量迁移测试
-- [ ] V9 -> V10 升级测试
+- [x] 空库全量迁移测试（H2 + MySQL 8.4）
+- [x] V9 -> V10 升级测试（H2 + MySQL 8.4，含回填/索引/字段复用）
 - [ ] ClickHouse 集成测试
 
 ---
@@ -762,7 +768,7 @@ V9 里 `rule_runs` 和 `rule_workbook_versions` 对 workbook 是 `ON DELETE CASC
 - 新版本重新导入所有物理表的成本上限；超过阈值时是否需要异步分批或物理表复用。
 - 字段绑定迁移时 `table_key` 变化、重复列名、类型变化的处理规则。
 - V10 是否固定在数据集库手里；如果规则库还要用 V10，需要重新分配编号。
-- V10 的无条件 DDL 需要在 H2 和 MySQL 两种库上分别验证。
+- V10 的无条件 DDL 已在 H2 2.3 和 MySQL 8.4 上验证；MySQL 下需先建新复合索引，再删被外键使用的旧索引。
 ---
 
 ## 12. 本轮不做
@@ -781,10 +787,8 @@ V9 里 `rule_runs` 和 `rule_workbook_versions` 对 workbook 是 `ON DELETE CASC
 
 ## 13. 下一步
 
-1. 规则库冻结并推送 V8/V9。
-2. 数据集库准备 V10：拆表、回填、列/绑定约束、blob 引用、哈希。
-3. 跑空库全量迁移 + V9 -> V10 升级测试，H2 和 MySQL 各一遍。
-4. 做 `addFile` 新版本、blob 引用计数、字段绑定迁移。
-5. 做 ClickHouse 导入和 `READY`。
-6. 做 Catalog / execution snapshot / preview。
-7. 做输出登记、引用检查、V11 审计、权限和集成测试。
+1. 做 ClickHouse 连接、`olist_datasets` 建库建表和异步导入。
+2. 做逻辑 Catalog / execution snapshot。
+3. 做输出登记 API（Parquet + manifest）。
+4. 做 V11 规则审计外键/软删除。
+5. 做权限边界、ClickHouse 集成测试和预览/查询切换。

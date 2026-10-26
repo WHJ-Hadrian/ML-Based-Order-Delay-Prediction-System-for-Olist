@@ -7,6 +7,9 @@ import java.util.UUID;
 public class DatasetVersion {
 
     private UUID id;
+    private UUID datasetId;
+    private int versionNo;
+    private UUID parentVersionId;
     private String ownerId;
     private String name;
     private String description;
@@ -19,6 +22,15 @@ public class DatasetVersion {
     private int tableCount;
     private long rowCount;
     private int fileCount;
+    private String manifestHash;
+    private String schemaHash;
+    private String sourceType;
+    private UUID sourceRunId;
+    private UUID sourceWorkbookVersionId;
+    private String sourceNodeId;
+    private Instant readyAt;
+    private Instant archivedAt;
+    private Instant deletedAt;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -70,6 +82,30 @@ public class DatasetVersion {
 
     public void setId(UUID id) {
         this.id = id;
+    }
+
+    public UUID getDatasetId() {
+        return datasetId;
+    }
+
+    public void setDatasetId(UUID datasetId) {
+        this.datasetId = datasetId;
+    }
+
+    public int getVersionNo() {
+        return versionNo;
+    }
+
+    public void setVersionNo(int versionNo) {
+        this.versionNo = versionNo;
+    }
+
+    public UUID getParentVersionId() {
+        return parentVersionId;
+    }
+
+    public void setParentVersionId(UUID parentVersionId) {
+        this.parentVersionId = parentVersionId;
     }
 
     public String getName() {
@@ -158,6 +194,78 @@ public class DatasetVersion {
 
     public void setFileCount(int fileCount) {
         this.fileCount = fileCount;
+    }
+
+    public String getManifestHash() {
+        return manifestHash;
+    }
+
+    public void setManifestHash(String manifestHash) {
+        this.manifestHash = manifestHash;
+    }
+
+    public String getSchemaHash() {
+        return schemaHash;
+    }
+
+    public void setSchemaHash(String schemaHash) {
+        this.schemaHash = schemaHash;
+    }
+
+    public String getSourceType() {
+        return sourceType;
+    }
+
+    public void setSourceType(String sourceType) {
+        this.sourceType = sourceType;
+    }
+
+    public UUID getSourceRunId() {
+        return sourceRunId;
+    }
+
+    public void setSourceRunId(UUID sourceRunId) {
+        this.sourceRunId = sourceRunId;
+    }
+
+    public UUID getSourceWorkbookVersionId() {
+        return sourceWorkbookVersionId;
+    }
+
+    public void setSourceWorkbookVersionId(UUID sourceWorkbookVersionId) {
+        this.sourceWorkbookVersionId = sourceWorkbookVersionId;
+    }
+
+    public String getSourceNodeId() {
+        return sourceNodeId;
+    }
+
+    public void setSourceNodeId(String sourceNodeId) {
+        this.sourceNodeId = sourceNodeId;
+    }
+
+    public Instant getReadyAt() {
+        return readyAt;
+    }
+
+    public void setReadyAt(Instant readyAt) {
+        this.readyAt = readyAt;
+    }
+
+    public Instant getArchivedAt() {
+        return archivedAt;
+    }
+
+    public void setArchivedAt(Instant archivedAt) {
+        this.archivedAt = archivedAt;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(Instant deletedAt) {
+        this.deletedAt = deletedAt;
     }
 
     public Instant getCreatedAt() {

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.StorageBlobMapper">
+
+    <insert id="insertIfAbsent">
+        INSERT INTO storage_blobs (sha256, storage_key, size_bytes, content_type, created_at)
+        SELECT
+            #{sha256}, #{storageKey}, #{sizeBytes}, #{contentType,jdbcType=VARCHAR},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE NOT EXISTS (
+            SELECT 1 FROM storage_blobs WHERE sha256 = #{sha256}
+        )
+    </insert>
+
+    <delete id="deleteIfUnreferenced">
+        DELETE FROM storage_blobs
+        WHERE sha256 = #{sha256}
+          AND NOT EXISTS (
+              SELECT 1 FROM dataset_files WHERE blob_sha256 = #{sha256}
+          )
+    </delete>
+</mapper>

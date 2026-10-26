@@ -14,4 +14,8 @@ public interface DatasetFileMapper {
     DatasetFile findById(@Param("id") UUID id);
 
     int deleteByIdAndDatasetId(@Param("id") UUID id, @Param("datasetId") UUID datasetId);
+
+    long countByBlobSha256(@Param("blobSha256") String blobSha256);
+
+    long countByStorageKey(@Param("storageKey") String storageKey);
 }

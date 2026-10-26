@@ -22,5 +22,7 @@ public record DatasetDetailVO(
         Instant createdAt,
         Instant updatedAt,
         List<DatasetFileVO> files,
-        List<DatasetTableVO> tables) {
+        List<DatasetTableVO> tables,
+        UUID datasetId,
+        UUID datasetVersionId) {
 }

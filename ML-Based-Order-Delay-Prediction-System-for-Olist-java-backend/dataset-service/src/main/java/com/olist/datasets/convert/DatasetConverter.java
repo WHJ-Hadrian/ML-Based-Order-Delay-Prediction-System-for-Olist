@@ -8,6 +8,7 @@ import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetFileVO;
 import com.olist.datasets.vo.DatasetTableVO;
 import com.olist.datasets.vo.DatasetVO;
+import com.olist.datasets.vo.DatasetVersionVO;
 import java.util.List;
 
 public final class DatasetConverter {
@@ -30,7 +31,9 @@ public final class DatasetConverter {
                 entity.getRowCount(),
                 entity.getFileCount(),
                 entity.getCreatedAt(),
-                entity.getUpdatedAt());
+                entity.getUpdatedAt(),
+                entity.getDatasetId(),
+                entity.getId());
     }
 
     public static DatasetDetailVO toDetailVO(
@@ -51,7 +54,27 @@ public final class DatasetConverter {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt(),
                 files.stream().map(DatasetConverter::toFileVO).toList(),
-                tables.stream().map(DatasetConverter::toTableVO).toList());
+                tables.stream().map(DatasetConverter::toTableVO).toList(),
+                entity.getDatasetId(),
+                entity.getId());
+    }
+
+    public static DatasetVersionVO toVersionVO(DatasetVersion entity) {
+        return new DatasetVersionVO(
+                entity.getId(),
+                entity.getDatasetId(),
+                entity.getVersionNo(),
+                entity.getParentVersionId(),
+                entity.getStatus(),
+                entity.getOriginalFilename(),
+                entity.getFileCount(),
+                entity.getTableCount(),
+                entity.getRowCount(),
+                entity.getManifestHash(),
+                entity.getSchemaHash(),
+                entity.getReadyAt(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt());
     }
 
     public static DatasetTableVO toTableVO(DatasetTable table) {

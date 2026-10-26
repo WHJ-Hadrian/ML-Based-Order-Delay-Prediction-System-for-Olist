@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.DatasetFieldBindingMapper">
+
+    <resultMap id="DatasetFieldBindingResultMap" type="com.olist.datasets.entity.DatasetFieldBinding">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="field_id" property="fieldId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="dataset_version_id" property="datasetVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="table_id" property="tableId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="column_id" property="columnId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="binding_status" property="bindingStatus"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <insert id="insertBatch">
+        INSERT INTO dataset_field_bindings (
+            id, owner_id, field_id, dataset_version_id, table_id, column_id, binding_status, created_at
+        ) VALUES
+        <foreach collection="bindings" item="binding" separator=",">
+            (
+                #{binding.id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+                #{binding.ownerId},
+                #{binding.fieldId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+                #{binding.datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+                #{binding.tableId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler,jdbcType=CHAR},
+                #{binding.columnId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler,jdbcType=CHAR},
+                #{binding.bindingStatus},
+                #{binding.createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+            )
+        </foreach>
+    </insert>
+
+    <select id="findByDatasetVersionId" resultMap="DatasetFieldBindingResultMap">
+        SELECT id, owner_id, field_id, dataset_version_id, table_id, column_id, binding_status, created_at
+        FROM dataset_field_bindings
+        WHERE dataset_version_id = #{datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        ORDER BY created_at, id
+    </select>
+</mapper>

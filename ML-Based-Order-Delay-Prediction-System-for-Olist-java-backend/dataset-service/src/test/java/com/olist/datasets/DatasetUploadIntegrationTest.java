@@ -21,6 +21,8 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -64,7 +66,12 @@ class DatasetUploadIntegrationTest {
 
     @BeforeEach
     void cleanStorageAndDatabase() throws IOException {
+        jdbcTemplate.update("DELETE FROM rule_workbooks");
+        jdbcTemplate.update("DELETE FROM dataset_field_bindings");
         jdbcTemplate.update("DELETE FROM dataset_versions");
+        jdbcTemplate.update("DELETE FROM datasets");
+        jdbcTemplate.update("DELETE FROM field_definitions");
+        jdbcTemplate.update("DELETE FROM storage_blobs");
         deleteDirectory(Path.of("target/test-datasets"));
     }
 
@@ -209,6 +216,110 @@ class DatasetUploadIntegrationTest {
                 .isEqualTo(2L);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM dataset_tables", Long.class))
                 .isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForList(
+                        "SELECT column_name FROM dataset_columns WHERE dataset_version_id = ?",
+                        String.class,
+                        id))
+                .containsExactlyInAnyOrder("order_id", "status", "product_id", "category");
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_columns WHERE dataset_version_id = ? AND logical_type = 'STRING' AND nullable = TRUE",
+                        Long.class,
+                        id))
+                .isEqualTo(4L);
+    }
+
+    @Test
+    void marksUploadedDatasetReadyAndRejectsFurtherMutations() throws Exception {
+        UUID id = createEmptyDataset("ready-dataset");
+        mockMvc.perform(multipart("/api/v1/datasets/{id}/files", id)
+                        .file(csvFile("orders.csv", "order_id,status\n1,delivered\n")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UPLOADED"));
+
+        MvcResult ready = mockMvc.perform(post("/api/v1/datasets/{id}/ready", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.datasetId").isNotEmpty())
+                .andExpect(jsonPath("$.datasetVersionId").value(id.toString()))
+                .andExpect(jsonPath("$.manifestHash").isNotEmpty())
+                .andExpect(jsonPath("$.schemaHash").isNotEmpty())
+                .andExpect(jsonPath("$.readyAt").isNotEmpty())
+                .andReturn();
+        JsonNode readyBody = objectMapper.readTree(ready.getResponse().getContentAsString());
+        String manifestHash = readyBody.path("manifestHash").asText();
+        UUID logicalDatasetId = UUID.fromString(readyBody.path("datasetId").asText());
+
+        mockMvc.perform(get("/api/v1/datasets/{id}/readiness", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.manifestHash").value(manifestHash));
+
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manifestHash").value(manifestHash));
+
+        MvcResult appended = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", id)
+                        .file(csvFile("more.csv", "id,value\n1,x\n")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.datasetId").value(logicalDatasetId.toString()))
+                .andExpect(jsonPath("$.fileCount").value(2))
+                .andExpect(jsonPath("$.tableCount").value(2))
+                .andExpect(jsonPath("$.rowCount").value(2))
+                .andReturn();
+        UUID secondVersionId = UUID.fromString(objectMapper
+                .readTree(appended.getResponse().getContentAsString())
+                .path("id")
+                .asText());
+        assertThat(secondVersionId).isNotEqualTo(id);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT version_no FROM dataset_versions WHERE id = ?",
+                        Integer.class,
+                        secondVersionId))
+                .isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT parent_version_id FROM dataset_versions WHERE id = ?",
+                        String.class,
+                        secondVersionId))
+                .isEqualTo(id.toString());
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT manifest_hash FROM dataset_versions WHERE id = ?",
+                        String.class,
+                        secondVersionId))
+                .isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT current_version_id FROM datasets WHERE id = ?",
+                        String.class,
+                        logicalDatasetId))
+                .isEqualTo(id.toString());
+
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", secondVersionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.datasetVersionId").value(secondVersionId.toString()));
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT current_version_id FROM datasets WHERE id = ?",
+                        String.class,
+                        logicalDatasetId))
+                .isEqualTo(secondVersionId.toString());
+
+        mockMvc.perform(get("/api/v1/datasets/{id}", logicalDatasetId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(secondVersionId.toString()))
+                .andExpect(jsonPath("$.datasetVersionId").value(secondVersionId.toString()));
+
+        mockMvc.perform(get("/api/v1/datasets/{id}/versions/current", logicalDatasetId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(secondVersionId.toString()))
+                .andExpect(jsonPath("$.datasetId").value(logicalDatasetId.toString()));
+
+        mockMvc.perform(get("/api/v1/datasets/{id}/versions", logicalDatasetId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].datasetVersionId").value(secondVersionId.toString()))
+                .andExpect(jsonPath("$[0].versionNo").value(2))
+                .andExpect(jsonPath("$[0].status").value("READY"))
+                .andExpect(jsonPath("$[1].versionNo").value(1));
     }
 
     @Test
@@ -283,6 +394,11 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$.tables[1].name").value("items"))
                 .andExpect(jsonPath("$.tables[0].fileName").value("olist_analytics.xlsx"))
                 .andReturn();
+        assertThat(jdbcTemplate.queryForList(
+                        "SELECT column_name FROM dataset_columns WHERE dataset_version_id = ?",
+                        String.class,
+                        xlsxId))
+                .containsExactlyInAnyOrder("order_id", "status", "item_id", "product_id");
         UUID xlsxTableId = UUID.fromString(objectMapper
                 .readTree(xlsxUpload.getResponse().getContentAsString())
                 .path("tables")
@@ -639,6 +755,255 @@ class DatasetUploadIntegrationTest {
         mockMvc.perform(multipart("/api/v1/datasets/{id}/files", unknown)
                         .file(csvFile("orders.csv", "id\n1\n")))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void migratesFieldBindingsWhenAddingFileToReadyVersion() throws Exception {
+        UUID version1 = createEmptyDataset("binding-migration");
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", version1)
+                        .file(csvFile("orders.csv", "order_id,status\n1,delivered\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode body = objectMapper.readTree(upload.getResponse().getContentAsString());
+        UUID logicalDatasetId = UUID.fromString(body.path("datasetId").asText());
+        UUID tableId = UUID.fromString(body.path("tables").get(0).path("id").asText());
+        String columnId = jdbcTemplate.queryForObject(
+                "SELECT id FROM dataset_columns WHERE table_id = ? AND column_name = ?",
+                String.class,
+                tableId,
+                "order_id");
+        String ownerId = jdbcTemplate.queryForObject(
+                "SELECT owner_id FROM dataset_versions WHERE id = ?",
+                String.class,
+                version1);
+
+        UUID boundFieldId = UUID.randomUUID();
+        UUID rebindFieldId = UUID.randomUUID();
+        Timestamp now = Timestamp.from(Instant.now());
+        insertField(boundFieldId, ownerId, "order_id", now);
+        insertField(rebindFieldId, ownerId, "status", now);
+        jdbcTemplate.update(
+                "INSERT INTO dataset_field_bindings (id, owner_id, field_id, dataset_version_id, table_id, column_id, binding_status, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                UUID.randomUUID(), ownerId, boundFieldId, version1, tableId, UUID.fromString(columnId), "BOUND", now);
+        jdbcTemplate.update(
+                "INSERT INTO dataset_field_bindings (id, owner_id, field_id, dataset_version_id, table_id, column_id, binding_status, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                UUID.randomUUID(), ownerId, rebindFieldId, version1, null, null, "NEEDS_REBIND", now);
+
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", version1))
+                .andExpect(status().isOk());
+
+        MvcResult appended = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", version1)
+                        .file(tsvFile("products.tsv", "product_id\tcategory\n1\ttoy\n")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PROCESSING"))
+                .andReturn();
+        JsonNode appendedBody = objectMapper.readTree(appended.getResponse().getContentAsString());
+        UUID version2 = UUID.fromString(appendedBody.path("id").asText());
+        UUID newTableId = null;
+        for (JsonNode table : appendedBody.path("tables")) {
+            if ("orders.csv".equals(table.path("fileName").asText())) {
+                newTableId = UUID.fromString(table.path("id").asText());
+            }
+        }
+        assertThat(newTableId).isNotNull();
+
+        String newColumnId = jdbcTemplate.queryForObject(
+                "SELECT id FROM dataset_columns WHERE table_id = ? AND column_name = ?",
+                String.class,
+                newTableId,
+                "order_id");
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT dataset_version_id FROM dataset_field_bindings WHERE field_id = ? AND dataset_version_id = ?",
+                        String.class,
+                        boundFieldId,
+                        version2))
+                .isEqualTo(version2.toString());
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT table_id FROM dataset_field_bindings WHERE field_id = ? AND dataset_version_id = ?",
+                        String.class,
+                        boundFieldId,
+                        version2))
+                .isEqualTo(newTableId.toString());
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT column_id FROM dataset_field_bindings WHERE field_id = ? AND dataset_version_id = ?",
+                        String.class,
+                        boundFieldId,
+                        version2))
+                .isEqualTo(newColumnId);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT binding_status FROM dataset_field_bindings WHERE field_id = ? AND dataset_version_id = ?",
+                        String.class,
+                        boundFieldId,
+                        version2))
+                .isEqualTo("BOUND");
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT table_id FROM dataset_field_bindings WHERE field_id = ? AND dataset_version_id = ?",
+                        String.class,
+                        rebindFieldId,
+                        version2))
+                .isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT column_id FROM dataset_field_bindings WHERE field_id = ? AND dataset_version_id = ?",
+                        String.class,
+                        rebindFieldId,
+                        version2))
+                .isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT binding_status FROM dataset_field_bindings WHERE field_id = ? AND dataset_version_id = ?",
+                        String.class,
+                        rebindFieldId,
+                        version2))
+                .isEqualTo("NEEDS_REBIND");
+
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_files WHERE dataset_id = ?", Long.class, version2))
+                .isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_tables WHERE dataset_id = ?", Long.class, version2))
+                .isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_files WHERE dataset_id = ?", Long.class, version1))
+                .isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_tables WHERE dataset_id = ?", Long.class, version1))
+                .isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT physical_table FROM dataset_tables WHERE dataset_id = ? AND table_name = ?",
+                        String.class,
+                        version2,
+                        "orders"))
+                .isNull();
+
+        mockMvc.perform(multipart("/api/v1/datasets/{id}/files", version1)
+                        .file(csvFile("extra.csv", "id\n1\n")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(version2.toString()))
+                .andExpect(jsonPath("$.fileCount").value(3))
+                .andExpect(jsonPath("$.tableCount").value(3));
+
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", version2))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"));
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT current_version_id FROM datasets WHERE id = ?",
+                        String.class,
+                        logicalDatasetId))
+                .isEqualTo(version2.toString());
+    }
+
+    @Test
+    void deletingClonedTableKeepsParentVersionBlob() throws Exception {
+        UUID version1 = createEmptyDataset("shared-blob");
+        mockMvc.perform(multipart("/api/v1/datasets/{id}/files", version1)
+                        .file(csvFile("orders.csv", "order_id,status\n1,delivered\n")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", version1))
+                .andExpect(status().isOk());
+
+        MvcResult appended = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", version1)
+                        .file(csvFile("customers.csv", "customer_id,name\n1,ana\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode appendedBody = objectMapper.readTree(appended.getResponse().getContentAsString());
+        UUID version2 = UUID.fromString(appendedBody.path("id").asText());
+        UUID clonedOrdersTableId = null;
+        for (JsonNode table : appendedBody.path("tables")) {
+            if ("orders.csv".equals(table.path("fileName").asText())) {
+                clonedOrdersTableId = UUID.fromString(table.path("id").asText());
+            }
+        }
+        assertThat(clonedOrdersTableId).isNotNull();
+        String storageKey = jdbcTemplate.queryForObject(
+                "SELECT storage_key FROM dataset_files WHERE dataset_id = ? AND original_filename = ?",
+                String.class,
+                version1,
+                "orders.csv");
+        Path stored = Path.of("target/test-datasets").resolve(storageKey);
+        assertThat(stored).exists();
+
+        mockMvc.perform(delete(
+                        "/api/v1/datasets/{datasetId}/tables/{tableId}", version2, clonedOrdersTableId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tableCount").value(1));
+
+        assertThat(stored).exists();
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_files WHERE storage_key = ?",
+                        Long.class,
+                        storageKey))
+                .isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_files WHERE dataset_id = ?",
+                        Long.class,
+                        version1))
+                .isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_tables WHERE dataset_id = ?",
+                        Long.class,
+                        version1))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void archivesReferencedDatasetInsteadOfHardDeleting() throws Exception {
+        UUID versionId = createEmptyDataset("referenced-dataset");
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", versionId)
+                        .file(csvFile("orders.csv", "order_id,status\n1,delivered\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID logicalDatasetId = UUID.fromString(objectMapper
+                .readTree(upload.getResponse().getContentAsString())
+                .path("datasetId")
+                .asText());
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", versionId))
+                .andExpect(status().isOk());
+
+        String ownerId = jdbcTemplate.queryForObject(
+                "SELECT owner_id FROM dataset_versions WHERE id = ?", String.class, versionId);
+        Timestamp now = Timestamp.from(Instant.now());
+        jdbcTemplate.update(
+                "INSERT INTO rule_workbooks (id, owner_id, name, description, dataset_version_id, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                UUID.randomUUID(), ownerId, "referenced-workbook", null, versionId, "DRAFT", now, now);
+
+        mockMvc.perform(delete("/api/v1/datasets/{id}", logicalDatasetId))
+                .andExpect(status().isNoContent());
+
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT deleted_at FROM datasets WHERE id = ?", String.class, logicalDatasetId))
+                .isNotNull();
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT archived_at FROM dataset_versions WHERE id = ?", String.class, versionId))
+                .isNotNull();
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_files WHERE dataset_id = ?", Long.class, versionId))
+                .isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM dataset_tables WHERE dataset_id = ?", Long.class, versionId))
+                .isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM rule_workbooks WHERE dataset_version_id = ?", Long.class, versionId))
+                .isEqualTo(1L);
+
+        mockMvc.perform(get("/api/v1/datasets/{id}", logicalDatasetId))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/datasets/{id}", versionId))
+                .andExpect(status().isNotFound());
+    }
+
+    private void insertField(UUID id, String ownerId, String name, Timestamp now) {
+        jdbcTemplate.update(
+                "INSERT INTO field_definitions (id, owner_id, name, display_name, data_type, semantic_role, source_table, description, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                id,
+                ownerId,
+                name,
+                name,
+                "STRING",
+                "ORDER_ID",
+                "orders",
+                null,
+                "ACTIVE",
+                now,
+                now);
     }
 
     private UUID createEmptyDataset(String name) throws Exception {

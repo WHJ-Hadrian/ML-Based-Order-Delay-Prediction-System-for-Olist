@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.DatasetColumnMapper">
+
+    <resultMap id="DatasetColumnResultMap" type="com.olist.datasets.entity.DatasetColumn">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="dataset_version_id" property="datasetVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="table_id" property="tableId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="column_name" property="columnName"/>
+        <result column="ordinal" property="ordinal"/>
+        <result column="data_type" property="dataType"/>
+        <result column="physical_name" property="physicalName"/>
+        <result column="logical_type" property="logicalType"/>
+        <result column="clickhouse_type" property="clickhouseType"/>
+        <result column="nullable" property="nullable"/>
+        <result column="file_id" property="fileId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <sql id="DatasetColumnColumns">
+        id, dataset_version_id, table_id, column_name, ordinal, data_type,
+        physical_name, logical_type, clickhouse_type, nullable, file_id, created_at
+    </sql>
+
+    <insert id="insertBatch">
+        INSERT INTO dataset_columns (
+            id, dataset_version_id, table_id, column_name, ordinal, data_type,
+            physical_name, logical_type, clickhouse_type, nullable, file_id, created_at
+        ) VALUES
+        <foreach collection="columns" item="column" separator=",">
+            (
+                #{column.id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+                #{column.datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+                #{column.tableId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+                #{column.columnName}, #{column.ordinal}, #{column.dataType},
+                #{column.physicalName,jdbcType=VARCHAR}, #{column.logicalType,jdbcType=VARCHAR},
+                #{column.clickhouseType,jdbcType=VARCHAR}, #{column.nullable},
+                #{column.fileId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+                #{column.createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+            )
+        </foreach>
+    </insert>
+
+    <select id="findByDatasetVersionId" resultMap="DatasetColumnResultMap">
+        SELECT <include refid="DatasetColumnColumns"/>
+        FROM dataset_columns
+        WHERE dataset_version_id = #{datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        ORDER BY table_id, ordinal
+    </select>
+
+    <select id="findByTableId" resultMap="DatasetColumnResultMap">
+        SELECT <include refid="DatasetColumnColumns"/>
+        FROM dataset_columns
+        WHERE table_id = #{tableId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        ORDER BY ordinal
+    </select>
+</mapper>

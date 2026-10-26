@@ -9,30 +9,31 @@
         <result column="storage_key" property="storageKey"/>
         <result column="size_bytes" property="sizeBytes"/>
         <result column="sha256" property="sha256"/>
+        <result column="blob_sha256" property="blobSha256"/>
         <result column="content_type" property="contentType"/>
         <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
     </resultMap>
 
     <insert id="insert">
         INSERT INTO dataset_files (
-            id, dataset_id, original_filename, storage_key, size_bytes, sha256, content_type, created_at
+            id, dataset_id, original_filename, storage_key, size_bytes, sha256, blob_sha256, content_type, created_at
         ) VALUES (
             #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
             #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
-            #{originalFilename}, #{storageKey}, #{sizeBytes}, #{sha256},
+            #{originalFilename}, #{storageKey}, #{sizeBytes}, #{sha256}, #{blobSha256,jdbcType=CHAR},
             #{contentType,jdbcType=VARCHAR},
             #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
         )
     </insert>
 
     <select id="findById" resultMap="DatasetFileResultMap">
-        SELECT id, dataset_id, original_filename, storage_key, size_bytes, sha256, content_type, created_at
+        SELECT id, dataset_id, original_filename, storage_key, size_bytes, sha256, blob_sha256, content_type, created_at
         FROM dataset_files
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
     </select>
 
     <select id="findByDatasetId" resultMap="DatasetFileResultMap">
-        SELECT id, dataset_id, original_filename, storage_key, size_bytes, sha256, content_type, created_at
+        SELECT id, dataset_id, original_filename, storage_key, size_bytes, sha256, blob_sha256, content_type, created_at
         FROM dataset_files
         WHERE dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
         ORDER BY created_at
@@ -42,4 +43,17 @@
         DELETE FROM dataset_files
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
-    </delete></mapper>
+    </delete>
+
+    <select id="countByBlobSha256" resultType="long">
+        SELECT COUNT(*)
+        FROM dataset_files
+        WHERE blob_sha256 = #{blobSha256}
+    </select>
+
+    <select id="countByStorageKey" resultType="long">
+        SELECT COUNT(*)
+        FROM dataset_files
+        WHERE storage_key = #{storageKey}
+    </select>
+</mapper>

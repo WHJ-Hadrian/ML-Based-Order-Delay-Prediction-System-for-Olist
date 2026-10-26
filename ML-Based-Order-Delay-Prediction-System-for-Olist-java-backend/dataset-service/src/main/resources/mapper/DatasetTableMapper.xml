@@ -8,6 +8,8 @@
         <result column="file_id" property="fileId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
         <result column="file_name" property="fileName"/>
         <result column="table_name" property="tableName"/>
+        <result column="table_key" property="tableKey"/>
+        <result column="physical_table" property="physicalTable"/>
         <result column="table_format" property="tableFormat"/>
         <result column="row_count" property="rowCount"/>
         <result column="column_count" property="columnCount"/>
@@ -16,7 +18,8 @@
 
     <insert id="insertBatch">
         INSERT INTO dataset_tables (
-            id, dataset_id, file_id, file_name, table_name, table_format, row_count, column_count, ordinal
+            id, dataset_id, file_id, file_name, table_name, table_key, physical_table,
+            table_format, row_count, column_count, ordinal
         ) VALUES
         <foreach collection="tables" item="table" separator=",">
             (
@@ -24,21 +27,24 @@
                 #{table.datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
                 #{table.fileId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
                 #{table.fileName,jdbcType=VARCHAR},
-                #{table.tableName}, #{table.tableFormat}, #{table.rowCount},
+                #{table.tableName}, #{table.tableKey}, #{table.physicalTable,jdbcType=VARCHAR},
+                #{table.tableFormat}, #{table.rowCount},
                 #{table.columnCount}, #{table.ordinal}
             )
         </foreach>
     </insert>
 
     <select id="findByIdAndDatasetId" resultMap="DatasetTableResultMap">
-        SELECT id, dataset_id, file_id, file_name, table_name, table_format, row_count, column_count, ordinal
+        SELECT id, dataset_id, file_id, file_name, table_name, table_key, physical_table,
+               table_format, row_count, column_count, ordinal
         FROM dataset_tables
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
     </select>
 
     <select id="findByDatasetId" resultMap="DatasetTableResultMap">
-        SELECT id, dataset_id, file_id, file_name, table_name, table_format, row_count, column_count, ordinal
+        SELECT id, dataset_id, file_id, file_name, table_name, table_key, physical_table,
+               table_format, row_count, column_count, ordinal
         FROM dataset_tables
         WHERE dataset_id = #{datasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
         ORDER BY ordinal

@@ -2,6 +2,7 @@ package com.olist.datasets.profiler.impl;
 
 import com.olist.datasets.enums.DatasetFormat;
 import com.olist.datasets.exception.InvalidDatasetException;
+import com.olist.datasets.profiler.ColumnProfile;
 import com.olist.datasets.profiler.DatasetProfile;
 import com.olist.datasets.profiler.DatasetProfiler;
 import com.olist.datasets.profiler.TableProfile;
@@ -13,7 +14,12 @@ import java.io.PushbackReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import javax.xml.parsers.SAXParserFactory;
@@ -43,6 +49,7 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
     private static final long MAX_XLSX_BYTES = 100L * 1024L * 1024L;
     private static final long MAX_TOTAL_UNCOMPRESSED_BYTES = 2L * 1024L * 1024L * 1024L;
     private static final int MAX_TABLE_NAME_LENGTH = 500;
+    private static final int MAX_COLUMN_NAME_LENGTH = 512;
 
     @Override
     public DatasetProfile profile(MultipartFile file, String filename) {
@@ -89,15 +96,15 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
                     .setTrim(true)
                     .build();
             try (CSVParser parser = new CSVParser(reader, csvFormat)) {
-                int columns = parser.getHeaderNames().size();
-                if (columns == 0) {
+                List<ColumnProfile> columns = normalizeColumns(parser.getHeaderNames());
+                if (columns.isEmpty()) {
                     throw new InvalidDatasetException("文件 " + tableName + " 缺少表头");
                 }
                 long rows = 0;
                 for (CSVRecord ignored : parser) {
                     rows++;
                 }
-                return new TableProfile(tableName, sourceFile, format, rows, columns);
+                return new TableProfile(tableName, sourceFile, format, rows, columns.size(), columns);
             }
         }
     }
@@ -199,12 +206,15 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
                         String name = namePrefix == null || namePrefix.isBlank()
                                 ? sheetName
                                 : namePrefix + " / " + sheetName;
+                        List<ColumnProfile> columns = normalizeColumns(
+                                statistics.headerNames(statistics.columnCount));
                         tables.add(new TableProfile(
                                 truncate(name),
                                 sourceFile,
                                 DatasetFormat.XLSX,
                                 statistics.dataRows(),
-                                statistics.columnCount));
+                                columns.size(),
+                                columns));
                     }
                 }
             }
@@ -213,6 +223,34 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
             throw new InvalidDatasetException("XLSX 文件中没有可识别的数据表");
         }
         return tables;
+    }
+
+    private List<ColumnProfile> normalizeColumns(List<String> rawNames) {
+        List<ColumnProfile> columns = new ArrayList<>(rawNames.size());
+        Set<String> usedNames = new HashSet<>();
+        for (int ordinal = 0; ordinal < rawNames.size(); ordinal++) {
+            String base = rawNames.get(ordinal);
+            base = base == null ? "" : base.trim();
+            if (base.isEmpty()) {
+                base = "column_" + (ordinal + 1);
+            }
+            base = truncateColumnName(base);
+            String name = base;
+            int suffix = 2;
+            while (!usedNames.add(name.toLowerCase(Locale.ROOT))) {
+                String suffixText = "_" + suffix++;
+                int limit = MAX_COLUMN_NAME_LENGTH - suffixText.length();
+                name = (base.length() > limit ? base.substring(0, limit) : base) + suffixText;
+            }
+            columns.add(new ColumnProfile(name, ordinal, "STRING"));
+        }
+        return columns;
+    }
+
+    private String truncateColumnName(String value) {
+        return value.length() > MAX_COLUMN_NAME_LENGTH
+                ? value.substring(0, MAX_COLUMN_NAME_LENGTH)
+                : value;
     }
 
     private XMLReader newXmlReader() throws Exception {
@@ -355,6 +393,8 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
         private long nonEmptyRows;
         private int columnCount;
         private boolean rowHasContent;
+        private boolean headerCaptured;
+        private final Map<Integer, String> headerCells = new TreeMap<>();
 
         @Override
         public void startRow(int rowNum) {
@@ -364,6 +404,9 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
         @Override
         public void endRow(int rowNum) {
             if (rowHasContent) {
+                if (!headerCaptured) {
+                    headerCaptured = true;
+                }
                 nonEmptyRows++;
             }
             rowHasContent = false;
@@ -371,9 +414,13 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
 
         @Override
         public void cell(String cellReference, String formattedValue, XSSFComment comment) {
+            int index = columnIndex(cellReference);
             if (formattedValue != null && !formattedValue.isBlank()) {
                 rowHasContent = true;
-                columnCount = Math.max(columnCount, columnIndex(cellReference));
+                columnCount = Math.max(columnCount, index);
+                if (!headerCaptured && index > 0) {
+                    headerCells.putIfAbsent(index - 1, formattedValue.trim());
+                }
             }
         }
 
@@ -384,6 +431,14 @@ public class DefaultDatasetProfiler implements DatasetProfiler {
 
         private long dataRows() {
             return Math.max(nonEmptyRows - 1, 0);
+        }
+
+        private List<String> headerNames(int count) {
+            List<String> names = new ArrayList<>(count);
+            for (int index = 0; index < count; index++) {
+                names.add(headerCells.getOrDefault(index, ""));
+            }
+            return names;
         }
 
         private static int columnIndex(String reference) {

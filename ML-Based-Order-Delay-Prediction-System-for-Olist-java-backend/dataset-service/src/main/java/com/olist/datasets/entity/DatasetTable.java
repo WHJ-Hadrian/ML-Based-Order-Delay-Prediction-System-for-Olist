@@ -10,6 +10,8 @@ public class DatasetTable {
     private UUID fileId;
     private String fileName;
     private String tableName;
+    private String tableKey;
+    private String physicalTable;
     private DatasetFormat tableFormat;
     private long rowCount;
     private int columnCount;
@@ -77,6 +79,22 @@ public class DatasetTable {
 
     public void setTableName(String tableName) {
         this.tableName = tableName;
+    }
+
+    public String getTableKey() {
+        return tableKey;
+    }
+
+    public void setTableKey(String tableKey) {
+        this.tableKey = tableKey;
+    }
+
+    public String getPhysicalTable() {
+        return physicalTable;
+    }
+
+    public void setPhysicalTable(String physicalTable) {
+        this.physicalTable = physicalTable;
     }
 
     public DatasetFormat getTableFormat() {
