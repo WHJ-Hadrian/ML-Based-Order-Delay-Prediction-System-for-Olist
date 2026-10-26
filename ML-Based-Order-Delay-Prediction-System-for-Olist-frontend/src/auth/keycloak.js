@@ -10,6 +10,9 @@ export class AuthenticationRequiredError extends Error {
   }
 }
 
+const AUTH_BYPASS = import.meta.env.VITE_AUTH_BYPASS === 'true'
+const BYPASS_USER = { name: '本地调试用户', email: 'local@example.com' }
+
 const client = new Keycloak({
   url: import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8180',
   realm: import.meta.env.VITE_KEYCLOAK_REALM || 'olist',
@@ -24,6 +27,12 @@ const state = reactive({
 
 let initialization
 
+function enableBypass() {
+  state.authenticated = true
+  state.status = 'authenticated'
+  state.user = BYPASS_USER
+}
+
 function updateState(authenticated) {
   const claims = client.tokenParsed || {}
   state.authenticated = Boolean(authenticated)
@@ -37,6 +46,10 @@ function updateState(authenticated) {
 }
 
 export function initializeAuth() {
+  if (AUTH_BYPASS) {
+    enableBypass()
+    return Promise.resolve(true)
+  }
   if (!initialization) {
     initialization = client
       .init({
@@ -60,6 +73,10 @@ export function initializeAuth() {
 }
 
 export async function login(loginHint = '') {
+  if (AUTH_BYPASS) {
+    enableBypass()
+    return true
+  }
   await initializeAuth()
   return client.login({
     redirectUri: `${window.location.origin}/`,
@@ -69,10 +86,20 @@ export async function login(loginHint = '') {
 }
 
 export async function logout() {
+  if (AUTH_BYPASS) {
+    state.authenticated = false
+    state.status = 'anonymous'
+    state.user = null
+    return
+  }
   await client.logout({ redirectUri: window.location.origin })
 }
 
 export async function getAccessToken() {
+  if (AUTH_BYPASS) {
+    enableBypass()
+    return 'local-dev-token'
+  }
   await initializeAuth()
   if (!client.authenticated) {
     return ''
