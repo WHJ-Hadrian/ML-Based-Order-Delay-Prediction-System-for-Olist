@@ -22,6 +22,7 @@ import {
   deleteDatasetTable,
   getDataset,
   listDatasets,
+  markDatasetReady,
   renameDataset,
   renameDatasetTable,
 } from '@/api/datasets'
@@ -44,6 +45,7 @@ const activeTab = ref(DATASET_TAB_KEYS.ALL)
 const expandedIds = ref([])
 const editingId = ref('')
 const uploadingId = ref('')
+const readyingId = ref('')
 const uploadController = ref(null)
 
 const filters = reactive({
@@ -408,16 +410,9 @@ async function handleUpload({ id, file }) {
         uploadProgress[id] = value
       },
     })
-    const current = details[id]
-    if (current) {
-      Object.assign(current, detail)
-    } else {
-      details[id] = detail
-    }
-    detailErrors[id] = ''
-    syncRowFromDetail(id, detail)
-    if (!isExpanded(id)) {
-      expandedIds.value = [...expandedIds.value, id]
+    const nextId = applyDatasetDetail(id, detail)
+    if (!isExpanded(nextId)) {
+      expandedIds.value = [...expandedIds.value, nextId]
     }
     ElMessage.success(`已上传 ${file.name}`)
   } catch (error) {
@@ -443,12 +438,67 @@ function cancelUpload(id) {
   }
 }
 
+async function handleReady(id) {
+  if (readyingId.value) {
+    return
+  }
+  readyingId.value = id
+  try {
+    await markDatasetReady(id)
+    const detail = await getDataset(id)
+    applyDatasetDetail(id, detail)
+    ElMessage.success(`「${detail.name}」已发布，可供规则执行使用`)
+  } catch (error) {
+    ElMessage.error(error?.message || '发布失败')
+  } finally {
+    readyingId.value = ''
+  }
+}
+
+function applyDatasetDetail(previousId, detail) {
+  const nextId = detail?.id || previousId
+  if (nextId !== previousId) {
+    if (details[previousId]) {
+      details[nextId] = { ...details[previousId], ...detail }
+      delete details[previousId]
+    } else {
+      details[nextId] = detail
+    }
+    if (detailErrors[previousId]) {
+      detailErrors[nextId] = detailErrors[previousId]
+      delete detailErrors[previousId]
+    }
+    expandedIds.value = expandedIds.value.map((value) => (
+      value === previousId ? nextId : value
+    ))
+    if (editingId.value === previousId) {
+      editingId.value = nextId
+    }
+    if (uploadingId.value === previousId) {
+      uploadingId.value = nextId
+    }
+    if (uploadProgress[previousId] !== undefined) {
+      uploadProgress[nextId] = uploadProgress[previousId]
+      delete uploadProgress[previousId]
+    }
+  } else if (details[previousId]) {
+    Object.assign(details[previousId], detail)
+  } else {
+    details[previousId] = detail
+  }
+  detailErrors[nextId] = ''
+  syncRowFromDetail(previousId, detail)
+  return nextId
+}
 function syncRowFromDetail(id, detail) {
   const row = datasets.value.find((item) => item.id === id)
   if (!row) {
     return
   }
   Object.assign(row, {
+    id: detail.id ?? row.id,
+    datasetId: detail.datasetId ?? row.datasetId,
+    datasetVersionId: detail.datasetVersionId ?? row.datasetVersionId,
     name: detail.name,
     description: detail.description,
     originalFilename: detail.originalFilename,
@@ -584,12 +634,14 @@ function syncRowFromDetail(id, detail) {
               :detail-error="detailErrors[item.id] || ''"
               :uploading="uploadingId === item.id"
               :upload-progress="uploadProgress[item.id] || 0"
+              :readying="readyingId === item.id"
               @toggle="toggleDataset"
               @start-edit="startEdit"
               @cancel-edit="cancelEdit"
               @save-name="saveName"
               @upload="handleUpload"
               @cancel-upload="cancelUpload"
+              @ready="handleReady"
               @delete="handleDeleteDataset"
               @rename-table="handleRenameTable"
               @delete-table="handleDeleteTable"

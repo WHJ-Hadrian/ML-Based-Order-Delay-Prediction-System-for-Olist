@@ -102,6 +102,11 @@ export function renameDataset(id, { name, description } = {}) {
   })
 }
 
+export function markDatasetReady(id) {
+  return request(`${API_BASE}/${encodeURIComponent(id)}/ready`, {
+    method: 'POST',
+  })
+}
 export function deleteDataset(id) {
   return request(`${API_BASE}/${encodeURIComponent(id)}`, {
     method: 'DELETE',

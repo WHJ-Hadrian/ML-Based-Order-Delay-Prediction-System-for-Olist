@@ -2,6 +2,7 @@
 import { computed, h, nextTick, reactive, ref, watch } from 'vue'
 import {
   ArrowRight,
+  CircleCheck,
   Clock,
   Delete,
   Document,
@@ -26,6 +27,7 @@ const props = defineProps({
   detailError: { type: String, default: '' },
   uploading: { type: Boolean, default: false },
   uploadProgress: { type: Number, default: 0 },
+  readying: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -35,6 +37,7 @@ const emit = defineEmits([
   'save-name',
   'upload',
   'cancel-upload',
+  'ready',
   'delete',
   'rename-table',
   'delete-table',
@@ -77,7 +80,7 @@ const isClamped = computed(
     !showAllTables.value &&
     expandedTableIds.value.length === 0,
 )
-const shortId = computed(() => props.item.id.slice(0, 8))
+const shortId = computed(() => (props.item.datasetId || props.item.id).slice(0, 8))
 const format = computed(() => props.item.format || props.detail?.format || '')
 
 watch(
@@ -504,6 +507,16 @@ function selectFile(file) {
       </el-tag>
 
       <div class="row-actions" @click.stop>
+        <el-button
+          v-if="item.status === 'UPLOADED' || item.status === 'PROCESSING'"
+          link
+          type="success"
+          :icon="CircleCheck"
+          :loading="readying"
+          @click="emit('ready', item.id)"
+        >
+          发布
+        </el-button>
         <el-button link type="primary" :icon="EditPen" @click="startEdit">改名</el-button>
         <el-button link type="primary" :icon="Document" @click="toggle">
           {{ expanded ? '收起' : '详情' }}
