@@ -5,11 +5,10 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import brandArtwork from '@/assets/img/chahua.png'
 import {
   createRegisteredAccount,
-  lookupAccount,
   requestRegistrationCode,
   verifyRegistrationCode,
 } from '@/api/registration'
-import { loginWithPassword } from '@/auth/keycloak'
+import { login } from '@/auth/keycloak'
 
 const props = defineProps({
   mode: { type: String, default: 'login' },
@@ -25,7 +24,6 @@ const stages = Object.freeze({
   birthday: 'birthday',
   complete: 'complete',
 })
-const ACCOUNT_LOOKUP_DELAY_MS = 900
 const CODE_RESEND_DELAY_SECONDS = 60
 const SAVED_ACCOUNTS_KEY = 'seekdateset.saved-accounts'
 const SAMPLE_ACCOUNTS = [
@@ -106,7 +104,6 @@ const registrationCode = ref('')
 const verificationToken = ref('')
 const message = ref('')
 const messageTone = ref('error')
-const isResolvingAccount = ref(false)
 const isSubmitting = ref(false)
 const isManagingAccounts = ref(false)
 const rememberAccount = ref(!props.demo)
@@ -116,7 +113,7 @@ const accounts = computed(() => (props.demo ? demoAccounts.value : savedAccounts
 const resendSeconds = ref(0)
 const loginProfile = ref(null)
 const accountInitial = computed(() => (displayName.value || email.value || 'U').charAt(0).toUpperCase())
-const isBusy = computed(() => isResolvingAccount.value || isSubmitting.value)
+const isBusy = computed(() => isSubmitting.value)
 const genderOptions = [
   { value: 'female', label: '女' },
   { value: 'male', label: '男' },
@@ -136,20 +133,11 @@ const currentTitle = computed(() => {
   return isRegistration.value ? '创建账号' : '登录'
 })
 
-let accountLookupTimeout = null
 let resendInterval = null
 
 function setMessage(text, tone = 'error') {
   message.value = text
   messageTone.value = tone
-}
-
-function clearAccountLookup() {
-  if (accountLookupTimeout !== null) {
-    window.clearTimeout(accountLookupTimeout)
-    accountLookupTimeout = null
-  }
-  isResolvingAccount.value = false
 }
 
 function clearResendCountdown() {
@@ -177,7 +165,6 @@ function resetRegistrationFields() {
 }
 
 watch(() => props.mode, (mode) => {
-  clearAccountLookup()
   clearResendCountdown()
   isRegistration.value = mode === 'register'
   stage.value = stages.identifier
@@ -190,7 +177,6 @@ watch(() => props.mode, (mode) => {
 })
 
 onBeforeUnmount(() => {
-  clearAccountLookup()
   clearResendCountdown()
 })
 
@@ -201,12 +187,7 @@ function continueToPassword(profile) {
   email.value = loginProfile.value.email
   password.value = ''
   resetMessages()
-  isResolvingAccount.value = true
-  accountLookupTimeout = window.setTimeout(() => {
-    accountLookupTimeout = null
-    isResolvingAccount.value = false
-    stage.value = stages.password
-  }, ACCOUNT_LOOKUP_DELAY_MS)
+  stage.value = stages.password
 }
 
 function storeAccount(account) {
@@ -221,37 +202,12 @@ function storeAccount(account) {
 }
 
 async function resolveLoginAccount(accountEmail) {
-  if (props.demo) {
-    const sample = SAMPLE_ACCOUNTS.find((account) => account.email === accountEmail)
-    continueToPassword({
-      email: accountEmail,
-      displayName: sample?.displayName || 'SeekDateSet 学习账号',
-    })
-    return true
-  }
-
-  isResolvingAccount.value = true
-  resetMessages()
-  try {
-    const response = await lookupAccount(accountEmail)
-    if (!response?.exists) {
-      stage.value = stages.identifier
-      setMessage('找不到此账号，请检查邮箱地址，或创建新账号。')
-      return false
-    }
-    const profile = normalizeProfile(response)
-    email.value = profile.email
-    loginProfile.value = profile
-    password.value = ''
-    stage.value = stages.password
-    return true
-  } catch (error) {
-    stage.value = stages.identifier
-    setMessage(error.message)
-    return false
-  } finally {
-    isResolvingAccount.value = false
-  }
+  const sample = SAMPLE_ACCOUNTS.find((account) => account.email === accountEmail)
+  continueToPassword({
+    email: accountEmail,
+    displayName: sample?.displayName || accountEmail,
+  })
+  return true
 }
 
 function startResendCountdown() {
@@ -267,11 +223,6 @@ async function requestRegistrationCodeForEmail() {
   isSubmitting.value = true
   resetMessages()
   try {
-    const existing = await lookupAccount(email.value.trim())
-    if (existing?.exists) {
-      setMessage('该邮箱已注册，请返回登录。')
-      return
-    }
     await requestRegistrationCode(email.value.trim())
     registrationCode.value = ''
     stage.value = stages.code
@@ -426,10 +377,9 @@ async function submitLogin() {
   isSubmitting.value = true
   resetMessages()
   try {
-    await loginWithPassword(loginProfile.value.email, password.value)
     storeAccount(loginProfile.value)
     password.value = ''
-    await router.push('/')
+    await login(loginProfile.value.email)
   } catch (error) {
     setMessage(error.message)
   } finally {
@@ -459,7 +409,6 @@ function continueWithAccount(account) {
 }
 
 function useAnotherAccount() {
-  clearAccountLookup()
   isManagingAccounts.value = false
   loginProfile.value = null
   email.value = ''
@@ -475,21 +424,18 @@ function backFromAccounts() {
 }
 
 function showSavedAccounts() {
-  clearAccountLookup()
   password.value = ''
   resetMessages()
   stage.value = stages.accounts
 }
 
 function backToLoginEmail() {
-  clearAccountLookup()
   password.value = ''
   resetMessages()
   stage.value = stages.identifier
 }
 
 function startRegistration() {
-  clearAccountLookup()
   isRegistration.value = true
   stage.value = stages.identifier
   email.value = ''
@@ -501,7 +447,6 @@ function startRegistration() {
 }
 
 function returnToLogin() {
-  clearAccountLookup()
   clearResendCountdown()
   isRegistration.value = false
   stage.value = stages.identifier
@@ -553,7 +498,21 @@ function removeAccount(accountId) {
 }
 
 function returnToLoginAfterRegistration() {
-  router.push({ name: 'login', query: { email: email.value } })
+  if (props.demo) {
+    clearResendCountdown()
+    isRegistration.value = false
+    stage.value = stages.identifier
+    password.value = ''
+    confirmPassword.value = ''
+    resetRegistrationFields()
+    loginProfile.value = null
+    resetMessages()
+    return
+  }
+
+  router.replace({ name: 'login', query: { email: email.value } }).catch(() => {
+    setMessage('无法返回登录页面，请刷新后重试。')
+  })
 }
 
 function submitDemo() {
@@ -597,7 +556,7 @@ function submitDemo() {
             设置一个至少 10 个字符的密码。
           </p>
           <p v-else class="auth-description">
-            输入密码以继续登录 SeekDateSet。
+            下一步将在 SeekDateSet 安全登录页验证您的账号。
           </p>
 
           <button
@@ -879,35 +838,33 @@ function submitDemo() {
           </section>
 
           <form v-else class="auth-form password-form" @submit.prevent="isRegistration ? submitRegistration() : submitLogin()">
-            <input
-              v-if="!isRegistration"
-              type="text"
-              name="username"
-              autocomplete="username"
-              :value="loginProfile?.email || ''"
-              hidden
-            >
-            <div v-if="isRegistration" class="selected-account">
+            <div v-if="!isRegistration && loginProfile" class="selected-account">
+              <span class="account-avatar" aria-hidden="true">{{ loginProfile.initial }}</span>
+              <span class="selected-identity">
+                <span class="selected-email">{{ loginProfile.displayName }}</span>
+                <span class="selected-caption">{{ loginProfile.email }}</span>
+              </span>
+            </div>
+            <div v-else-if="isRegistration" class="selected-account">
               <span class="account-avatar" aria-hidden="true">{{ accountInitial }}</span>
               <span class="selected-identity">
                 <span class="selected-email">{{ displayName }}</span>
                 <span class="selected-caption">{{ email }}</span>
               </span>
             </div>
-            <div class="auth-field">
+            <div v-if="isRegistration" class="auth-field">
               <input
                 id="account-password"
                 v-model="password"
-                :autocomplete="isRegistration ? 'new-password' : 'current-password'"
-                :minlength="isRegistration ? 10 : undefined"
+                autocomplete="new-password"
+                minlength="10"
                 maxlength="128"
                 name="password"
                 placeholder=" "
                 type="password"
-                :autofocus="!isRegistration"
                 required
               >
-              <label for="account-password">{{ isRegistration ? '创建密码' : '输入密码' }}</label>
+              <label v-if="isRegistration" for="account-password">创建密码</label>
             </div>
             <div v-if="isRegistration" class="auth-field">
               <input
@@ -924,7 +881,9 @@ function submitDemo() {
               <label for="registration-password-confirm">再次输入密码</label>
             </div>
             <p v-if="isRegistration" class="privacy-hint">密码长度至少为 10 个字符。</p>
-            <button v-else class="text-link forgot-password" type="button">忘记了密码？</button>
+            <p v-if="!isRegistration" class="privacy-hint">
+              密码不会发送给此页面。
+            </p>
             <p
               v-if="message"
               class="auth-message"
@@ -937,7 +896,7 @@ function submitDemo() {
                 type="button"
                 @click="isRegistration ? backToBirthday() : backToLoginEmail()"
               >返回</button>
-              <button class="primary-action" type="submit" :disabled="isBusy">{{ isRegistration ? '创建账号' : '登录' }}</button>
+              <button class="primary-action" type="submit" :disabled="isBusy">{{ isRegistration ? '创建账号' : '继续' }}</button>
             </div>
           </form>
         </div>      </section>
@@ -1617,10 +1576,6 @@ function submitDemo() {
 
 .change-account .el-icon {
   font-size: 16px;
-}
-
-.forgot-password {
-  margin-top: 10px;
 }
 
 .password-actions {

@@ -10,7 +10,7 @@
   "loginWithEmailAllowed": true,
   "registrationEmailAsUsername": true,
   "duplicateEmailsAllowed": false,
-  "verifyEmail": true,
+  "verifyEmail": false,
   "resetPasswordAllowed": true,
   "passwordPolicy": "length(10)",
   "smtpServer": {
@@ -37,6 +37,21 @@
       "attributes": {
         "pkce.code.challenge.method": "S256"
       }
+    },
+    {
+      "clientId": "olist-registration-service",
+      "name": "SeekDateSet registration service",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [],
+      "webOrigins": []
     }
   ],
   "roles": {
@@ -44,5 +59,16 @@
       {"name": "platform-user", "description": "Can use platform features"},
       {"name": "platform-admin", "description": "Can manage platform resources"}
     ]
-  }
+  },
+  "users": [
+    {
+      "username": "service-account-olist-registration-service",
+      "enabled": true,
+      "serviceAccountClientId": "olist-registration-service",
+      "realmRoles": ["default-roles-olist"],
+      "clientRoles": {
+        "realm-management": ["manage-users", "query-users", "view-users"]
+      }
+    }
+  ]
 }

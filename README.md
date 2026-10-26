@@ -43,6 +43,46 @@ Java 应用位于 `ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
 5. 启动 Python 模型服务：进入 Python 目录后运行 `python -m uvicorn app.main:app --reload --port 8090`。
 6. 前端目录运行 `pnpm install` 和 `pnpm dev`；Vite 将 `/api` 转发到 Gateway 的 `8080` 端口。
 
+### 登录和注册的最小启动组合
+
+登录、注册由 `api-gateway` 和 Keycloak 提供，不是 `dataset-service` 的功能。只启动前端和
+`dataset-service` 时，`/api/v1/auth/accounts/lookup` 会因为拿不到 Keycloak 服务账号令牌而返回 503。
+
+第一次登录或注册前至少需要启动：
+
+```powershell
+docker compose up -d mysql redis mailpit keycloak
+```
+
+然后启动 `api-gateway`（IDE 里运行，或使用 `docker compose --profile apps up -d api-gateway`）和前端。
+验证码存放在 Redis，登录和注册的用户由 Keycloak 管理。
+
+全新数据卷启动 Keycloak 时，`infra/keycloak/olist-realm.json` 会导入 `olist-web` 和
+`olist-registration-service` 两个客户端。若本机之前已经启动过 Keycloak，realm 导入不会覆盖已有数据，
+需要补建客户端并授予 `manage-users`、`query-users`、`view-users`：
+
+```powershell
+$env:KEYCLOAK_ADMIN = 'admin'
+$env:KEYCLOAK_ADMIN_PASSWORD = 'local-admin-change-me'
+node infra/keycloak/configure-registration-client.mjs
+```
+
+把脚本输出的 `KEYCLOAK_REGISTRATION_CLIENT_SECRET` 写入根目录 `.env`，并确保
+`REGISTRATION_OTP_SECRET` 至少有 32 个字符，然后重启 `api-gateway`。`.env.example` 故意不包含这些密钥；
+实际密钥仅保存在未跟踪的本地 `.env` 中，不要提交或分发。
+
+Windows 上也可以直接运行一键修复脚本（推荐）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\fix-auth.ps1
+```
+
+脚本会启动缺失的 MySQL、Redis、Mailpit 和 Keycloak，补建注册服务客户端与角色，并验证服务账号。
+如果 Keycloak 已经启动，脚本不会重复启动它。
+
+如果 `api-gateway` 直接运行在 Windows 上，使用 Mailpit 时把 `.env` 中的 `SMTP_HOST` 改为
+`localhost`；如果运行在 Compose 容器里，则保持 `mailpit`。
+
 默认 Compose 不启动高资源计算集群。需要调试时可显式启用 `batch`（Spark）、`stream`（Flink）和 `observability`（Prometheus/Grafana）profile。`apps` profile 会同时启动 MLflow 与各应用。Python 的 `features` 依赖组提供 Feast/Redis 集成，但不进入默认模型服务镜像。上述计算与监控配置是运行时选型，不代表服务边界留待以后再设计。
 
 ## 健康检查

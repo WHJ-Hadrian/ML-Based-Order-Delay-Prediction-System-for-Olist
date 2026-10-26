@@ -86,10 +86,6 @@ public class RegistrationService {
                 .onErrorResume(error -> clearFailedRequest(error, emailHash, cooldownKey));
     }
 
-    public Mono<AccountProfile> lookupAccount(String rawEmail) {
-        return keycloak.findUserByEmail(normalizeEmail(rawEmail));
-    }
-
     public Mono<String> verifyCode(String rawEmail, String code) {
         String email = normalizeEmail(rawEmail);
         String emailHash = sha256(email);

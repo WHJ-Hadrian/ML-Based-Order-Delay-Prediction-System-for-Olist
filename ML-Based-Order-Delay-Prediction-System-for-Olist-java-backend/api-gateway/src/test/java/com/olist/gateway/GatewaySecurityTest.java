@@ -42,4 +42,14 @@ class GatewaySecurityTest {
                 .expectStatus()
                 .isBadRequest();
     }
+
+    @Test
+    void doesNotExposeAccountLookupWithoutAuthentication() {
+        webTestClient.post()
+                .uri("/api/v1/auth/accounts/lookup")
+                .bodyValue(Map.of("email", "user@example.com"))
+                .exchange()
+                .expectStatus()
+                .isUnauthorized();
+    }
 }

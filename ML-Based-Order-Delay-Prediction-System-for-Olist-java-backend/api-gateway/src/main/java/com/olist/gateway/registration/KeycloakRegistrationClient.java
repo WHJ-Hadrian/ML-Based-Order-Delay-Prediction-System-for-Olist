@@ -36,10 +36,6 @@ public class KeycloakRegistrationClient {
     }
 
     public Mono<Boolean> userExists(String email) {
-        return findUserByEmail(email).hasElement();
-    }
-
-    public Mono<AccountProfile> findUserByEmail(String email) {
         return accessToken().flatMap(token -> webClient.get()
                 .uri(uri -> uri.path("/admin/realms/{realm}/users")
                         .queryParam("email", email)
@@ -49,9 +45,8 @@ public class KeycloakRegistrationClient {
                 .headers(headers -> headers.setBearerAuth(token))
                 .retrieve()
                 .bodyToMono(USER_LIST)
-                .flatMap(users -> users.isEmpty()
-                        ? Mono.empty()
-                        : Mono.just(toProfile(users.get(0), email)))
+                .map(users -> !users.isEmpty())
+                .defaultIfEmpty(false)
                 .onErrorMap(this::isUnavailable, error -> unavailable()));
     }
 
@@ -95,48 +90,6 @@ public class KeycloakRegistrationClient {
                 .toBodilessEntity()
                 .then()
                 .onErrorMap(this::isUnavailable, error -> unavailable()));
-    }
-
-    private AccountProfile toProfile(Map<String, Object> user, String fallbackEmail) {
-        String firstName = stringValue(user.get("firstName"));
-        String lastName = stringValue(user.get("lastName"));
-        String displayName = (firstName + " " + lastName).trim();
-        if (displayName.isBlank()) displayName = stringValue(user.get("username"));
-        if (displayName.isBlank()) displayName = fallbackEmail;
-
-        String email = stringValue(user.get("email"));
-        if (email.isBlank()) email = fallbackEmail;
-        return new AccountProfile(
-                stringValue(user.get("id")),
-                email,
-                displayName,
-                avatarUrl(user));
-    }
-
-    private String avatarUrl(Map<String, Object> user) {
-        Object attributes = user.get("attributes");
-        if (attributes instanceof Map<?, ?> values) {
-            String picture = firstString(values.get("picture"));
-            if (!picture.isBlank()) return picture;
-            String avatar = firstString(values.get("avatar"));
-            if (!avatar.isBlank()) return avatar;
-        }
-        return firstString(user.get("picture"));
-    }
-
-    private String firstString(Object value) {
-        if (value instanceof List<?> values) {
-            for (Object item : values) {
-                String text = stringValue(item);
-                if (!text.isBlank()) return text;
-            }
-            return "";
-        }
-        return stringValue(value);
-    }
-
-    private String stringValue(Object value) {
-        return value instanceof String text ? text.trim() : "";
     }
 
     private Mono<String> accessToken() {

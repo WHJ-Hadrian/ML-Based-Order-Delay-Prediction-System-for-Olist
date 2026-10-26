@@ -32,10 +32,6 @@ export function requestRegistrationCode(email) {
   return post('/registration-codes', { email })
 }
 
-export function lookupAccount(email) {
-  return post('/accounts/lookup', { email })
-}
-
 export function verifyRegistrationCode(email, code) {
   return post('/registration-codes/verify', { email, code })
 }

@@ -2,7 +2,6 @@ package com.olist.gateway.registration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -51,22 +50,6 @@ class RegistrationServiceTest {
         assertBadRequest(error);
 
         verifyNoInteractions(redis, properties, keycloak, emailSender);
-    }
-
-    @Test
-    void looksUpExistingAccountProfile() {
-        AccountProfile profile = new AccountProfile(
-                "user-id", "user@example.com", "SeekDateSet User", "https://example.com/avatar.png");
-        when(keycloak.findUserByEmail("user@example.com")).thenReturn(Mono.just(profile));
-
-        assertEquals(profile, service.lookupAccount("User@Example.com").block());
-    }
-
-    @Test
-    void returnsEmptyLookupForUnknownAccount() {
-        when(keycloak.findUserByEmail("missing@example.com")).thenReturn(Mono.empty());
-
-        assertNull(service.lookupAccount("missing@example.com").block());
     }
 
     private void assertBadRequest(Throwable error) {

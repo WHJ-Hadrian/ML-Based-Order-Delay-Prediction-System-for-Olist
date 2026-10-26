@@ -2,8 +2,6 @@ package com.olist.gateway.registration;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.util.Locale;
-
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -39,19 +37,6 @@ public class RegistrationController {
                 .map(message -> ResponseEntity.accepted().body(new MessageResponse(message)));
     }
 
-    @PostMapping("/accounts/lookup")
-    public Mono<AccountLookupResponse> lookupAccount(@Valid @RequestBody LookupRequest request) {
-        String email = request.email().trim().toLowerCase(Locale.ROOT);
-        return registrationService.lookupAccount(email)
-                .map(profile -> new AccountLookupResponse(
-                        true,
-                        profile.id(),
-                        profile.email(),
-                        profile.displayName(),
-                        profile.avatarUrl()))
-                .defaultIfEmpty(new AccountLookupResponse(false, email, null, null, null));
-    }
-
     @PostMapping("/registration-codes/verify")
     public Mono<VerificationResponse> verifyCode(@Valid @RequestBody VerifyCodeRequest request) {
         return registrationService.verifyCode(request.email(), request.code())
@@ -70,9 +55,6 @@ public class RegistrationController {
                         .body(new MessageResponse("账号已创建，请登录。")));
     }
 
-    public record LookupRequest(
-            @NotBlank @Email @Size(max = 254) String email) { }
-
     public record CodeRequest(
             @NotBlank @Email @Size(max = 254) String email) { }
 
@@ -87,12 +69,6 @@ public class RegistrationController {
             @Size(max = 10) @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}") String birthday,
             @Pattern(regexp = "female|male|other|unspecified") String gender) { }
 
-    public record AccountLookupResponse(
-            boolean exists,
-            String id,
-            String email,
-            String displayName,
-            String avatarUrl) { }
     public record VerificationResponse(String verificationToken) { }
     public record MessageResponse(String message) { }
 

@@ -23,7 +23,6 @@ public class GatewaySecurityConfiguration {
                         .permitAll()
                         .pathMatchers(
                                 HttpMethod.POST,
-                                "/api/v1/auth/accounts/lookup",
                                 "/api/v1/auth/registration-codes",
                                 "/api/v1/auth/registration-codes/verify",
                                 "/api/v1/auth/registrations")
