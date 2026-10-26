@@ -20,14 +20,23 @@ public class LocalFileSystemDatasetStorage implements DatasetStorage {
     @Override
     public void put(String key, InputStream content, long size, String contentType) {
         Path target = resolve(key);
+        Path temporary = null;
         try {
             Files.createDirectories(target.getParent());
-            Path temporary = Files.createTempFile(target.getParent(), ".upload-", ".tmp");
+            temporary = Files.createTempFile(target.getParent(), ".upload-", ".tmp");
             try (OutputStream output = Files.newOutputStream(temporary)) {
                 content.transferTo(output);
             }
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException exception) {
+            temporary = null;
+        } catch (IOException | RuntimeException exception) {
+            if (temporary != null) {
+                try {
+                    Files.deleteIfExists(temporary);
+                } catch (IOException cleanupException) {
+                    exception.addSuppressed(cleanupException);
+                }
+            }
             throw new StorageException("Failed to store dataset object " + key, exception);
         }
     }
