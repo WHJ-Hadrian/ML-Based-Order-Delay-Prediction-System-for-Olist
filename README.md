@@ -71,6 +71,7 @@ node infra/keycloak/configure-registration-client.mjs
 `REGISTRATION_OTP_SECRET` 至少有 32 个字符，然后重启 `api-gateway`。`.env.example` 故意不包含这些密钥；
 实际密钥仅保存在未跟踪的本地 `.env` 中，不要提交或分发。
 
+此命令也会将 `olist-web` 设为 Authorization Code + PKCE，并关闭 password grant。
 Windows 上也可以直接运行一键修复脚本（推荐）：
 
 ```powershell
@@ -78,7 +79,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\fix-auth.ps1
 ```
 
 脚本会启动缺失的 MySQL、Redis、Mailpit 和 Keycloak，补建注册服务客户端与角色，并验证服务账号。
-如果 Keycloak 已经启动，脚本不会重复启动它。
+如果 Keycloak 已经启动，脚本不会重复启动它。若需要撤销旧注册密钥，显式附加
+`-RotateRegistrationSecret`；脚本会生成新密钥、更新本地 `.env` 和 Keycloak 客户端，并提示重启 Gateway。
 
 如果 `api-gateway` 直接运行在 Windows 上，使用 Mailpit 时把 `.env` 中的 `SMTP_HOST` 改为
 `localhost`；如果运行在 Compose 容器里，则保持 `mailpit`。

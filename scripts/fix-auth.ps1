@@ -1,7 +1,8 @@
 param(
     [string]$RepoRoot,
     [string]$KeycloakUrl = 'http://localhost:8180',
-    [switch]$SkipDockerStart
+    [switch]$SkipDockerStart,
+    [switch]$RotateRegistrationSecret
 )
 
 $ErrorActionPreference = 'Stop'
@@ -110,6 +111,7 @@ if (-not (Test-Path -LiteralPath $envPath)) {
 
 $values = Read-DotEnv $envPath
 $realm = Get-ConfiguredValue $values 'KEYCLOAK_REALM' 'olist'
+$webClientId = Get-ConfiguredValue $values 'KEYCLOAK_WEB_CLIENT_ID' 'olist-web'
 $clientId = Get-ConfiguredValue $values 'KEYCLOAK_REGISTRATION_CLIENT_ID' 'olist-registration-service'
 $clientSecret = Get-ConfiguredValue $values 'KEYCLOAK_REGISTRATION_CLIENT_SECRET' ''
 $otpSecret = Get-ConfiguredValue $values 'REGISTRATION_OTP_SECRET' ''
@@ -122,10 +124,10 @@ if ($configuredKeycloakUrl -match '^https?://(localhost|127\.0\.0\.1)(:\d+)?/?$'
     $KeycloakUrl = $KeycloakUrl.TrimEnd('/')
 }
 
-if (-not $clientSecret) {
+if (-not $clientSecret -or $RotateRegistrationSecret) {
     $clientSecret = New-RandomSecret 48
     Set-DotEnvValue $envPath 'KEYCLOAK_REGISTRATION_CLIENT_SECRET' $clientSecret
-    Write-Host 'Generated KEYCLOAK_REGISTRATION_CLIENT_SECRET and wrote it to .env.'
+    Write-Host 'Generated a new registration client secret and wrote it to .env.'
     $secretsChanged = $true
 }
 if (-not $otpSecret -or $otpSecret.Length -lt 32) {
@@ -240,6 +242,32 @@ if ($profileChanged) {
     Write-Host 'Adjusted Keycloak user profile: surname is optional and custom attributes are enabled.'
 } else {
     Write-Host 'Keycloak user profile is already configured.'
+}
+
+$encodedWebClientId = [uri]::EscapeDataString($webClientId)
+$webClients = @(Invoke-RestMethod -Uri "$adminPath/clients?clientId=$encodedWebClientId" -Headers $headers)
+$webClient = $webClients | Select-Object -First 1
+if (-not $webClient) { throw "Keycloak web client '$webClientId' was not found." }
+$webClientAttributes = @{}
+if ($webClient.attributes) {
+    foreach ($property in $webClient.attributes.PSObject.Properties) {
+        $webClientAttributes[$property.Name] = $property.Value
+    }
+}
+$webClientAttributes['pkce.code.challenge.method'] = 'S256'
+$webClientChanged = $false
+if (-not $webClient.publicClient) { $webClient.publicClient = $true; $webClientChanged = $true }
+if (-not $webClient.standardFlowEnabled) { $webClient.standardFlowEnabled = $true; $webClientChanged = $true }
+if ($webClient.implicitFlowEnabled) { $webClient.implicitFlowEnabled = $false; $webClientChanged = $true }
+if ($webClient.directAccessGrantsEnabled) { $webClient.directAccessGrantsEnabled = $false; $webClientChanged = $true }
+if ($webClient.attributes.'pkce.code.challenge.method' -ne 'S256') { $webClientChanged = $true }
+$webClient.attributes = $webClientAttributes
+if ($webClientChanged) {
+    Invoke-RestMethod -Method Put -Uri "$adminPath/clients/$($webClient.id)" -Headers $headers `
+        -ContentType 'application/json' -Body ($webClient | ConvertTo-Json -Depth 50) | Out-Null
+    Write-Host "Updated Keycloak web client '$webClientId' to Authorization Code + PKCE."
+} else {
+    Write-Host "Keycloak web client '$webClientId' already uses Authorization Code + PKCE."
 }
 
 $encodedClientId = [uri]::EscapeDataString($clientId)

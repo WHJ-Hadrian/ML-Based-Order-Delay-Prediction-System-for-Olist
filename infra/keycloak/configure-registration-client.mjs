@@ -49,6 +49,35 @@ if (realmRepresentation.registrationAllowed || realmRepresentation.passwordPolic
   }, accessToken)
 }
 
+const webClientId = process.env.KEYCLOAK_WEB_CLIENT_ID || 'olist-web'
+const webClients = await request(`${adminPath}/clients?clientId=${encodeURIComponent(webClientId)}`, {}, accessToken)
+const webClient = webClients[0]
+if (!webClient) {
+  throw new Error(`Keycloak web client '${webClientId}' was not found.`)
+}
+const webClientAttributes = {
+  ...(webClient.attributes || {}),
+  'pkce.code.challenge.method': 'S256',
+}
+if (!webClient.publicClient
+  || !webClient.standardFlowEnabled
+  || webClient.implicitFlowEnabled
+  || webClient.directAccessGrantsEnabled
+  || webClient.attributes?.['pkce.code.challenge.method'] !== 'S256') {
+  await request(`${adminPath}/clients/${webClient.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...webClient,
+      publicClient: true,
+      standardFlowEnabled: true,
+      implicitFlowEnabled: false,
+      directAccessGrantsEnabled: false,
+      attributes: webClientAttributes,
+    }),
+  }, accessToken)
+}
+
 const clients = await request(`${adminPath}/clients?clientId=${encodeURIComponent(clientId)}`, {}, accessToken)
 let registrationClient = clients[0]
 if (!registrationClient) {
@@ -135,4 +164,5 @@ const clientSecret = await request(
 console.log('Keycloak registration client is ready. Set this value in the root .env file:')
 console.log(`KEYCLOAK_REGISTRATION_CLIENT_SECRET=${clientSecret.value}`)
 console.log('The service account has only manage-users, query-users, and view-users.')
+console.log(`Keycloak web client '${webClientId}' uses Authorization Code + PKCE; password grants are disabled.`)
 console.log('Generate REGISTRATION_OTP_SECRET separately with at least 32 random bytes.')
