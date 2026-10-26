@@ -13,3 +13,6 @@ olist:
   storage:
     type: local
     local-root: ./data/datasets
+
+server:
+  address: 127.0.0.1
