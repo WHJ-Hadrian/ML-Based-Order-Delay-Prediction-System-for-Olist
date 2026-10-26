@@ -34,6 +34,7 @@ const section = computed(() => findNavigationItem(route.meta.navigationKey))
 const authReady = computed(() => auth.state.status !== 'checking')
 const datasets = ref([])
 const loading = ref(false)
+const loadError = ref('')
 const authRequired = ref(false)
 const creating = ref(false)
 const page = ref(0)
@@ -43,6 +44,7 @@ const activeTab = ref(DATASET_TAB_KEYS.ALL)
 const expandedIds = ref([])
 const editingId = ref('')
 const uploadingId = ref('')
+const uploadController = ref(null)
 
 const filters = reactive({
   keyword: '',
@@ -85,11 +87,13 @@ watch(
 
 onBeforeUnmount(() => {
   datasetRequestSequence += 1
+  uploadController.value?.abort()
 })
 
 async function loadDatasets() {
   const requestSequence = ++datasetRequestSequence
   loading.value = true
+  loadError.value = ''
   try {
     const result = await listDatasets({
       keyword: filters.keyword,
@@ -117,9 +121,7 @@ async function loadDatasets() {
       authRequired.value = true
       return
     }
-    datasets.value = []
-    totalElements.value = 0
-    ElMessage.error(error?.message || '加载数据集失败')
+    loadError.value = error?.message || '加载数据集失败'
   } finally {
     if (requestSequence === datasetRequestSequence) {
       loading.value = false
@@ -395,10 +397,13 @@ async function handleUpload({ id, file }) {
   }
 
   uploadingId.value = id
+  const controller = new AbortController()
+  uploadController.value = controller
   uploadProgress[id] = 0
   try {
     const detail = await addDatasetFile(id, {
       file,
+      signal: controller.signal,
       onProgress: (value) => {
         uploadProgress[id] = value
       },
@@ -416,12 +421,25 @@ async function handleUpload({ id, file }) {
     }
     ElMessage.success(`已上传 ${file.name}`)
   } catch (error) {
-    ElMessage.error(error.message)
+    if (error?.name === 'AbortError') {
+      ElMessage.info('上传已取消')
+    } else {
+      ElMessage.error(error.message)
+    }
   } finally {
+    if (uploadController.value === controller) {
+      uploadController.value = null
+    }
     uploadingId.value = ''
     window.setTimeout(() => {
       uploadProgress[id] = 0
     }, 600)
+  }
+}
+
+function cancelUpload(id) {
+  if (uploadingId.value === id) {
+    uploadController.value?.abort()
   }
 }
 
@@ -542,6 +560,19 @@ function syncRowFromDetail(id, detail) {
           </template>
 
           <div v-loading="loading" class="dataset-list">
+            <el-alert
+              v-if="loadError"
+              class="list-load-error"
+              type="error"
+              :closable="false"
+              show-icon
+              :title="loadError"
+            >
+              <template #default>
+                <el-button link type="primary" @click="loadDatasets">重试</el-button>
+              </template>
+            </el-alert>
+
             <DatasetRow
               v-for="item in datasets"
               :key="item.id"
@@ -558,6 +589,7 @@ function syncRowFromDetail(id, detail) {
               @cancel-edit="cancelEdit"
               @save-name="saveName"
               @upload="handleUpload"
+              @cancel-upload="cancelUpload"
               @delete="handleDeleteDataset"
               @rename-table="handleRenameTable"
               @delete-table="handleDeleteTable"
@@ -565,7 +597,7 @@ function syncRowFromDetail(id, detail) {
             />
 
             <el-empty
-              v-if="!loading && datasets.length === 0"
+              v-if="!loading && !loadError && datasets.length === 0"
               class="empty-state"
               :image-size="104"
               :description="section.emptyText"

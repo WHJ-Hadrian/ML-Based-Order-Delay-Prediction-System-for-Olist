@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { Plus } from '@element-plus/icons-vue'
+import { Close, Plus } from '@element-plus/icons-vue'
 
 const props = defineProps({
   compact: { type: Boolean, default: false },
@@ -9,7 +9,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'cancel'])
 
 const inputRef = ref(null)
 const dragActive = ref(false)
@@ -69,6 +69,15 @@ function onDrop(event) {
         :show-text="false"
         :stroke-width="3"
       />
+      <el-button
+        v-if="uploading"
+        class="upload-cancel"
+        link
+        type="danger"
+        size="small"
+        :icon="Close"
+        @click.stop="emit('cancel')"
+      >取消上传</el-button>
     </template>
 
     <button
@@ -98,5 +107,14 @@ function onDrop(event) {
         striped-flow
       />
     </button>
+    <el-button
+      v-if="uploading && !compact"
+      class="upload-cancel"
+      link
+      type="danger"
+      size="small"
+      :icon="Close"
+      @click.stop="emit('cancel')"
+    >取消上传</el-button>
   </div>
 </template>

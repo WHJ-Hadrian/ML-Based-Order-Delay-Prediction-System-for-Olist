@@ -23,6 +23,51 @@ const { datasetTotal } = provideWorkspaceState()
 const auth = useAuth()
 const accountInitial = computed(() => (auth.state.user?.name || 'U').charAt(0).toUpperCase())
 const isFullscreenRoute = computed(() => route.meta.fullscreen === true)
+const watermarkText = computed(() => {
+  const user = auth.state.user
+  if (!user) return 'SeekDateSet · 数据分析工作台'
+
+  const label = [user.name, user.email]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' · ')
+
+  const safeLabel = label.length > 64 ? `${label.slice(0, 61)}...` : label
+  return safeLabel || 'SeekDateSet'
+})
+
+function createWatermarkImage(text, options) {
+  const { width, height, fontSize, rotation, opacity } = options
+  const centerX = width / 2
+  const centerY = height / 2
+  const safeText = text.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&apos;',
+  })[character])
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><text x="${centerX}" y="${centerY}" fill="#176b57" fill-opacity="${opacity}" font-family="Roboto,Microsoft YaHei,sans-serif" font-size="${fontSize}" font-weight="500" text-anchor="middle" dominant-baseline="central" transform="rotate(${rotation} ${centerX} ${centerY})">${safeText}</text></svg>`
+
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+}
+
+const watermarkStyle = computed(() => ({
+  '--identity-watermark': createWatermarkImage(watermarkText.value, {
+    width: 220,
+    height: 92,
+    fontSize: 9,
+    rotation: -24,
+    opacity: 0.13,
+  }),
+  '--identity-watermark-hero': createWatermarkImage(watermarkText.value, {
+    width: 380,
+    height: 96,
+    fontSize: 17,
+    rotation: -8,
+    opacity: 0.09,
+  }),
+}))
 
 function startLogin() {
   router.push({ name: 'login' })
@@ -63,7 +108,7 @@ onBeforeUnmount(() => {
 
 <template>
   <el-config-provider :locale="locale">
-    <div v-if="!isFullscreenRoute" class="app-frame">
+    <div v-if="!isFullscreenRoute" class="app-frame" :style="watermarkStyle">
       <div class="app-backdrop" aria-hidden="true">
         <video
           class="app-backdrop-media"

@@ -1,6 +1,7 @@
 export const DATASET_LIMITS = Object.freeze({
   maxFileSize: 1024 * 1024 * 1024,
   maxXlsxSize: 100 * 1024 * 1024,
+  uploadTimeoutMs: 30 * 60 * 1000,
 })
 
 export const DATASET_FORMATS = Object.freeze([

@@ -3,6 +3,7 @@ import {
   AuthenticationRequiredError,
   getAccessToken,
 } from '@/auth/keycloak'
+import { DATASET_LIMITS } from '@/config/dataset'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1/datasets'
 
@@ -126,7 +127,12 @@ export function deleteDatasetTable(datasetId, tableId) {
   )
 }
 
-async function uploadFile(url, file, onProgress) {
+async function uploadFile(url, file, onProgress, { signal } = {}) {
+  if (signal?.aborted) {
+    const error = new Error('上传已取消')
+    error.name = 'AbortError'
+    throw error
+  }
   const token = await getAccessToken()
   if (!token) {
     throw authenticationRequired()
@@ -137,8 +143,23 @@ async function uploadFile(url, file, onProgress) {
     formData.append('file', file)
 
     const xhr = new XMLHttpRequest()
+    let settled = false
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', abort)
+      callback(value)
+    }
+    const abort = () => xhr.abort()
+    const abortError = () => {
+      const error = new Error('上传已取消')
+      error.name = 'AbortError'
+      return error
+    }
+
     xhr.open('POST', url)
     xhr.responseType = 'text'
+    xhr.timeout = DATASET_LIMITS.uploadTimeoutMs
     xhr.setRequestHeader('Authorization', `Bearer ${token}`)
 
     xhr.upload.addEventListener('progress', (event) => {
@@ -157,27 +178,34 @@ async function uploadFile(url, file, onProgress) {
         }
       }
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(body)
+        finish(resolve, body)
         return
       }
       if (xhr.status === 401) {
-        reject(authenticationRequired())
+        finish(reject, authenticationRequired())
         return
       }
-      reject(new Error(extractError(body, `上传失败（HTTP ${xhr.status}）`)))
+      finish(reject, new Error(extractError(body, `上传失败（HTTP ${xhr.status}）`)))
     })
 
-    xhr.addEventListener('error', () => {
-      reject(new Error('无法连接后端服务，请检查服务状态或网关配置'))
-    })
-    xhr.addEventListener('abort', () => reject(new Error('上传已取消')))
+    xhr.addEventListener('error', () => finish(reject,
+      new Error('无法连接后端服务，请检查服务状态或网关配置')))
+    xhr.addEventListener('timeout', () => finish(reject,
+      new Error('上传超时，请检查网络后重试。')))
+    xhr.addEventListener('abort', () => finish(reject, abortError()))
+
+    if (signal?.aborted) {
+      finish(reject, abortError())
+      return
+    }
+    signal?.addEventListener('abort', abort, { once: true })
 
     xhr.send(formData)
   })
 }
 
-export function addDatasetFile(id, { file, onProgress } = {}) {
-  return uploadFile(`${API_BASE}/${encodeURIComponent(id)}/files`, file, onProgress)
+export function addDatasetFile(id, { file, onProgress, signal } = {}) {
+  return uploadFile(`${API_BASE}/${encodeURIComponent(id)}/files`, file, onProgress, { signal })
 }
 
 export function previewDatasetTable(datasetId, tableId, { limit = 10, mode = 'preview' } = {}) {
@@ -191,5 +219,21 @@ export function listDatasetTableRows(datasetId, tableId, { offset = 0, limit = 2
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
   return request(
     `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/rows?${params.toString()}`,
+  )
+}
+
+export function searchDatasetTableRows(
+  datasetId,
+  tableId,
+  { keyword, column = -1, offset = 0, limit = 50 } = {},
+) {
+  const params = new URLSearchParams({
+    keyword: String(keyword || '').trim(),
+    column: String(column),
+    offset: String(offset),
+    limit: String(limit),
+  })
+  return request(
+    `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/search?${params.toString()}`,
   )
 }

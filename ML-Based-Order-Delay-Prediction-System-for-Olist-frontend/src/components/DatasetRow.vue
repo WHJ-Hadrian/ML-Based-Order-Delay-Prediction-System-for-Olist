@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, h, nextTick, reactive, ref, watch } from 'vue'
 import {
   ArrowRight,
   Clock,
@@ -8,9 +8,11 @@ import {
   EditPen,
   Files,
   Grid,
+  Search,
 } from '@element-plus/icons-vue'
 import { ElAutoResizer, ElTableV2 } from 'element-plus'
 import DatasetUploader from '@/components/DatasetUploader.vue'
+import TableRowSearch from '@/components/TableRowSearch.vue'
 import { listDatasetTableRows, previewDatasetTable } from '@/api/datasets'
 import { statusLabel, statusTagType } from '@/utils/dataset'
 import { formatDateTime, formatNumber } from '@/utils/format'
@@ -32,6 +34,7 @@ const emit = defineEmits([
   'cancel-edit',
   'save-name',
   'upload',
+  'cancel-upload',
   'delete',
   'rename-table',
   'delete-table',
@@ -45,6 +48,7 @@ const TABLE_ROW_PREFETCH = 30
 const nameInput = ref(null)
 const tableNameInput = ref(null)
 const draftName = ref(props.item.name)
+const tableKeyword = ref('')
 const editingTableKey = ref('')
 const tableNameDraft = ref('')
 const showAllTables = ref(false)
@@ -54,14 +58,22 @@ const tablePreviewLoading = reactive({})
 const tablePreviewErrors = reactive({})
 const expandedAllTables = reactive({})
 const tableAllRows = reactive({})
+const tableSearchActive = reactive({})
 let cancelOnBlur = false
 let cancelTableOnBlur = false
 
 const tables = computed(() => props.detail?.tables ?? [])
-const hasManyTables = computed(() => tables.value.length > TABLE_PREVIEW_LIMIT)
+const filteredTables = computed(() => {
+  const keyword = tableKeyword.value.trim().toLocaleLowerCase()
+  if (!keyword) return tables.value
+  return tables.value.filter((table) => [table.name, table.fileName]
+    .some((value) => String(value || '').toLocaleLowerCase().includes(keyword)))
+})
+const hasManyTables = computed(() => filteredTables.value.length > TABLE_PREVIEW_LIMIT)
 const isClamped = computed(
   () =>
     hasManyTables.value &&
+    !tableKeyword.value.trim() &&
     !showAllTables.value &&
     expandedTableIds.value.length === 0,
 )
@@ -91,12 +103,7 @@ watch(
   { immediate: true },
 )
 
-watch(
-  () => props.detail,
-  () => {
-    resetTableState()
-  },
-)
+watch(() => props.item.id, resetTableState)
 
 watch(
   () => props.expanded,
@@ -108,6 +115,7 @@ watch(
 )
 
 function resetTableState() {
+  tableKeyword.value = ''
   showAllTables.value = false
   expandedTableIds.value = []
   editingTableKey.value = ''
@@ -126,6 +134,9 @@ function resetTableState() {
   }
   for (const key of Object.keys(tableAllRows)) {
     delete tableAllRows[key]
+  }
+  for (const key of Object.keys(tableSearchActive)) {
+    delete tableSearchActive[key]
   }
 }
 
@@ -176,14 +187,30 @@ function allRowsKey(table) {
 }
 
 function buildAllColumns(columns) {
+  const renderPreviewText = (value, className) => {
+    const text = String(value ?? '')
+    return h('span', { class: className, title: text }, text)
+  }
+
   return [
-    { key: 'index', dataKey: '__index', title: '#', width: 76, align: 'right' },
+    {
+      key: 'index',
+      dataKey: '__index',
+      title: '#',
+      width: 76,
+      align: 'right',
+      headerCellRenderer: ({ column }) => renderPreviewText(column.title, 'preview-virtual-heading'),
+      cellRenderer: ({ cellData }) => renderPreviewText(cellData, 'preview-virtual-value'),
+    },
     ...columns.map((column, index) => ({
       key: `column-${index}`,
       dataKey: `c${index}`,
       title: column || `列 ${index + 1}`,
       width: 160,
       flexGrow: 1,
+      headerCellRenderer: ({ column: columnConfig }) =>
+        renderPreviewText(columnConfig.title, 'preview-virtual-heading'),
+      cellRenderer: ({ cellData }) => renderPreviewText(cellData, 'preview-virtual-value'),
     })),
   ]
 }
@@ -421,22 +448,13 @@ function selectFile(file) {
   emit('upload', { id: props.item.id, file })
 }
 
-function handleKeydown(event) {
-  if (event.key === 'Enter' || event.key === ' ') {
-    event.preventDefault()
-    toggle()
-  }
-}
 </script>
 
 <template>
   <article class="dataset-item" :class="{ 'is-expanded': expanded }">
     <div
       class="dataset-summary"
-      role="button"
-      tabindex="0"
       @click="toggle"
-      @keydown="handleKeydown"
     >
       <span class="row-chevron" :class="{ 'is-open': expanded }">
         <el-icon><ArrowRight /></el-icon>
@@ -455,12 +473,14 @@ function handleKeydown(event) {
           @keyup.esc="handleNameEscape($event, cancelName)"
           @blur="commitName"
         />
-        <button v-else type="button" class="name-link" @click="toggle">
+        <button v-else type="button" class="name-link" :title="item.name" @click="toggle">
           {{ item.name }}
         </button>
         <span class="dataset-subline">
           <span class="dataset-id">{{ shortId }}…</span>
-          <span v-if="item.description" class="dataset-description">{{ item.description }}</span>
+          <span v-if="item.description" class="dataset-description" :title="item.description">
+            {{ item.description }}
+          </span>
         </span>
       </div>
 
@@ -528,12 +548,10 @@ function handleKeydown(event) {
               </span>
               <span>更新于 {{ formatDateTime(detail.updatedAt) }}</span>
               <span v-if="detail.files?.length">{{ detail.files.length }} 个源文件</span>
-            </div>
-
-            <div v-if="detail.files?.length" class="file-chips">
               <el-tag
                 v-for="file in detail.files"
                 :key="file.id"
+                :title="file.originalFilename"
                 type="info"
                 effect="plain"
                 size="small"
@@ -548,21 +566,35 @@ function handleKeydown(event) {
               :uploading="uploading"
               :progress="uploadProgress"
               @select="selectFile"
+              @cancel="emit('cancel-upload', item.id)"
             />
 
             <template v-else>
               <div class="tables-heading">
                 <div>
                   <strong>数据表</strong>
-                  <span>共 {{ tables.length }} 张，来自 {{ detail.files?.length ?? 0 }} 个文件</span>
+                  <span>
+                    {{ tableKeyword.trim() ? `匹配 ${filteredTables.length} / ${tables.length} 张` : `共 ${tables.length} 张` }}，
+                    来自 {{ detail.files?.length ?? 0 }} 个文件
+                  </span>
                 </div>
-                <span class="tables-total">点击任意表可展开预览</span>
+                <div class="tables-heading-actions">
+                  <el-input
+                    v-model="tableKeyword"
+                    class="table-metadata-search"
+                    clearable
+                    :prefix-icon="Search"
+                    placeholder="搜索表名或源文件"
+                    aria-label="搜索数据表名或源文件"
+                  />
+                  <span class="tables-total">点击任意表可展开预览</span>
+                </div>
               </div>
 
               <div class="table-window" :class="{ 'is-clamped': isClamped }">
                 <div class="table-list">
                   <div
-                    v-for="table in tables"
+                    v-for="table in filteredTables"
                     :key="tableKey(table)"
                     class="table-block"
                     :class="{ 'is-open': isTableExpanded(table) }"
@@ -579,7 +611,10 @@ function handleKeydown(event) {
                       <span class="table-icon"><el-icon><Grid /></el-icon></span>
                       <div class="table-copy">
                         <div class="table-name-row">
-                          <strong :class="{ 'is-editing-hidden': isTableEditing(table) }">
+                          <strong
+                            :title="table.name"
+                            :class="{ 'is-editing-hidden': isTableEditing(table) }"
+                          >
                             {{ table.name }}
                           </strong>
                           <el-input
@@ -596,7 +631,7 @@ function handleKeydown(event) {
                             @blur="commitTableName(table)"
                           />
                         </div>
-                        <small>{{ table.fileName }}</small>
+                        <small :title="table.fileName">{{ table.fileName }}</small>
                       </div>
                       <el-tag type="info" effect="plain" size="small">{{ table.format }}</el-tag>
                       <span class="table-stat">{{ formatNumber(table.rowCount) }} 行</span>
@@ -637,6 +672,13 @@ function handleKeydown(event) {
                           <el-skeleton :rows="3" animated />
                         </div>
                         <template v-else-if="tablePreviews[tableKey(table)]">
+                          <TableRowSearch
+                            :dataset-id="item.id"
+                            :table-id="table.id"
+                            :columns="tablePreviews[tableKey(table)].columns"
+                            @active-change="tableSearchActive[tableKey(table)] = $event"
+                          />
+                          <div v-if="!tableSearchActive[tableKey(table)]">
                           <el-alert
                             v-if="
                               tablePreviewErrors[tableKey(table)] &&
@@ -772,7 +814,12 @@ function handleKeydown(event) {
                                     v-for="(column, columnIndex) in tablePreviews[tableKey(table)].columns"
                                     :key="columnIndex"
                                   >
-                                    {{ column || `列 ${columnIndex + 1}` }}
+                                    <span
+                                      class="table-preview-value is-heading"
+                                      :title="column || `列 ${columnIndex + 1}`"
+                                    >
+                                      {{ column || `列 ${columnIndex + 1}` }}
+                                    </span>
                                   </th>
                                 </tr>
                               </thead>
@@ -786,7 +833,12 @@ function handleKeydown(event) {
                                     v-for="(column, columnIndex) in tablePreviews[tableKey(table)].columns"
                                     :key="columnIndex"
                                   >
-                                    {{ row[columnIndex] ?? '' }}
+                                    <span
+                                      class="table-preview-value"
+                                      :title="String(row[columnIndex] ?? '')"
+                                    >
+                                      {{ row[columnIndex] ?? '' }}
+                                    </span>
                                   </td>
                                 </tr>
                                 <tr
@@ -821,7 +873,12 @@ function handleKeydown(event) {
                                     v-for="(column, columnIndex) in tablePreviews[tableKey(table)].columns"
                                     :key="columnIndex"
                                   >
-                                    {{ row[columnIndex] ?? '' }}
+                                    <span
+                                      class="table-preview-value"
+                                      :title="String(row[columnIndex] ?? '')"
+                                    >
+                                      {{ row[columnIndex] ?? '' }}
+                                    </span>
                                   </td>
                                 </tr>
                               </tbody>
@@ -833,8 +890,14 @@ function handleKeydown(event) {
                               这张表只有表头，没有数据行
                             </div>
                           </div>
-                        </template>                      </div>                    </transition>
+                          </div>
+                        </template>
+                      </div>
+                    </transition>
                   </div>
+                </div>
+                <div v-if="tableKeyword && filteredTables.length === 0" class="table-filter-empty">
+                  没有找到匹配的数据表
                 </div>
                 <div v-if="isClamped" class="table-fade"></div>
                 <div
@@ -853,6 +916,7 @@ function handleKeydown(event) {
                 :uploading="uploading"
                 :progress="uploadProgress"
                 @select="selectFile"
+                @cancel="emit('cancel-upload', item.id)"
               />
             </template>
           </template>

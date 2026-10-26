@@ -15,44 +15,46 @@ const emit = defineEmits(['update:collapsed'])
 const route = useRoute()
 const router = useRouter()
 const isMobile = ref(false)
+let mobileQuery = null
+const menuRef = ref(null)
+const indicatorStyle = ref({})
 
+let indicatorFrame = 0
+let itemResizeObserver = null
+let previousActiveIndex = -1
 let glassEffect = null
 let glassInitTimer = null
-let removeLoadListener = null
-let mobileQuery = null
+let snapshotTimer = null
 
 const glassOptions = {
-  target: '.sidebar-liquid-lens',
+  target: '.sidebar-active-indicator',
   snapshot: 'body',
   resolution: 2,
   zIndex: 2,
-  refraction: 0.045,
-  aberration: 0.1,
-  bevelDepth: 0.12,
-  bevelWidth: 0.13,
+  refraction: 0.04,
+  aberration: 0,
+  bevelDepth: 0,
+  bevelWidth: 0.22,
   frost: 0,
   shadow: true,
-  specular: true,
+  specular: false,
   reveal: 'none',
   tilt: false,
-  magnify: 1.18,
-  tint: 'rgba(255, 255, 255, 0.01)',
+  magnify: 1,
+  tint: 'rgba(24, 90, 74, 0.1)',
 }
 
 const active = computed(() => route.meta.navigationKey || findNavigationItemByPath(route.path).key)
 const menuCollapsed = computed(() => props.collapsed && !isMobile.value)
 
-const activeItemOffset = computed(() => {
-  const index = Math.max(NAVIGATION_ITEMS.findIndex((item) => item.key === active.value), 0)
-  return {
-    top: `${5 + index * 56}px`,
-    '--active-width': `${100 / NAVIGATION_ITEMS.length}%`,
-    '--active-translate': `${index * 100}%`,
-  }
-})
-
 function updateMobileState(event) {
   isMobile.value = event.matches
+}
+
+function resolveMenuElement() {
+  const value = menuRef.value
+  if (value instanceof HTMLElement) return value
+  return value?.$el instanceof HTMLElement ? value.$el : null
 }
 
 async function waitForBackdrop() {
@@ -77,50 +79,115 @@ async function waitForBackdrop() {
 }
 
 async function initLiquidGlass() {
-  if (glassEffect || !document.querySelector('.sidebar-liquid-lens')) {
+  if (glassEffect || !document.querySelector('.sidebar-active-indicator')) return
+
+  await waitForBackdrop()
+  if (glassEffect || !document.querySelector('.sidebar-active-indicator')) return
+
+  try {
+    glassEffect = liquidGL(glassOptions)
+  } catch {
+    glassEffect = null
+  }
+}
+
+function scheduleGlassInit() {
+  if (glassInitTimer) window.clearTimeout(glassInitTimer)
+  glassInitTimer = window.setTimeout(initLiquidGlass, 180)
+}
+
+function scheduleSnapshotRefresh() {
+  if (!glassEffect || snapshotTimer) return
+  snapshotTimer = window.setTimeout(() => {
+    snapshotTimer = null
+    glassEffect?.renderer?.captureSnapshot?.()
+  }, 320)
+}
+
+function updateIndicator() {
+  indicatorFrame = 0
+  const menu = resolveMenuElement()
+  if (!menu) return
+
+  const item = [...menu.querySelectorAll('.el-menu-item')]
+    .find((entry) => entry.dataset.navigationKey === active.value)
+  if (!(item instanceof HTMLElement)) return
+
+  const nextIndex = Math.max(
+    NAVIGATION_ITEMS.findIndex((entry) => entry.key === active.value),
+    0,
+  )
+  const distance = previousActiveIndex < 0
+    ? 0
+    : Math.abs(nextIndex - previousActiveIndex)
+  const duration = distance === 0
+    ? 0
+    : 330 + Math.max(0, distance - 1) * 105
+  previousActiveIndex = nextIndex
+
+  indicatorStyle.value = {
+    width: `${item.offsetWidth}px`,
+    height: `${item.offsetHeight}px`,
+    borderRadius: getComputedStyle(item).borderRadius,
+    transform: `translate3d(${item.offsetLeft}px, ${item.offsetTop}px, 0)`,
+    '--indicator-duration': `${duration}ms`,
+  }
+}
+
+function scheduleIndicatorUpdate() {
+  if (indicatorFrame) {
+    window.cancelAnimationFrame(indicatorFrame)
+  }
+  indicatorFrame = window.requestAnimationFrame(updateIndicator)
+}
+
+function observeMenu() {
+  itemResizeObserver?.disconnect()
+  itemResizeObserver = null
+
+  const menu = resolveMenuElement()
+  if (!menu || typeof ResizeObserver === 'undefined') {
+    scheduleIndicatorUpdate()
     return
   }
-  await waitForBackdrop()
-  if (!glassEffect && document.querySelector('.sidebar-liquid-lens')) {
-    try {
-      glassEffect = liquidGL(glassOptions)
-    } catch {
-      glassEffect = null
-    }
-  }
+
+  itemResizeObserver = new ResizeObserver(scheduleIndicatorUpdate)
+  itemResizeObserver.observe(menu)
+  menu.querySelectorAll('.el-menu-item').forEach((item) => itemResizeObserver.observe(item))
+  scheduleIndicatorUpdate()
 }
 
 onMounted(() => {
   mobileQuery = window.matchMedia('(max-width: 760px)')
   isMobile.value = mobileQuery.matches
   mobileQuery.addEventListener('change', updateMobileState)
-
-  nextTick(() => {
-    const start = () => {
-      glassInitTimer = window.setTimeout(initLiquidGlass, 180)
-    }
-    if (document.readyState === 'complete') {
-      start()
-      return
-    }
-    window.addEventListener('load', start, { once: true })
-    removeLoadListener = () => window.removeEventListener('load', start)
-  })
+  nextTick(observeMenu)
+  nextTick(scheduleGlassInit)
 })
 
 onBeforeUnmount(() => {
   mobileQuery?.removeEventListener('change', updateMobileState)
-  if (glassInitTimer) {
-    window.clearTimeout(glassInitTimer)
+  if (glassInitTimer) window.clearTimeout(glassInitTimer)
+  if (snapshotTimer) window.clearTimeout(snapshotTimer)
+  if (indicatorFrame) {
+    window.cancelAnimationFrame(indicatorFrame)
   }
-  removeLoadListener?.()
+  itemResizeObserver?.disconnect()
   glassEffect?.destroy?.()
   glassEffect = null
 })
 
+watch(active, () => nextTick(scheduleIndicatorUpdate), { flush: 'post' })
+
+watch(() => props.total, scheduleSnapshotRefresh)
+
 watch(
-  () => [props.total, active.value],
-  () => nextTick(() => glassEffect?.renderer?.captureSnapshot?.()),
+  [() => props.collapsed, isMobile],
+  () => {
+    nextTick(observeMenu)
+    scheduleSnapshotRefresh()
+  },
+  { flush: 'post' },
 )
 
 function selectMenu(index) {
@@ -150,6 +217,7 @@ function toggle() {
     <div v-if="!collapsed" class="sidebar-section">工作区</div>
 
     <el-menu
+      ref="menuRef"
       class="sidebar-menu"
       :default-active="active"
       :collapse="menuCollapsed"
@@ -160,30 +228,24 @@ function toggle() {
         v-for="item in NAVIGATION_ITEMS"
         :key="item.key"
         :index="item.key"
+        :data-navigation-key="item.key"
+        data-liquid-ignore
         :class="{ 'is-active': active === item.key }"
       >
-        <el-icon data-liquid-ignore><component :is="item.icon" /></el-icon>
+        <el-icon><component :is="item.icon" /></el-icon>
         <template #title>
-          <span class="menu-title" data-liquid-ignore>{{ item.title }}</span>
+          <span class="menu-title">{{ item.title }}</span>
           <span
             v-if="!collapsed && item.showTotal"
             class="menu-badge"
-            data-liquid-ignore
           >{{ total }}</span>
         </template>
       </el-menu-item>
 
       <span
-        class="sidebar-liquid-lens"
+        class="sidebar-active-indicator"
         aria-hidden="true"
-        data-liquid-ignore
-        :style="activeItemOffset"
-      ></span>
-      <span
-        class="sidebar-liquid-sheen"
-        aria-hidden="true"
-        data-liquid-ignore
-        :style="activeItemOffset"
+        :style="indicatorStyle"
       ></span>
     </el-menu>
 
