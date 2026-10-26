@@ -5,9 +5,11 @@ import com.olist.datasets.dto.DatasetQuery;
 import com.olist.datasets.dto.DatasetTableUpdateRequest;
 import com.olist.datasets.dto.DatasetUpdateRequest;
 import com.olist.datasets.dto.DatasetUploadRequest;
+import com.olist.datasets.vo.DatasetCatalogVO;
 import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetReadinessVO;
 import com.olist.datasets.vo.DatasetVO;
+import com.olist.datasets.vo.ExecutionSnapshotVO;
 import com.olist.datasets.vo.DatasetVersionVO;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.TablePreviewVO;
@@ -42,6 +44,10 @@ public interface DatasetService {
     List<DatasetVersionVO> versions(UUID id);
 
     DatasetDetailVO currentVersion(UUID id);
+
+    DatasetCatalogVO catalog(UUID id);
+
+    ExecutionSnapshotVO executionSnapshot(UUID id);
 
     TablePreviewVO previewTable(UUID datasetId, UUID tableId, int limit, boolean all);
 

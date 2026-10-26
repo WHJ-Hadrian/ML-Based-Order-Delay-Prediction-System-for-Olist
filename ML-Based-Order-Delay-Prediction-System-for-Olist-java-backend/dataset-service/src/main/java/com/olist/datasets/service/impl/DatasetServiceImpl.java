@@ -1,5 +1,6 @@
 package com.olist.datasets.service.impl;
 
+import com.olist.datasets.config.ClickHouseProperties;
 import com.olist.datasets.config.TableSearchProperties;
 import com.olist.datasets.convert.DatasetConverter;
 import com.olist.datasets.dto.DatasetCreateRequest;
@@ -18,6 +19,7 @@ import com.olist.datasets.enums.BindingStatus;
 import com.olist.datasets.enums.DatasetFormat;
 import com.olist.datasets.enums.DatasetStatus;
 import com.olist.datasets.exception.DatasetNotFoundException;
+import com.olist.datasets.exception.DatasetNotReadyException;
 import com.olist.datasets.exception.DatasetTableNotFoundException;
 import com.olist.datasets.exception.DatasetVersionImmutableException;
 import com.olist.datasets.exception.InvalidDatasetException;
@@ -42,10 +44,12 @@ import com.olist.datasets.reference.DatasetReferenceChecker;
 import com.olist.datasets.security.DatasetOwnerProvider;
 import com.olist.datasets.service.DatasetService;
 import com.olist.datasets.storage.DatasetStorage;
+import com.olist.datasets.vo.DatasetCatalogVO;
 import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetReadinessVO;
 import com.olist.datasets.vo.DatasetVersionVO;
 import com.olist.datasets.vo.DatasetVO;
+import com.olist.datasets.vo.ExecutionSnapshotVO;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.TablePreviewVO;
 import com.olist.datasets.vo.TableRowSearchVO;
@@ -111,6 +115,7 @@ public class DatasetServiceImpl implements DatasetService {
     private final TablePreviewReader tablePreviewReader;
     private final DatasetOwnerProvider datasetOwnerProvider;
     private final TableSearchProperties tableSearchProperties;
+    private final ClickHouseProperties clickHouseProperties;
 
     public DatasetServiceImpl(
             DatasetVersionMapper datasetVersionMapper,
@@ -125,7 +130,8 @@ public class DatasetServiceImpl implements DatasetService {
             DatasetStorage datasetStorage,
             TablePreviewReader tablePreviewReader,
             DatasetOwnerProvider datasetOwnerProvider,
-            TableSearchProperties tableSearchProperties) {
+            TableSearchProperties tableSearchProperties,
+            ClickHouseProperties clickHouseProperties) {
         this.datasetVersionMapper = datasetVersionMapper;
         this.datasetMapper = datasetMapper;
         this.datasetColumnMapper = datasetColumnMapper;
@@ -139,6 +145,7 @@ public class DatasetServiceImpl implements DatasetService {
         this.tablePreviewReader = tablePreviewReader;
         this.datasetOwnerProvider = datasetOwnerProvider;
         this.tableSearchProperties = tableSearchProperties;
+        this.clickHouseProperties = clickHouseProperties;
     }
 
     @Override
@@ -421,6 +428,95 @@ public class DatasetServiceImpl implements DatasetService {
             throw new DatasetNotFoundException(id);
         }
         return toDetail(version);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DatasetCatalogVO catalog(UUID id) {
+        DatasetVersion version = requireReadyVersion(id);
+        List<DatasetTable> tables = datasetTableMapper.findByDatasetId(version.getId());
+        List<DatasetColumn> columns = datasetColumnMapper.findByDatasetVersionId(version.getId());
+        Map<UUID, List<DatasetColumn>> columnsByTable = new LinkedHashMap<>();
+        for (DatasetColumn column : columns) {
+            columnsByTable
+                    .computeIfAbsent(column.getTableId(), ignored -> new ArrayList<>())
+                    .add(column);
+        }
+        List<DatasetCatalogVO.CatalogTableVO> tableVOs = new ArrayList<>(tables.size());
+        for (DatasetTable table : tables) {
+            List<DatasetCatalogVO.CatalogColumnVO> columnVOs = columnsByTable
+                    .getOrDefault(table.getId(), List.of())
+                    .stream()
+                    .map(column -> new DatasetCatalogVO.CatalogColumnVO(
+                            column.getId(),
+                            column.getColumnName(),
+                            column.getOrdinal(),
+                            column.getLogicalType(),
+                            column.isNullable()))
+                    .toList();
+            tableVOs.add(new DatasetCatalogVO.CatalogTableVO(
+                    table.getId(),
+                    table.getTableKey(),
+                    table.getTableName(),
+                    table.getOrdinal(),
+                    table.getRowCount(),
+                    table.getColumnCount(),
+                    columnVOs));
+        }
+        return new DatasetCatalogVO(
+                version.getDatasetId(),
+                version.getId(),
+                version.getVersionNo(),
+                version.getParentVersionId(),
+                version.getStatus(),
+                version.getManifestHash(),
+                version.getSchemaHash(),
+                version.getCreatedAt(),
+                tableVOs);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ExecutionSnapshotVO executionSnapshot(UUID id) {
+        DatasetVersion version = requireReadyVersion(id);
+        List<DatasetTable> tables = datasetTableMapper.findByDatasetId(version.getId());
+        List<DatasetColumn> columns = datasetColumnMapper.findByDatasetVersionId(version.getId());
+        Map<UUID, List<DatasetColumn>> columnsByTable = new LinkedHashMap<>();
+        for (DatasetColumn column : columns) {
+            columnsByTable
+                    .computeIfAbsent(column.getTableId(), ignored -> new ArrayList<>())
+                    .add(column);
+        }
+        List<ExecutionSnapshotVO.SnapshotTableVO> tableVOs = new ArrayList<>(tables.size());
+        for (DatasetTable table : tables) {
+            if (table.getPhysicalTable() == null || table.getPhysicalTable().isBlank()) {
+                throw new DatasetNotReadyException(
+                        "数据集版本 " + version.getId() + " 缺少 ClickHouse 物理表元数据");
+            }
+            List<ExecutionSnapshotVO.SnapshotColumnVO> columnVOs = new ArrayList<>();
+            for (DatasetColumn column : columnsByTable.getOrDefault(table.getId(), List.of())) {
+                if (column.getPhysicalName() == null
+                        || column.getPhysicalName().isBlank()
+                        || column.getClickhouseType() == null
+                        || column.getClickhouseType().isBlank()) {
+                    throw new DatasetNotReadyException(
+                            "数据集版本 " + version.getId() + " 缺少 ClickHouse 物理列元数据");
+                }
+                columnVOs.add(new ExecutionSnapshotVO.SnapshotColumnVO(
+                        column.getId(),
+                        column.getPhysicalName(),
+                        column.getClickhouseType(),
+                        column.isNullable()));
+            }
+            tableVOs.add(new ExecutionSnapshotVO.SnapshotTableVO(
+                    table.getId(), table.getPhysicalTable(), columnVOs));
+        }
+        return new ExecutionSnapshotVO(
+                version.getId(),
+                version.getSchemaHash(),
+                version.getManifestHash(),
+                clickHouseProperties.getDatabase(),
+                tableVOs);
     }
 
     @Override
@@ -898,6 +994,14 @@ public class DatasetServiceImpl implements DatasetService {
                 entity,
                 datasetFileMapper.findByDatasetId(entity.getId()),
                 datasetTableMapper.findByDatasetId(entity.getId()));
+    }
+
+    private DatasetVersion requireReadyVersion(UUID id) {
+        DatasetVersion version = resolveAnyVersion(id, datasetOwnerProvider.currentOwnerId());
+        if (version.getStatus() != DatasetStatus.READY) {
+            throw new DatasetNotReadyException("数据集版本 " + version.getId() + " 尚未 READY");
+        }
+        return version;
     }
 
     private DatasetVersion resolveAnyVersion(UUID id, String ownerId) {

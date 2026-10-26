@@ -892,6 +892,68 @@ class DatasetUploadIntegrationTest {
     }
 
     @Test
+    void returnsCatalogAndExecutionSnapshotForReadyVersion() throws Exception {
+        UUID versionId = createEmptyDataset("catalog-dataset");
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", versionId)
+                        .file(csvFile("orders.csv", "order_id,status\n1,delivered\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode uploadBody = objectMapper.readTree(upload.getResponse().getContentAsString());
+        UUID logicalDatasetId = UUID.fromString(uploadBody.path("datasetId").asText());
+        UUID tableId = UUID.fromString(uploadBody.path("tables").get(0).path("id").asText());
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", versionId))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/datasets/{id}/catalog", logicalDatasetId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.datasetId").value(logicalDatasetId.toString()))
+                .andExpect(jsonPath("$.datasetVersionId").value(versionId.toString()))
+                .andExpect(jsonPath("$.versionNo").value(1))
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.manifestHash").isNotEmpty())
+                .andExpect(jsonPath("$.schemaHash").isNotEmpty())
+                .andExpect(jsonPath("$.tables", hasSize(1)))
+                .andExpect(jsonPath("$.tables[0].tableId").value(tableId.toString()))
+                .andExpect(jsonPath("$.tables[0].tableKey").isNotEmpty())
+                .andExpect(jsonPath("$.tables[0].tableName").value("orders"))
+                .andExpect(jsonPath("$.tables[0].columns", hasSize(2)))
+                .andExpect(jsonPath("$.tables[0].columns[0].name").value("order_id"))
+                .andExpect(jsonPath("$.tables[0].columns[0].logicalType").value("STRING"))
+                .andExpect(jsonPath("$.tables[0].columns[0].nullable").value(true))
+                .andExpect(jsonPath("$.tables[0].physicalTable").doesNotExist())
+                .andExpect(jsonPath("$.tables[0].columns[0].physicalName").doesNotExist());
+
+        mockMvc.perform(get("/api/v1/dataset-versions/{id}/catalog", versionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.datasetVersionId").value(versionId.toString()));
+
+        mockMvc.perform(get("/internal/dataset-versions/{id}/execution-snapshot", versionId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("数据集未就绪"));
+
+        jdbcTemplate.update(
+                "UPDATE dataset_tables SET physical_table = ? WHERE id = ?", "ds_catalog_orders", tableId);
+        jdbcTemplate.update(
+                "UPDATE dataset_columns SET physical_name = CONCAT('c', LPAD(CAST(ordinal AS VARCHAR), 3, '0')), clickhouse_type = ? WHERE table_id = ?",
+                "Nullable(String)",
+                tableId);
+
+        mockMvc.perform(get("/internal/dataset-versions/{id}/execution-snapshot", versionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.datasetVersionId").value(versionId.toString()))
+                .andExpect(jsonPath("$.clickhouseDatabase").value("olist_datasets"))
+                .andExpect(jsonPath("$.tables[0].tableId").value(tableId.toString()))
+                .andExpect(jsonPath("$.tables[0].physicalTable").value("ds_catalog_orders"))
+                .andExpect(jsonPath("$.tables[0].columns[0].physicalName").value("c000"))
+                .andExpect(jsonPath("$.tables[0].columns[0].clickhouseType").value("Nullable(String)"));
+
+        UUID notReady = createEmptyDataset("not-ready");
+        mockMvc.perform(get("/api/v1/datasets/{id}/catalog", notReady))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("数据集未就绪"));
+    }
+
+    @Test
     void deletingClonedTableKeepsParentVersionBlob() throws Exception {
         UUID version1 = createEmptyDataset("shared-blob");
         mockMvc.perform(multipart("/api/v1/datasets/{id}/files", version1)

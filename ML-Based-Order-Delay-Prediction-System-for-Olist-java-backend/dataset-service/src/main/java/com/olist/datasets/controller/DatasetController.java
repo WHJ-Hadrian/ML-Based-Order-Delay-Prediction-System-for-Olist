@@ -6,6 +6,7 @@ import com.olist.datasets.dto.DatasetTableUpdateRequest;
 import com.olist.datasets.dto.DatasetUpdateRequest;
 import com.olist.datasets.dto.DatasetUploadRequest;
 import com.olist.datasets.service.DatasetService;
+import com.olist.datasets.vo.DatasetCatalogVO;
 import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetReadinessVO;
 import com.olist.datasets.vo.DatasetVO;
@@ -135,6 +136,11 @@ public class DatasetController {
     @GetMapping("/{id}/versions/current")
     public DatasetDetailVO currentVersion(@PathVariable UUID id) {
         return datasetService.currentVersion(id);
+    }
+
+    @GetMapping("/{id}/catalog")
+    public DatasetCatalogVO catalog(@PathVariable UUID id) {
+        return datasetService.catalog(id);
     }
 
     @GetMapping
