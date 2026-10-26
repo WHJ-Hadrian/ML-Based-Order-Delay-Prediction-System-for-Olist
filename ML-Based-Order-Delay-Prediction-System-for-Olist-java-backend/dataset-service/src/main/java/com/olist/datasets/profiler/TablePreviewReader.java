@@ -21,4 +21,16 @@ public interface TablePreviewReader {
             InputStream input,
             int offset,
             int limit);
+
+    TableRowSearch searchRows(
+            String datasetFilename,
+            String sourceFile,
+            String tableName,
+            DatasetFormat tableFormat,
+            InputStream input,
+            String keyword,
+            int columnIndex,
+            long offset,
+            int limit,
+            long maxScannedRows);
 }

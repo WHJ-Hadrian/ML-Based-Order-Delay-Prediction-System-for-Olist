@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.olist.datasets.config.TableSearchProperties;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -57,6 +58,9 @@ class DatasetUploadIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private TableSearchProperties tableSearchProperties;
 
     @BeforeEach
     void cleanStorageAndDatabase() throws IOException {
@@ -236,7 +240,7 @@ class DatasetUploadIntegrationTest {
     void parsesZipArchiveIntoTables() throws Exception {
         UUID id = createEmptyDataset("压缩包数据");
 
-        mockMvc.perform(multipart("/api/v1/datasets/{id}/files", id)
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", id)
                         .file(new MockMultipartFile(
                                 "file", "olist_raw_bundle.zip", "application/zip", zipBytes())))
                 .andExpect(status().isOk())
@@ -247,13 +251,27 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$.tables[0].fileName").value("olist_orders_dataset.csv"))
                 .andExpect(jsonPath("$.tables[0].name").value("olist_orders_dataset"))
                 .andExpect(jsonPath("$.tables[1].name").value("olist_products_dataset"))
-                .andExpect(jsonPath("$.tables[1].fileName").value("olist_products_dataset.tsv"));
+                .andExpect(jsonPath("$.tables[1].fileName").value("olist_products_dataset.tsv"))
+                .andReturn();
+
+        UUID tableId = UUID.fromString(objectMapper.readTree(upload.getResponse().getContentAsString())
+                .path("tables")
+                .get(0)
+                .path("id")
+                .asText());
+        mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", id, tableId)
+                        .param("keyword", "ship")
+                        .param("column", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalMatches").value(1))
+                .andExpect(jsonPath("$.rows[0].rowNumber").value(2))
+                .andExpect(jsonPath("$.rows[0].values[1]").value("shipped"));
     }
 
     @Test
     void parsesXlsxAndZipWithEmbeddedXlsx() throws Exception {
         UUID xlsxId = createEmptyDataset("Excel 数据");
-        mockMvc.perform(multipart("/api/v1/datasets/{id}/files", xlsxId)
+        MvcResult xlsxUpload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", xlsxId)
                         .file(new MockMultipartFile(
                                 "file", "olist_analytics.xlsx",
                                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -263,10 +281,23 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$.rowCount").value(3))
                 .andExpect(jsonPath("$.tables[0].name").value("orders"))
                 .andExpect(jsonPath("$.tables[1].name").value("items"))
-                .andExpect(jsonPath("$.tables[0].fileName").value("olist_analytics.xlsx"));
+                .andExpect(jsonPath("$.tables[0].fileName").value("olist_analytics.xlsx"))
+                .andReturn();
+        UUID xlsxTableId = UUID.fromString(objectMapper
+                .readTree(xlsxUpload.getResponse().getContentAsString())
+                .path("tables")
+                .get(0)
+                .path("id")
+                .asText());
+        mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", xlsxId, xlsxTableId)
+                        .param("keyword", "shipped")
+                        .param("column", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalMatches").value(1))
+                .andExpect(jsonPath("$.rows[0].rowNumber").value(2));
 
         UUID zipId = createEmptyDataset("压缩 Excel");
-        mockMvc.perform(multipart("/api/v1/datasets/{id}/files", zipId)
+        MvcResult zipUpload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", zipId)
                         .file(new MockMultipartFile(
                                 "file", "excel-bundle.zip", "application/zip", zipWithXlsxBytes())))
                 .andExpect(status().isOk())
@@ -274,7 +305,20 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$.rowCount").value(3))
                 .andExpect(jsonPath("$.tables[0].fileName").value("excel/olist_analytics.xlsx"))
                 .andExpect(jsonPath("$.tables[0].name").value("olist_analytics / orders"))
-                .andExpect(jsonPath("$.tables[1].name").value("olist_analytics / items"));
+                .andExpect(jsonPath("$.tables[1].name").value("olist_analytics / items"))
+                .andReturn();
+        UUID zippedTableId = UUID.fromString(objectMapper
+                .readTree(zipUpload.getResponse().getContentAsString())
+                .path("tables")
+                .get(0)
+                .path("id")
+                .asText());
+        mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", zipId, zippedTableId)
+                        .param("keyword", "delivered")
+                        .param("column", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalMatches").value(1))
+                .andExpect(jsonPath("$.rows[0].rowNumber").value(1));
     }
 
     @Test
@@ -334,6 +378,91 @@ class DatasetUploadIntegrationTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.title").value("数据表不存在"));
     }
+
+    @Test
+    void searchesTableRowsByColumnAndPaginatesMatches() throws Exception {
+        UUID datasetId = createEmptyDataset("行搜索测试");
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", datasetId)
+                        .file(csvFile(
+                                "orders.csv",
+                                "id,status,region\n"
+                                        + "1,delivered,North\n"
+                                        + "2,shipped,South\n"
+                                        + "3,delivered,West\n"
+                                        + "4,shipped,North\n"
+                                        + "5,shipped,East\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID tableId = UUID.fromString(objectMapper.readTree(upload.getResponse().getContentAsString())
+                .path("tables")
+                .get(0)
+                .path("id")
+                .asText());
+
+        mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", datasetId, tableId)
+                        .param("keyword", "ShIp")
+                        .param("column", "1")
+                        .param("limit", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.columns[1]").value("status"))
+                .andExpect(jsonPath("$.totalMatches").value(3))
+                .andExpect(jsonPath("$.scannedRows").value(5))
+                .andExpect(jsonPath("$.truncated").value(false))
+                .andExpect(jsonPath("$.rows", hasSize(2)))
+                .andExpect(jsonPath("$.rows[0].rowNumber").value(2))
+                .andExpect(jsonPath("$.rows[1].rowNumber").value(4));
+
+        mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", datasetId, tableId)
+                        .param("keyword", "north")
+                        .param("column", "2")
+                        .param("offset", "1")
+                        .param("limit", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalMatches").value(2))
+                .andExpect(jsonPath("$.rows", hasSize(1)))
+                .andExpect(jsonPath("$.rows[0].rowNumber").value(4));
+
+        mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", datasetId, tableId)
+                        .param("keyword", "not-found"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalMatches").value(0))
+                .andExpect(jsonPath("$.rows", hasSize(0)));
+
+        mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", datasetId, tableId)
+                        .param("keyword", "north")
+                        .param("column", "-2"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void reportsWhenRowSearchReachesConfiguredScanLimit() throws Exception {
+        UUID datasetId = createEmptyDataset("行搜索截断测试");
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", datasetId)
+                        .file(csvFile("orders.csv", "id,status\n1,other\n2,target\n3,target\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID tableId = UUID.fromString(objectMapper.readTree(upload.getResponse().getContentAsString())
+                .path("tables")
+                .get(0)
+                .path("id")
+                .asText());
+        long originalMaxScannedRows = tableSearchProperties.getMaxScannedRows();
+
+        try {
+            tableSearchProperties.setMaxScannedRows(2);
+            mockMvc.perform(get("/api/v1/datasets/{datasetId}/tables/{tableId}/search", datasetId, tableId)
+                            .param("keyword", "target"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.scannedRows").value(2))
+                    .andExpect(jsonPath("$.totalMatches").value(1))
+                    .andExpect(jsonPath("$.truncated").value(true))
+                    .andExpect(jsonPath("$.rows", hasSize(1)))
+                    .andExpect(jsonPath("$.rows[0].rowNumber").value(2));
+        } finally {
+            tableSearchProperties.setMaxScannedRows(originalMaxScannedRows);
+        }
+    }
+
     @Test
     void renamesAndDeletesTablesThenDeletesDataset() throws Exception {
         UUID datasetId = createEmptyDataset("表操作测试");

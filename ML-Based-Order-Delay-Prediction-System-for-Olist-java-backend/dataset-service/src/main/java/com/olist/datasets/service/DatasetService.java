@@ -9,6 +9,7 @@ import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetVO;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.TablePreviewVO;
+import com.olist.datasets.vo.TableRowSearchVO;
 import com.olist.datasets.vo.TableRowsVO;
 import java.util.UUID;
 import org.springframework.web.multipart.MultipartFile;
@@ -34,6 +35,9 @@ public interface DatasetService {
     TablePreviewVO previewTable(UUID datasetId, UUID tableId, int limit, boolean all);
 
     TableRowsVO rows(UUID datasetId, UUID tableId, int offset, int limit);
+
+    TableRowSearchVO searchRows(
+            UUID datasetId, UUID tableId, String keyword, int columnIndex, long offset, int limit);
 
     PageVO<DatasetVO> list(DatasetQuery query);
 }

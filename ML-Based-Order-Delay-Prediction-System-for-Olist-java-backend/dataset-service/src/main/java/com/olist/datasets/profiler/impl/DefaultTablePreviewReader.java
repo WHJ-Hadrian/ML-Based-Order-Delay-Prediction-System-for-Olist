@@ -5,6 +5,7 @@ import com.olist.datasets.exception.InvalidDatasetException;
 import com.olist.datasets.profiler.TablePreview;
 import com.olist.datasets.profiler.TablePreviewOptions;
 import com.olist.datasets.profiler.TablePreviewReader;
+import com.olist.datasets.profiler.TableRowSearch;
 import com.olist.datasets.profiler.TableRows;
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,6 +16,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import javax.xml.parsers.SAXParserFactory;
@@ -95,6 +97,39 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
         }
     }
 
+    @Override
+    public TableRowSearch searchRows(
+            String datasetFilename,
+            String sourceFile,
+            String tableName,
+            DatasetFormat tableFormat,
+            InputStream input,
+            String keyword,
+            int columnIndex,
+            long offset,
+            int limit,
+            long maxScannedRows) {
+        DatasetFormat container = DatasetFormat.fromFilename(datasetFilename)
+                .orElseThrow(() -> new InvalidDatasetException("无法识别数据文件格式"));
+        DatasetFormat format = resolveFormat(sourceFile, tableFormat);
+        try {
+            if (container == DatasetFormat.ZIP) {
+                return searchRowsFromZip(
+                        input, sourceFile, tableName, format, keyword, columnIndex, offset, limit, maxScannedRows);
+            }
+            if (format == DatasetFormat.XLSX) {
+                return searchRowsXlsx(input, tableName, keyword, columnIndex, offset, limit, maxScannedRows);
+            }
+            return searchRowsDelimited(
+                    input, delimiterOf(format), keyword, columnIndex, offset, limit, maxScannedRows);
+        } catch (InvalidDatasetException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            LOGGER.warn("Failed to search rows for table {}", tableName, exception);
+            throw new InvalidDatasetException("搜索数据表失败，请确认文件内容完整", exception);
+        }
+    }
+
     private TablePreview readFromZip(
             InputStream input,
             String sourceFile,
@@ -142,6 +177,35 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
         throw new InvalidDatasetException("压缩包中找不到数据表来源文件 " + sourceFile);
     }
 
+    private TableRowSearch searchRowsFromZip(
+            InputStream input,
+            String sourceFile,
+            String tableName,
+            DatasetFormat format,
+            String keyword,
+            int columnIndex,
+            long offset,
+            int limit,
+            long maxScannedRows) throws Exception {
+        String target = normalizeEntryName(sourceFile);
+        try (ZipInputStream zip = new ZipInputStream(input, StandardCharsets.UTF_8)) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                String entryName = normalizeEntryName(entry.getName());
+                if (!entryName.equals(target)) {
+                    continue;
+                }
+                if (format == DatasetFormat.XLSX) {
+                    return searchRowsXlsx(
+                            zip, sheetNameOf(tableName), keyword, columnIndex, offset, limit, maxScannedRows);
+                }
+                return searchRowsDelimited(
+                        zip, delimiterOf(format), keyword, columnIndex, offset, limit, maxScannedRows);
+            }
+        }
+        throw new InvalidDatasetException("压缩包中找不到数据表来源文件 " + sourceFile);
+    }
+
     private TablePreview readDelimited(
             InputStream input, char delimiter, TablePreviewOptions options) throws IOException {
         try (PushbackReader reader = readerOf(input);
@@ -171,6 +235,32 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
                 index++;
             }
             return new TableRows(columns, rows);
+        }
+    }
+
+    private TableRowSearch searchRowsDelimited(
+            InputStream input,
+            char delimiter,
+            String keyword,
+            int columnIndex,
+            long offset,
+            int limit,
+            long maxScannedRows) throws IOException {
+        try (PushbackReader reader = readerOf(input);
+                CSVParser parser = new CSVParser(reader, csvFormatOf(delimiter))) {
+            List<String> columns = columnsOf(parser);
+            SearchAccumulator accumulator = new SearchAccumulator(
+                    columns, keyword, columnIndex, offset, limit, maxScannedRows);
+            for (CSVRecord record : parser) {
+                List<String> values = new ArrayList<>(columns.size());
+                for (int index = 0; index < columns.size(); index++) {
+                    values.add(index < record.size() ? record.get(index) : "");
+                }
+                if (!accumulator.add(values)) {
+                    break;
+                }
+            }
+            return accumulator.toSearch();
         }
     }
 
@@ -247,6 +337,34 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
                     RowsWindowHandler handler = new RowsWindowHandler(offset, limit);
                     parseSheet(sheetStream, styles, sharedStrings, handler);
                     return handler.toRows();
+                }
+            }
+        }
+        throw new InvalidDatasetException("Excel 文件中找不到工作表 " + sheetName);
+    }
+
+    private TableRowSearch searchRowsXlsx(
+            InputStream input,
+            String sheetName,
+            String keyword,
+            int columnIndex,
+            long offset,
+            int limit,
+            long maxScannedRows) throws Exception {
+        try (OPCPackage pkg = OPCPackage.open(input)) {
+            XSSFReader reader = new XSSFReader(pkg);
+            ReadOnlySharedStringsTable sharedStrings = new ReadOnlySharedStringsTable(pkg);
+            StylesTable styles = reader.getStylesTable();
+            XSSFReader.SheetIterator sheets = (XSSFReader.SheetIterator) reader.getSheetsData();
+            while (sheets.hasNext()) {
+                try (InputStream sheetStream = sheets.next()) {
+                    if (!sheets.getSheetName().equals(sheetName)) {
+                        continue;
+                    }
+                    SearchSheetHandler handler = new SearchSheetHandler(
+                            keyword, columnIndex, offset, limit, maxScannedRows);
+                    parseSheet(sheetStream, styles, sharedStrings, handler);
+                    return handler.toSearch();
                 }
             }
         }
@@ -517,6 +635,138 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
                 throw new InvalidDatasetException("工作表中没有表头");
             }
             return new TableRows(columns, rows);
+        }
+    }
+
+    private static final class SearchSheetHandler implements XSSFSheetXMLHandler.SheetContentsHandler {
+
+        private final String keyword;
+        private final int columnIndex;
+        private final long offset;
+        private final int limit;
+        private final long maxScannedRows;
+        private final List<String> columns = new ArrayList<>();
+        private List<String> currentRow = new ArrayList<>();
+        private SearchAccumulator accumulator;
+        private boolean headerRead;
+
+        private SearchSheetHandler(
+                String keyword, int columnIndex, long offset, int limit, long maxScannedRows) {
+            this.keyword = keyword;
+            this.columnIndex = columnIndex;
+            this.offset = offset;
+            this.limit = limit;
+            this.maxScannedRows = maxScannedRows;
+        }
+
+        @Override
+        public void startRow(int rowNum) {
+            currentRow = new ArrayList<>();
+        }
+
+        @Override
+        public void endRow(int rowNum) {
+            trimTrailingBlanks(currentRow);
+            if (currentRow.isEmpty()) {
+                return;
+            }
+            if (!headerRead) {
+                columns.addAll(currentRow.stream().map(DefaultTablePreviewReader::sanitize).toList());
+                headerRead = true;
+                accumulator = new SearchAccumulator(
+                        columns, keyword, columnIndex, offset, limit, maxScannedRows);
+                return;
+            }
+            if (!accumulator.add(normalizeRow(currentRow, columns.size()))) {
+                throw new PreviewCompleteException();
+            }
+        }
+
+        @Override
+        public void cell(String cellReference, String formattedValue, XSSFComment comment) {
+            int index = columnIndex(cellReference);
+            while (currentRow.size() <= index) {
+                currentRow.add("");
+            }
+            currentRow.set(index, formattedValue == null ? "" : formattedValue.trim());
+        }
+
+        @Override
+        public void headerFooter(String text, boolean isHeader, String tagName) {
+            // Header and footer rows are not part of the table.
+        }
+
+        private TableRowSearch toSearch() {
+            if (!headerRead || columns.isEmpty()) {
+                throw new InvalidDatasetException("工作表中没有表头");
+            }
+            return accumulator.toSearch();
+        }
+    }
+
+    private static final class SearchAccumulator {
+
+        private final List<String> columns;
+        private final String keyword;
+        private final int columnIndex;
+        private final long offset;
+        private final int limit;
+        private final long maxScannedRows;
+        private final List<TableRowSearch.Match> rows = new ArrayList<>();
+        private long totalMatches;
+        private long scannedRows;
+        private boolean truncated;
+
+        private SearchAccumulator(
+                List<String> columns,
+                String keyword,
+                int columnIndex,
+                long offset,
+                int limit,
+                long maxScannedRows) {
+            this.columns = List.copyOf(columns);
+            this.keyword = keyword.toLowerCase(Locale.ROOT);
+            this.columnIndex = columnIndex;
+            this.offset = Math.max(offset, 0);
+            this.limit = Math.max(limit, 1);
+            this.maxScannedRows = Math.max(maxScannedRows, 1);
+            if (columnIndex < -1 || columnIndex >= columns.size()) {
+                throw new InvalidDatasetException("指定搜索列不存在");
+            }
+        }
+
+        private boolean add(List<String> values) {
+            if (scannedRows >= maxScannedRows) {
+                truncated = true;
+                return false;
+            }
+            scannedRows++;
+            if (!matches(values)) {
+                return true;
+            }
+
+            long matchIndex = totalMatches++;
+            if (matchIndex >= offset && rows.size() < limit) {
+                rows.add(new TableRowSearch.Match(
+                        scannedRows,
+                        values.stream().map(DefaultTablePreviewReader::sanitize).toList()));
+            }
+            return true;
+        }
+
+        private boolean matches(List<String> values) {
+            if (columnIndex >= 0) {
+                return contains(values.get(columnIndex));
+            }
+            return values.stream().anyMatch(this::contains);
+        }
+
+        private boolean contains(String value) {
+            return value != null && value.toLowerCase(Locale.ROOT).contains(keyword);
+        }
+
+        private TableRowSearch toSearch() {
+            return new TableRowSearch(columns, rows, totalMatches, scannedRows, truncated);
         }
     }
 

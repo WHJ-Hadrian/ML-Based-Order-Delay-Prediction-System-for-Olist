@@ -1,5 +1,6 @@
 package com.olist.datasets.service.impl;
 
+import com.olist.datasets.config.TableSearchProperties;
 import com.olist.datasets.convert.DatasetConverter;
 import com.olist.datasets.dto.DatasetCreateRequest;
 import com.olist.datasets.dto.DatasetQuery;
@@ -23,6 +24,7 @@ import com.olist.datasets.profiler.DatasetProfiler;
 import com.olist.datasets.profiler.TablePreview;
 import com.olist.datasets.profiler.TablePreviewOptions;
 import com.olist.datasets.profiler.TablePreviewReader;
+import com.olist.datasets.profiler.TableRowSearch;
 import com.olist.datasets.profiler.TableRows;
 import com.olist.datasets.profiler.TableProfile;
 import com.olist.datasets.security.DatasetOwnerProvider;
@@ -32,6 +34,7 @@ import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetVO;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.TablePreviewVO;
+import com.olist.datasets.vo.TableRowSearchVO;
 import com.olist.datasets.vo.TableRowsVO;
 import java.io.IOException;
 import java.io.InputStream;
@@ -70,6 +73,8 @@ public class DatasetServiceImpl implements DatasetService {
     private static final int MAX_PREVIEW_ROWS = 50;
     private static final int MAX_EXPANDED_ROWS = 2000;
     private static final int MAX_ROW_PAGE_SIZE = 500;
+    private static final int MAX_SEARCH_RESULT_PAGE_SIZE = 100;
+    private static final int MAX_SEARCH_KEYWORD_LENGTH = 128;
     private static final String DEFAULT_NAME_PREFIX = "数据集";
     private static final Pattern DEFAULT_NAME_PATTERN = Pattern.compile("^数据集(\\d+)$");
 
@@ -80,6 +85,7 @@ public class DatasetServiceImpl implements DatasetService {
     private final DatasetStorage datasetStorage;
     private final TablePreviewReader tablePreviewReader;
     private final DatasetOwnerProvider datasetOwnerProvider;
+    private final TableSearchProperties tableSearchProperties;
 
     public DatasetServiceImpl(
             DatasetVersionMapper datasetVersionMapper,
@@ -88,7 +94,8 @@ public class DatasetServiceImpl implements DatasetService {
             DatasetProfiler datasetProfiler,
             DatasetStorage datasetStorage,
             TablePreviewReader tablePreviewReader,
-            DatasetOwnerProvider datasetOwnerProvider) {
+            DatasetOwnerProvider datasetOwnerProvider,
+            TableSearchProperties tableSearchProperties) {
         this.datasetVersionMapper = datasetVersionMapper;
         this.datasetTableMapper = datasetTableMapper;
         this.datasetFileMapper = datasetFileMapper;
@@ -96,6 +103,7 @@ public class DatasetServiceImpl implements DatasetService {
         this.datasetStorage = datasetStorage;
         this.tablePreviewReader = tablePreviewReader;
         this.datasetOwnerProvider = datasetOwnerProvider;
+        this.tableSearchProperties = tableSearchProperties;
     }
 
     @Override
@@ -316,6 +324,57 @@ public class DatasetServiceImpl implements DatasetService {
                     page.rows());
         } catch (IOException exception) {
             throw new StorageException("读取数据表行失败", exception);
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public TableRowSearchVO searchRows(
+            UUID datasetId, UUID tableId, String keyword, int columnIndex, long offset, int limit) {
+        if (keyword == null || keyword.isBlank() || keyword.trim().length() > MAX_SEARCH_KEYWORD_LENGTH) {
+            throw new InvalidDatasetException("搜索内容长度需为 1 到 " + MAX_SEARCH_KEYWORD_LENGTH + " 个字符");
+        }
+        if (columnIndex < -1) {
+            throw new InvalidDatasetException("搜索列索引无效");
+        }
+        DatasetTable table = datasetTableMapper.findByIdAndDatasetId(tableId, requireDataset(datasetId).getId());
+        if (table == null) {
+            throw new DatasetTableNotFoundException(datasetId, tableId);
+        }
+        DatasetFile file = datasetFileMapper.findById(table.getFileId());
+        if (file == null) {
+            throw new DatasetTableNotFoundException(datasetId, tableId);
+        }
+
+        long effectiveOffset = Math.max(offset, 0);
+        int effectiveLimit = Math.min(Math.max(limit, 1), MAX_SEARCH_RESULT_PAGE_SIZE);
+        try (InputStream input = datasetStorage.open(file.getStorageKey())) {
+            TableRowSearch result = tablePreviewReader.searchRows(
+                    file.getOriginalFilename(),
+                    table.getFileName(),
+                    table.getTableName(),
+                    table.getTableFormat(),
+                    input,
+                    keyword.trim(),
+                    columnIndex,
+                    effectiveOffset,
+                    effectiveLimit,
+                    tableSearchProperties.getMaxScannedRows());
+            List<TableRowSearchVO.RowMatch> rows = result.rows().stream()
+                    .map(match -> new TableRowSearchVO.RowMatch(match.rowNumber(), match.values()))
+                    .toList();
+            return new TableRowSearchVO(
+                    table.getId(),
+                    table.getTableName(),
+                    effectiveOffset,
+                    effectiveLimit,
+                    result.totalMatches(),
+                    result.scannedRows(),
+                    result.truncated(),
+                    result.columns(),
+                    rows);
+        } catch (IOException exception) {
+            throw new StorageException("搜索数据表失败", exception);
         }
     }
     @Override

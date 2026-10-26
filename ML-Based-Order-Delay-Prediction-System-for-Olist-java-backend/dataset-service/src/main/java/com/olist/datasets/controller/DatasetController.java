@@ -10,6 +10,7 @@ import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetVO;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.TablePreviewVO;
+import com.olist.datasets.vo.TableRowSearchVO;
 import com.olist.datasets.vo.TableRowsVO;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -96,6 +97,17 @@ public class DatasetController {
             @RequestParam(defaultValue = "0") int offset,
             @RequestParam(defaultValue = "200") int limit) {
         return datasetService.rows(datasetId, tableId, offset, limit);
+    }
+
+    @GetMapping("/{datasetId}/tables/{tableId}/search")
+    public TableRowSearchVO searchRows(
+            @PathVariable UUID datasetId,
+            @PathVariable UUID tableId,
+            @RequestParam String keyword,
+            @RequestParam(name = "column", defaultValue = "-1") int columnIndex,
+            @RequestParam(defaultValue = "0") long offset,
+            @RequestParam(defaultValue = "50") int limit) {
+        return datasetService.searchRows(datasetId, tableId, keyword, columnIndex, offset, limit);
     }
 
     @GetMapping("/{id}")
