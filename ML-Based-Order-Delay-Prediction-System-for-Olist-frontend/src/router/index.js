@@ -15,14 +15,6 @@ const routes = [
     path: '/login',
     name: 'login',
     component: authStudyPage,
-    props: { mode: 'login' },
-    meta: { fullscreen: true },
-  },
-  {
-    path: '/register',
-    name: 'register',
-    component: authStudyPage,
-    props: { mode: 'register' },
     meta: { fullscreen: true },
   },
   ...NAVIGATION_ITEMS.map(({ component, ...item }) => ({

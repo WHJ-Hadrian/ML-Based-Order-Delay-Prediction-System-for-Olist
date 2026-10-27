@@ -71,7 +71,7 @@ node infra/keycloak/configure-registration-client.mjs
 `REGISTRATION_OTP_SECRET` 至少有 32 个字符，然后重启 `api-gateway`。`.env.example` 故意不包含这些密钥；
 实际密钥仅保存在未跟踪的本地 `.env` 中，不要提交或分发。
 
-此命令也会将 `olist-web` 设为 Authorization Code + PKCE，并关闭 password grant。
+此命令也会将 `olist-web` 设为 Authorization Code + PKCE。只有在本机 `.env` 中设置 `KEYCLOAK_ALLOW_PASSWORD_GRANT=true` 时才会保留 password grant，供前端密码登录使用；其他环境保持 `false`。
 Windows 上也可以直接运行一键修复脚本（推荐）：
 
 ```powershell

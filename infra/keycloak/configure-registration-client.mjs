@@ -5,6 +5,7 @@ const realm = process.env.KEYCLOAK_REALM || 'olist'
 const adminUsername = process.env.KEYCLOAK_ADMIN
 const adminPassword = process.env.KEYCLOAK_ADMIN_PASSWORD
 const clientId = process.env.KEYCLOAK_REGISTRATION_CLIENT_ID || 'olist-registration-service'
+const allowPasswordGrant = process.env.KEYCLOAK_ALLOW_PASSWORD_GRANT === 'true'
 const requiredRoles = ['manage-users', 'query-users', 'view-users']
 
 if (!adminUsername || !adminPassword) {
@@ -62,7 +63,7 @@ const webClientAttributes = {
 if (!webClient.publicClient
   || !webClient.standardFlowEnabled
   || webClient.implicitFlowEnabled
-  || webClient.directAccessGrantsEnabled
+  || webClient.directAccessGrantsEnabled !== allowPasswordGrant
   || webClient.attributes?.['pkce.code.challenge.method'] !== 'S256') {
   await request(`${adminPath}/clients/${webClient.id}`, {
     method: 'PUT',
@@ -72,7 +73,7 @@ if (!webClient.publicClient
       publicClient: true,
       standardFlowEnabled: true,
       implicitFlowEnabled: false,
-      directAccessGrantsEnabled: false,
+      directAccessGrantsEnabled: allowPasswordGrant,
       attributes: webClientAttributes,
     }),
   }, accessToken)
@@ -164,5 +165,5 @@ const clientSecret = await request(
 console.log('Keycloak registration client is ready. Set this value in the root .env file:')
 console.log(`KEYCLOAK_REGISTRATION_CLIENT_SECRET=${clientSecret.value}`)
 console.log('The service account has only manage-users, query-users, and view-users.')
-console.log(`Keycloak web client '${webClientId}' uses Authorization Code + PKCE; password grants are disabled.`)
+console.log(`Keycloak web client '${webClientId}' uses Authorization Code + PKCE; password grant ${allowPasswordGrant ? 'enabled for local development' : 'disabled'}.`)
 console.log('Generate REGISTRATION_OTP_SECRET separately with at least 32 random bytes.')

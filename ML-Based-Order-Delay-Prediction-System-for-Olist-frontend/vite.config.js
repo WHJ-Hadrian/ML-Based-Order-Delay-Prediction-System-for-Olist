@@ -18,7 +18,6 @@ export default defineConfig(({ mode }) => {
       rolldownOptions: {
         input: {
           app: fileURLToPath(new URL('./index.html', import.meta.url)),
-          authStudy: fileURLToPath(new URL('./auth-study.html', import.meta.url)),
         },
       },
     },

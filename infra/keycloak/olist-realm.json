@@ -5,7 +5,6 @@
   "internationalizationEnabled": true,
   "supportedLocales": ["zh-CN", "en"],
   "defaultLocale": "zh-CN",
-  "loginTheme": "olist",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
   "registrationEmailAsUsername": true,
@@ -31,7 +30,7 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "redirectUris": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"],
       "webOrigins": ["http://localhost:5173", "http://127.0.0.1:5173"],
       "attributes": {

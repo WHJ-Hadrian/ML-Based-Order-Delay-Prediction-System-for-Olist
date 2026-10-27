@@ -168,7 +168,6 @@ services:
       - "8180:8080"
     volumes:
       - ./infra/keycloak/olist-realm.json:/opt/keycloak/data/import/olist-realm.json:ro
-      - ./infra/keycloak/themes/olist:/opt/keycloak/themes/olist:ro
 
   mlflow:
     profiles: ["ml", "apps"]

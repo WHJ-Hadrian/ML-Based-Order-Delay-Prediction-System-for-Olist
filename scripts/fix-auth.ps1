@@ -112,6 +112,7 @@ if (-not (Test-Path -LiteralPath $envPath)) {
 $values = Read-DotEnv $envPath
 $realm = Get-ConfiguredValue $values 'KEYCLOAK_REALM' 'olist'
 $webClientId = Get-ConfiguredValue $values 'KEYCLOAK_WEB_CLIENT_ID' 'olist-web'
+$allowPasswordGrant = (Get-ConfiguredValue $values 'KEYCLOAK_ALLOW_PASSWORD_GRANT' 'false') -eq 'true'
 $clientId = Get-ConfiguredValue $values 'KEYCLOAK_REGISTRATION_CLIENT_ID' 'olist-registration-service'
 $clientSecret = Get-ConfiguredValue $values 'KEYCLOAK_REGISTRATION_CLIENT_SECRET' ''
 $otpSecret = Get-ConfiguredValue $values 'REGISTRATION_OTP_SECRET' ''
@@ -259,15 +260,15 @@ $webClientChanged = $false
 if (-not $webClient.publicClient) { $webClient.publicClient = $true; $webClientChanged = $true }
 if (-not $webClient.standardFlowEnabled) { $webClient.standardFlowEnabled = $true; $webClientChanged = $true }
 if ($webClient.implicitFlowEnabled) { $webClient.implicitFlowEnabled = $false; $webClientChanged = $true }
-if ($webClient.directAccessGrantsEnabled) { $webClient.directAccessGrantsEnabled = $false; $webClientChanged = $true }
+if ($webClient.directAccessGrantsEnabled -ne $allowPasswordGrant) { $webClient.directAccessGrantsEnabled = $allowPasswordGrant; $webClientChanged = $true }
 if ($webClient.attributes.'pkce.code.challenge.method' -ne 'S256') { $webClientChanged = $true }
 $webClient.attributes = $webClientAttributes
 if ($webClientChanged) {
     Invoke-RestMethod -Method Put -Uri "$adminPath/clients/$($webClient.id)" -Headers $headers `
         -ContentType 'application/json' -Body ($webClient | ConvertTo-Json -Depth 50) | Out-Null
-    Write-Host "Updated Keycloak web client '$webClientId' to Authorization Code + PKCE."
+    Write-Host "Updated Keycloak web client '$webClientId' to Authorization Code + PKCE (password grant: $allowPasswordGrant)."
 } else {
-    Write-Host "Keycloak web client '$webClientId' already uses Authorization Code + PKCE."
+    Write-Host "Keycloak web client '$webClientId' already uses Authorization Code + PKCE (password grant: $allowPasswordGrant)."
 }
 
 $encodedClientId = [uri]::EscapeDataString($clientId)

@@ -19,8 +19,9 @@ pnpm install
 pnpm dev
 ```
 
-打开 http://localhost:5173 。Vite 会把 `/api` 代理到 `http://localhost:8082`，
-需要改目标地址时设置 `VITE_API_TARGET`。
+打开 http://localhost:5173 。Vite 会把 `/api` 代理到 Gateway `http://localhost:8080`，
+需要改目标地址时设置 `VITE_API_TARGET`。登录和注册由 `api-gateway` + Keycloak 提供，
+不要把 `/api` 直接指向 `dataset-service`，否则会绕过 JWT 校验。
 
 ## 页面结构
 

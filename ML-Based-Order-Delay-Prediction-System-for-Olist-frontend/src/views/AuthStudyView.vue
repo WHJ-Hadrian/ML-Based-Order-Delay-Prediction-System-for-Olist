@@ -1,23 +1,17 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowDown } from '@element-plus/icons-vue'
 import brandArtwork from '@/assets/img/chahua.png'
 import {
   createRegisteredAccount,
   requestRegistrationCode,
   verifyRegistrationCode,
 } from '@/api/registration'
-import { login } from '@/auth/keycloak'
+import { loginWithPassword } from '@/auth/keycloak'
 
-const props = defineProps({
-  mode: { type: String, default: 'login' },
-  demo: { type: Boolean, default: false },
-})
 
 const stages = Object.freeze({
   identifier: 'identifier',
-  accounts: 'accounts',
   password: 'password',
   code: 'code',
   name: 'name',
@@ -25,72 +19,16 @@ const stages = Object.freeze({
   complete: 'complete',
 })
 const CODE_RESEND_DELAY_SECONDS = 60
-const SAVED_ACCOUNTS_KEY = 'seekdateset.saved-accounts'
-const SAMPLE_ACCOUNTS = [
-  {
-    id: 'sample-owner',
-    displayName: 'SeekDateSet 学习账号',
-    email: 'demo@seekdateset.local',
-    avatarUrl: '',
-  },
-  {
-    id: 'sample-analyst',
-    displayName: '数据分析体验号',
-    email: 'analyst@seekdateset.local',
-    avatarUrl: '',
-  },
-]
 
 const router = useRouter()
 
-function profileInitial(profile) {
-  const source = profile?.displayName || profile?.name || profile?.email || 'U'
-  return source.trim().charAt(0).toUpperCase()
-}
-
-function normalizeProfile(account) {
-  const accountEmail = typeof account === 'string' ? account : account?.email
-  if (typeof accountEmail !== 'string' || !accountEmail.includes('@')) return null
-  const displayName = (typeof account === 'object' && (account.displayName || account.name))
-    || accountEmail
-  return {
-    id: account.id || accountEmail,
-    email: accountEmail,
-    displayName,
-    avatarUrl: account.avatarUrl || account.picture || '',
-    initial: profileInitial({ displayName, email: accountEmail }),
-  }
-}
-
-function readSavedAccounts() {
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(SAVED_ACCOUNTS_KEY) || '[]')
-    if (!Array.isArray(saved)) return []
-    return saved.map(normalizeProfile).filter(Boolean)
-  } catch {
-    return []
-  }
-}
-
-function writeSavedAccounts() {
-  try {
-    window.localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(savedAccounts.value))
-  } catch {
-    setMessage('此浏览器未允许保存账号。')
-  }
-}
-
 function initialQueryEmail() {
-  return props.demo ? '' : new URLSearchParams(window.location.search).get('email') || ''
+  return new URLSearchParams(window.location.search).get('email') || ''
 }
 
-const initialEmail = initialQueryEmail()
-const isRegistration = ref(props.mode === 'register')
-const stage = ref(props.demo && props.mode !== 'register'
-  && new URLSearchParams(window.location.search).get('screen') === 'accounts'
-  ? stages.accounts
-  : stages.identifier)
-const email = ref(initialEmail)
+const isRegistration = ref(false)
+const stage = ref(stages.identifier)
+const email = ref(initialQueryEmail())
 const password = ref('')
 const confirmPassword = ref('')
 const familyName = ref('')
@@ -105,11 +43,6 @@ const verificationToken = ref('')
 const message = ref('')
 const messageTone = ref('error')
 const isSubmitting = ref(false)
-const isManagingAccounts = ref(false)
-const rememberAccount = ref(!props.demo)
-const savedAccounts = ref(readSavedAccounts())
-const demoAccounts = ref([...SAMPLE_ACCOUNTS])
-const accounts = computed(() => (props.demo ? demoAccounts.value : savedAccounts.value))
 const resendSeconds = ref(0)
 const loginProfile = ref(null)
 const accountInitial = computed(() => (displayName.value || email.value || 'U').charAt(0).toUpperCase())
@@ -122,7 +55,6 @@ const genderOptions = [
 ]
 
 const currentTitle = computed(() => {
-  if (stage.value === stages.accounts) return '选择账号'
   if (stage.value === stages.code) return '验证您的邮箱'
   if (stage.value === stages.name) return '创建您的 SeekDateSet 账号'
   if (stage.value === stages.birthday) return '基本信息'
@@ -164,51 +96,11 @@ function resetRegistrationFields() {
   verificationToken.value = ''
 }
 
-watch(() => props.mode, (mode) => {
-  clearResendCountdown()
-  isRegistration.value = mode === 'register'
-  stage.value = stages.identifier
-  email.value = initialQueryEmail()
-  password.value = ''
-  confirmPassword.value = ''
-  loginProfile.value = null
-  resetRegistrationFields()
-  resetMessages()
-})
 
 onBeforeUnmount(() => {
   clearResendCountdown()
 })
 
-function continueToPassword(profile) {
-  if (isBusy.value) return
-
-  loginProfile.value = normalizeProfile(profile)
-  email.value = loginProfile.value.email
-  password.value = ''
-  resetMessages()
-  stage.value = stages.password
-}
-
-function storeAccount(account) {
-  if (!rememberAccount.value) return
-  const profile = normalizeProfile(account)
-  if (!profile) return
-  savedAccounts.value = [
-    profile,
-    ...savedAccounts.value.filter((saved) => saved.email.toLowerCase() !== profile.email.toLowerCase()),
-  ]
-  writeSavedAccounts()
-}
-
-async function resolveLoginAccount(accountEmail) {
-  const sample = SAMPLE_ACCOUNTS.find((account) => account.email === accountEmail)
-  continueToPassword({
-    email: accountEmail,
-    displayName: sample?.displayName || accountEmail,
-  })
-  return true
-}
 
 function startResendCountdown() {
   clearResendCountdown()
@@ -354,7 +246,6 @@ async function submitRegistration() {
     })
     password.value = ''
     confirmPassword.value = ''
-    verificationToken.value = ''
     stage.value = stages.complete
   } catch (error) {
     setMessage(error.message)
@@ -364,22 +255,18 @@ async function submitRegistration() {
 }
 
 async function submitLogin() {
-  if (isBusy.value) return
-  if (props.demo) {
-    submitDemo()
-    return
-  }
-  if (!loginProfile.value?.email) {
-    stage.value = stages.identifier
+  if (isBusy.value || !loginProfile.value) return
+  if (!password.value) {
+    setMessage('请输入密码。')
     return
   }
 
   isSubmitting.value = true
   resetMessages()
   try {
-    storeAccount(loginProfile.value)
+    await loginWithPassword(loginProfile.value.email, password.value)
     password.value = ''
-    await login(loginProfile.value.email)
+    await router.push('/')
   } catch (error) {
     setMessage(error.message)
   } finally {
@@ -391,48 +278,16 @@ function continueWithEmail() {
   const normalizedEmail = email.value.trim().toLowerCase()
   if (!normalizedEmail || isBusy.value) return
 
-  if (props.demo) {
-    continueToPassword({ email: normalizedEmail, displayName: 'SeekDateSet 学习账号' })
-    return
-  }
   if (isRegistration.value) {
     void requestRegistrationCodeForEmail()
     return
   }
-  void resolveLoginAccount(normalizedEmail)
-}
 
-function continueWithAccount(account) {
-  email.value = account.email
-  resetMessages()
-  void resolveLoginAccount(account.email)
-}
-
-function useAnotherAccount() {
-  isManagingAccounts.value = false
-  loginProfile.value = null
-  email.value = ''
+  email.value = normalizedEmail
+  loginProfile.value = { email: normalizedEmail }
   password.value = ''
   resetMessages()
-  stage.value = stages.identifier
-}
-
-function backFromAccounts() {
-  isManagingAccounts.value = false
-  resetMessages()
-  stage.value = loginProfile.value ? stages.password : stages.identifier
-}
-
-function showSavedAccounts() {
-  password.value = ''
-  resetMessages()
-  stage.value = stages.accounts
-}
-
-function backToLoginEmail() {
-  password.value = ''
-  resetMessages()
-  stage.value = stages.identifier
+  stage.value = stages.password
 }
 
 function startRegistration() {
@@ -441,8 +296,8 @@ function startRegistration() {
   email.value = ''
   password.value = ''
   confirmPassword.value = ''
-  resetRegistrationFields()
   loginProfile.value = null
+  resetRegistrationFields()
   resetMessages()
 }
 
@@ -484,42 +339,16 @@ async function resendCode() {
   await sendVerificationCode()
 }
 
-function removeAccount(accountId) {
-  if (props.demo) {
-    demoAccounts.value = demoAccounts.value.filter((account) => account.id !== accountId)
-  } else {
-    savedAccounts.value = savedAccounts.value.filter((account) => account.id !== accountId)
-    writeSavedAccounts()
-  }
-  if (accounts.value.length === 0) {
-    isManagingAccounts.value = false
-    stage.value = stages.identifier
-  }
-}
-
 function returnToLoginAfterRegistration() {
-  if (props.demo) {
-    clearResendCountdown()
-    isRegistration.value = false
-    stage.value = stages.identifier
-    password.value = ''
-    confirmPassword.value = ''
-    resetRegistrationFields()
-    loginProfile.value = null
-    resetMessages()
-    return
-  }
-
-  router.replace({ name: 'login', query: { email: email.value } }).catch(() => {
+  const registeredEmail = email.value
+  returnToLogin()
+  email.value = registeredEmail
+  router.replace({
+    name: 'login',
+    query: registeredEmail ? { email: registeredEmail } : {},
+  }).catch(() => {
     setMessage('无法返回登录页面，请刷新后重试。')
   })
-}
-
-function submitDemo() {
-  password.value = ''
-  setMessage(isRegistration.value
-    ? '这是 Vue 界面演示，注册功能尚未连接身份认证服务。'
-    : '这是 Vue 界面演示，没有连接身份认证服务。', 'notice')
 }
 </script>
 
@@ -537,9 +366,7 @@ function submitDemo() {
             <template v-if="!isRegistration">请使用您的 SeekDateSet 账号登录。该浏览器中的其他 SeekDateSet 应用都将可以访问此账号。</template>
             <template v-else>创建您的 SeekDateSet 账号，开始管理数据资产。</template>
           </p>
-          <p v-else-if="stage === stages.accounts" class="auth-description">
-            选择要使用的 SeekDateSet 账号。
-          </p>
+
           <p v-else-if="stage === stages.code" class="auth-description">
             我们会向您的邮箱发送一次性验证码。
           </p>
@@ -556,28 +383,9 @@ function submitDemo() {
             设置一个至少 10 个字符的密码。
           </p>
           <p v-else class="auth-description">
-            下一步将在 SeekDateSet 安全登录页验证您的账号。
+            输入密码以继续登录 SeekDateSet。
           </p>
 
-          <button
-            v-if="stage === stages.password && !isRegistration && loginProfile"
-            class="profile-chip"
-            type="button"
-            :aria-label="`已选择 ${loginProfile.displayName}（${loginProfile.email}），切换账号`"
-            @click="showSavedAccounts"
-          >
-            <span class="account-avatar profile-chip-avatar" aria-hidden="true">
-              <img v-if="loginProfile.avatarUrl" :src="loginProfile.avatarUrl" alt="">
-              <template v-else>{{ loginProfile.initial }}</template>
-            </span>
-            <span class="profile-chip-text">
-              <span class="profile-chip-name">{{ loginProfile.displayName }}</span>
-              <span class="profile-chip-email">{{ loginProfile.email }}</span>
-            </span>
-            <span class="profile-chip-chevron" aria-hidden="true">
-              <el-icon><ArrowDown /></el-icon>
-            </span>
-          </button>
         </div>
 
         <div
@@ -601,81 +409,23 @@ function submitDemo() {
               >
               <label for="account-email">邮箱地址</label>
             </div>
-            <div v-if="!props.demo && !isRegistration" class="remember-account">
-              <input id="remember-account" v-model="rememberAccount" type="checkbox">
-              <label for="remember-account">在此设备上记住此邮箱</label>
-            </div>
-            <p v-if="props.demo" class="privacy-hint">
-              您用的不是自己的电脑？请使用访客模式无痕登录。
-              <button class="text-link" type="button">详细了解如何使用访客模式</button>
-            </p>
+
             <p
               v-if="message"
               class="auth-message"
               :class="{ 'is-notice': messageTone === 'notice' }"
               :role="messageTone === 'error' ? 'alert' : 'status'"
             >{{ message }}</p>
-            <button
-              v-if="!props.demo && savedAccounts.length > 0 && !isRegistration"
-              class="text-link saved-account-link"
-              type="button"
-              @click="showSavedAccounts"
-            >选择已保存的账号</button>
+
             <div class="form-actions">
               <button v-if="!isRegistration" class="text-link create-account" type="button" @click="startRegistration">创建账号</button>
               <button v-else class="text-link create-account" type="button" @click="returnToLogin">返回登录</button>
               <button class="primary-action" type="submit" :disabled="isBusy">
-                {{ isRegistration && !props.demo ? '发送验证码' : (props.demo ? '下一步' : '继续') }}
+                {{ isRegistration ? '发送验证码' : '继续' }}
               </button>
             </div>
           </form>
 
-          <section v-else-if="stage === stages.accounts" class="account-stage" aria-label="账号列表">
-            <div class="account-list">
-              <article v-for="account in accounts" :key="account.id" class="account-row">
-                <button
-                  class="account-choice"
-                  type="button"
-                  :aria-label="`选择 ${account.email}`"
-                  @click="continueWithAccount(account)"
-                >
-                  <span class="account-avatar" aria-hidden="true">
-                    <img v-if="account.avatarUrl" :src="account.avatarUrl" alt="">
-                    <template v-else>{{ profileInitial(account) }}</template>
-                  </span>
-                  <span class="account-identity">
-                    <strong>{{ account.displayName }}</strong>
-                    <span>{{ account.email }}</span>
-                  </span>
-                  <span v-if="!isManagingAccounts" class="account-status">{{ props.demo ? '已退出账号' : '已保存账号' }}</span>
-                </button>
-                <button
-                  v-if="isManagingAccounts"
-                  class="remove-account"
-                  type="button"
-                  @click="removeAccount(account.id)"
-                >
-                  移除
-                </button>
-              </article>
-              <button class="account-choice other-account" type="button" @click="useAnotherAccount">
-                <span class="account-avatar account-avatar-outline" aria-hidden="true">＋</span>
-                <strong>使用其他账号</strong>
-              </button>
-            </div>
-            <div class="account-actions">
-              <button
-                v-if="accounts.length > 0"
-                class="text-link"
-                type="button"
-                @click="isManagingAccounts = !isManagingAccounts"
-              >
-                {{ isManagingAccounts ? '完成' : '移除账号' }}
-              </button>
-              <span v-else></span>
-              <button class="text-link" type="button" @click="backFromAccounts">返回</button>
-            </div>
-          </section>
 
           <form v-else-if="stage === stages.code" class="auth-form registration-form" @submit.prevent="verifyCode">
             <div class="selected-account">
@@ -838,33 +588,35 @@ function submitDemo() {
           </section>
 
           <form v-else class="auth-form password-form" @submit.prevent="isRegistration ? submitRegistration() : submitLogin()">
-            <div v-if="!isRegistration && loginProfile" class="selected-account">
-              <span class="account-avatar" aria-hidden="true">{{ loginProfile.initial }}</span>
+            <input
+              v-if="!isRegistration"
+              type="text"
+              name="username"
+              autocomplete="username"
+              :value="loginProfile?.email || email"
+              hidden
+            >
+            <div class="selected-account">
+              <span class="account-avatar" aria-hidden="true">{{ isRegistration ? accountInitial : (loginProfile?.email || email).charAt(0).toUpperCase() }}</span>
               <span class="selected-identity">
-                <span class="selected-email">{{ loginProfile.displayName }}</span>
-                <span class="selected-caption">{{ loginProfile.email }}</span>
+                <span class="selected-email">{{ isRegistration ? displayName : (loginProfile?.email || email) }}</span>
+                <span class="selected-caption">{{ isRegistration ? email : 'SeekDateSet 账号' }}</span>
               </span>
             </div>
-            <div v-else-if="isRegistration" class="selected-account">
-              <span class="account-avatar" aria-hidden="true">{{ accountInitial }}</span>
-              <span class="selected-identity">
-                <span class="selected-email">{{ displayName }}</span>
-                <span class="selected-caption">{{ email }}</span>
-              </span>
-            </div>
-            <div v-if="isRegistration" class="auth-field">
+            <div class="auth-field">
               <input
                 id="account-password"
                 v-model="password"
-                autocomplete="new-password"
-                minlength="10"
+                :autocomplete="isRegistration ? 'new-password' : 'current-password'"
+                :minlength="isRegistration ? 10 : undefined"
                 maxlength="128"
                 name="password"
                 placeholder=" "
                 type="password"
+                :autofocus="!isRegistration"
                 required
               >
-              <label v-if="isRegistration" for="account-password">创建密码</label>
+              <label for="account-password">{{ isRegistration ? '创建密码' : '输入密码' }}</label>
             </div>
             <div v-if="isRegistration" class="auth-field">
               <input
@@ -881,9 +633,8 @@ function submitDemo() {
               <label for="registration-password-confirm">再次输入密码</label>
             </div>
             <p v-if="isRegistration" class="privacy-hint">密码长度至少为 10 个字符。</p>
-            <p v-if="!isRegistration" class="privacy-hint">
-              密码不会发送给此页面。
-            </p>
+            <button v-else class="text-link forgot-password" type="button" @click="setMessage('请联系管理员重置密码。', 'notice')">忘记了密码？</button>
+
             <p
               v-if="message"
               class="auth-message"
@@ -894,7 +645,7 @@ function submitDemo() {
               <button
                 class="text-link create-account"
                 type="button"
-                @click="isRegistration ? backToBirthday() : backToLoginEmail()"
+                @click="isRegistration ? backToBirthday() : backToEmail()"
               >返回</button>
               <button class="primary-action" type="submit" :disabled="isBusy">{{ isRegistration ? '创建账号' : '继续' }}</button>
             </div>
@@ -1042,13 +793,6 @@ function submitDemo() {
   background: #fff;
   color: #1f1f1f;
   text-align: left;
-  cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-
-.profile-chip:hover {
-  border-color: #202124;
-  background: #f8fafd;
 }
 
 .profile-chip-avatar {
@@ -1578,6 +1322,11 @@ function submitDemo() {
   font-size: 16px;
 }
 
+.forgot-password {
+  display: block;
+  margin-top: 10px;
+}
+
 .password-actions {
   margin-top: 56px;
 }
@@ -1683,12 +1432,6 @@ function submitDemo() {
   font-size: 14px;
 }
 
-.demo-message {
-  margin: 20px 0 0;
-  color: #5f6368;
-  font-size: 13px;
-  line-height: 1.5;
-}
 
 .sr-only {
   position: absolute;
