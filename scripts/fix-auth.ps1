@@ -112,7 +112,7 @@ if (-not (Test-Path -LiteralPath $envPath)) {
 $values = Read-DotEnv $envPath
 $realm = Get-ConfiguredValue $values 'KEYCLOAK_REALM' 'olist'
 $webClientId = Get-ConfiguredValue $values 'KEYCLOAK_WEB_CLIENT_ID' 'olist-web'
-$allowPasswordGrant = (Get-ConfiguredValue $values 'KEYCLOAK_ALLOW_PASSWORD_GRANT' 'false') -eq 'true'
+$allowPasswordGrantValue = Get-ConfiguredValue $values 'KEYCLOAK_ALLOW_PASSWORD_GRANT' ''
 $clientId = Get-ConfiguredValue $values 'KEYCLOAK_REGISTRATION_CLIENT_ID' 'olist-registration-service'
 $clientSecret = Get-ConfiguredValue $values 'KEYCLOAK_REGISTRATION_CLIENT_SECRET' ''
 $otpSecret = Get-ConfiguredValue $values 'REGISTRATION_OTP_SECRET' ''
@@ -123,6 +123,11 @@ if ($configuredKeycloakUrl -match '^https?://(localhost|127\.0\.0\.1)(:\d+)?/?$'
     $KeycloakUrl = $configuredKeycloakUrl.TrimEnd('/')
 } else {
     $KeycloakUrl = $KeycloakUrl.TrimEnd('/')
+}
+if ([string]::IsNullOrWhiteSpace($allowPasswordGrantValue)) {
+    $allowPasswordGrant = $KeycloakUrl -match '^https?://(localhost|127\.0\.0\.1)(:\d+)?/?$'
+} else {
+    $allowPasswordGrant = $allowPasswordGrantValue -eq 'true'
 }
 
 if (-not $clientSecret -or $RotateRegistrationSecret) {
@@ -212,11 +217,15 @@ if ([string]::IsNullOrWhiteSpace($realmRepresentation.displayName) -or $realmRep
     $realmRepresentation.displayName = $expectedDisplayName
     $realmChanged = $true
 }
+if ([string]::IsNullOrWhiteSpace($realmRepresentation.loginTheme) -or $realmRepresentation.loginTheme -eq 'olist') {
+    $realmRepresentation.loginTheme = 'keycloak.v2'
+    $realmChanged = $true
+}
 if ($realmChanged) {
     $realmJson = $realmRepresentation | ConvertTo-Json -Depth 50
     Invoke-RestMethod -Method Put -Uri $adminPath -Headers $headers `
         -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($realmJson)) | Out-Null
-    Write-Host 'Updated Keycloak realm settings (email verification and display name).'
+    Write-Host 'Updated Keycloak realm settings (email verification, display name and login theme).'
 }
 
 $profilePath = "$adminPath/users/profile"
@@ -262,7 +271,7 @@ if (-not $webClient.standardFlowEnabled) { $webClient.standardFlowEnabled = $tru
 if ($webClient.implicitFlowEnabled) { $webClient.implicitFlowEnabled = $false; $webClientChanged = $true }
 if ($webClient.directAccessGrantsEnabled -ne $allowPasswordGrant) { $webClient.directAccessGrantsEnabled = $allowPasswordGrant; $webClientChanged = $true }
 if ($webClient.attributes.'pkce.code.challenge.method' -ne 'S256') { $webClientChanged = $true }
-$webClient.attributes = $webClientAttributes
+$webClient | Add-Member -NotePropertyName attributes -NotePropertyValue $webClientAttributes -Force
 if ($webClientChanged) {
     Invoke-RestMethod -Method Put -Uri "$adminPath/clients/$($webClient.id)" -Headers $headers `
         -ContentType 'application/json' -Body ($webClient | ConvertTo-Json -Depth 50) | Out-Null

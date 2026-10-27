@@ -71,12 +71,15 @@ node infra/keycloak/configure-registration-client.mjs
 `REGISTRATION_OTP_SECRET` 至少有 32 个字符，然后重启 `api-gateway`。`.env.example` 故意不包含这些密钥；
 实际密钥仅保存在未跟踪的本地 `.env` 中，不要提交或分发。
 
-此命令也会将 `olist-web` 设为 Authorization Code + PKCE。只有在本机 `.env` 中设置 `KEYCLOAK_ALLOW_PASSWORD_GRANT=true` 时才会保留 password grant，供前端密码登录使用；其他环境保持 `false`。
+此命令也会将 `olist-web` 设为 Authorization Code + PKCE。Keycloak 地址是本机 `localhost`/`127.0.0.1` 时默认启用 password grant，供前端密码登录使用；其他环境默认关闭，生产必须使用 Authorization Code + PKCE。
 Windows 上也可以直接运行一键修复脚本（推荐）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\fix-auth.ps1
 ```
+
+已有 Keycloak 数据卷不会重新导入 realm。拉取认证相关改动后，先运行上面的脚本同步客户端与主题，再执行
+`docker compose up -d keycloak` 让主题挂载变更新生效；否则旧数据卷仍会保留原来的 Keycloak 登录页配置。
 
 脚本会启动缺失的 MySQL、Redis、Mailpit 和 Keycloak，补建注册服务客户端与角色，并验证服务账号。
 如果 Keycloak 已经启动，脚本不会重复启动它。若需要撤销旧注册密钥，显式附加

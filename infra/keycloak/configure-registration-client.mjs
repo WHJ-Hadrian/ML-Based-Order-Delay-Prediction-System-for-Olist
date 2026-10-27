@@ -5,7 +5,10 @@ const realm = process.env.KEYCLOAK_REALM || 'olist'
 const adminUsername = process.env.KEYCLOAK_ADMIN
 const adminPassword = process.env.KEYCLOAK_ADMIN_PASSWORD
 const clientId = process.env.KEYCLOAK_REGISTRATION_CLIENT_ID || 'olist-registration-service'
-const allowPasswordGrant = process.env.KEYCLOAK_ALLOW_PASSWORD_GRANT === 'true'
+const passwordGrantSetting = process.env.KEYCLOAK_ALLOW_PASSWORD_GRANT
+const allowPasswordGrant = passwordGrantSetting === undefined || passwordGrantSetting === ''
+  ? /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(baseUrl)
+  : passwordGrantSetting === 'true'
 const requiredRoles = ['manage-users', 'query-users', 'view-users']
 
 if (!adminUsername || !adminPassword) {
@@ -38,7 +41,8 @@ const accessToken = tokenResponse.access_token
 const adminPath = `/admin/realms/${encodeURIComponent(realm)}`
 
 const realmRepresentation = await request(adminPath, {}, accessToken)
-if (realmRepresentation.registrationAllowed || realmRepresentation.passwordPolicy !== 'length(10)') {
+const needsDefaultLoginTheme = !realmRepresentation.loginTheme || realmRepresentation.loginTheme === 'olist'
+if (realmRepresentation.registrationAllowed || realmRepresentation.passwordPolicy !== 'length(10)' || needsDefaultLoginTheme) {
   await request(adminPath, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -46,6 +50,7 @@ if (realmRepresentation.registrationAllowed || realmRepresentation.passwordPolic
       ...realmRepresentation,
       registrationAllowed: false,
       passwordPolicy: 'length(10)',
+      ...(needsDefaultLoginTheme ? { loginTheme: 'keycloak.v2' } : {}),
     }),
   }, accessToken)
 }
