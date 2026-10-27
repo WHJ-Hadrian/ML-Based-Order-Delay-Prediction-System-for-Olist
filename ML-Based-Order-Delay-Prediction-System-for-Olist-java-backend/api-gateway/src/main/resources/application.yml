@@ -40,6 +40,10 @@ spring:
               uri: ${DATASET_SERVICE_URL:http://localhost:8082}
               predicates:
                 - Path=/api/v1/datasets,/api/v1/datasets/**
+            - id: field-libraries
+              uri: ${DATASET_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/field-libraries,/api/v1/field-libraries/**
             - id: fields
               uri: ${DATASET_SERVICE_URL:http://localhost:8082}
               predicates:
