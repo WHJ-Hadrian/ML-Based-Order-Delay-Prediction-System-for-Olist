@@ -310,7 +310,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
       AWS_DEFAULT_REGION: us-east-1
       CLICKHOUSE_ENABLED: "true"
-      CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123
+      CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123?compress=0
       CLICKHOUSE_DATABASE: olist_datasets
       CLICKHOUSE_USER: olist
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local-clickhouse-only}

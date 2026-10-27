@@ -953,9 +953,16 @@ class DatasetUploadIntegrationTest {
         mockMvc.perform(get("/internal/dataset-versions/{id}/execution-snapshot", versionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.datasetVersionId").value(versionId.toString()))
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.rowCount").value(1))
                 .andExpect(jsonPath("$.clickhouseDatabase").value("olist_datasets"))
                 .andExpect(jsonPath("$.tables[0].tableId").value(tableId.toString()))
+                .andExpect(jsonPath("$.tables[0].tableKey").isNotEmpty())
+                .andExpect(jsonPath("$.tables[0].tableName").value("orders"))
                 .andExpect(jsonPath("$.tables[0].physicalTable").isNotEmpty())
+                .andExpect(jsonPath("$.tables[0].rowCount").value(1))
+                .andExpect(jsonPath("$.tables[0].columns[0].sourceName").value("order_id"))
+                .andExpect(jsonPath("$.tables[0].columns[0].logicalType").value("STRING"))
                 .andExpect(jsonPath("$.tables[0].columns[0].physicalName").value("c000"))
                 .andExpect(jsonPath("$.tables[0].columns[0].clickhouseType").value("Nullable(String)"));
 

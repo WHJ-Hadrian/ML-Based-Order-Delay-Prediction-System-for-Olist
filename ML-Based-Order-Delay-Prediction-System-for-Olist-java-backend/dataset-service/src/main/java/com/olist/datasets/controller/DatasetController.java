@@ -7,6 +7,7 @@ import com.olist.datasets.dto.DatasetUpdateRequest;
 import com.olist.datasets.dto.DatasetUploadRequest;
 import com.olist.datasets.service.DatasetService;
 import com.olist.datasets.vo.DatasetCatalogVO;
+import com.olist.datasets.vo.DatasetColumnVO;
 import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetReadinessVO;
 import com.olist.datasets.vo.DatasetVO;
@@ -17,6 +18,7 @@ import com.olist.datasets.vo.TableRowSearchVO;
 import com.olist.datasets.vo.TableRowsVO;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -92,6 +94,11 @@ public class DatasetController {
     public ResponseEntity<DatasetVO> upload(@Valid @ModelAttribute DatasetUploadRequest request) {
         DatasetVO dataset = datasetService.upload(request);
         return ResponseEntity.created(locationOf(dataset.id())).body(dataset);
+    }
+
+    @GetMapping("/{id}/columns")
+    public List<DatasetColumnVO> columns(@PathVariable UUID id) {
+        return datasetService.columns(id);
     }
 
     @GetMapping("/{datasetId}/tables/{tableId}/preview")

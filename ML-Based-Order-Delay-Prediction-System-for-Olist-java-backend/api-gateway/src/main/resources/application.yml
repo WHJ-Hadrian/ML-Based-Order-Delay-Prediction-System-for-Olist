@@ -48,6 +48,14 @@ spring:
               uri: ${DATASET_SERVICE_URL:http://localhost:8082}
               predicates:
                 - Path=/api/v1/rules,/api/v1/rules/**
+            - id: rule-workbooks
+              uri: ${DATASET_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/rule-workbooks,/api/v1/rule-workbooks/**
+            - id: rule-runs
+              uri: ${DATASET_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/rule-runs,/api/v1/rule-runs/**
             - id: jobs
               uri: ${JOB_SERVICE_URL:http://localhost:8083}
               predicates:

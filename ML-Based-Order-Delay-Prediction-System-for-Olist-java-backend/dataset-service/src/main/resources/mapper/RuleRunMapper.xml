@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.RuleRunMapper">
+
+    <resultMap id="RuleRunResultMap" type="com.olist.datasets.entity.RuleRun">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="workbook_id" property="workbookId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="workbook_version_id" property="workbookVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="dataset_version_id" property="datasetVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="mode" property="mode"/>
+        <result column="status" property="status"/>
+        <result column="sample_size" property="sampleSize"/>
+        <result column="seed" property="seed"/>
+        <result column="error_message" property="errorMessage"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="started_at" property="startedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="finished_at" property="finishedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <sql id="runColumns">
+        id, owner_id, workbook_id, workbook_version_id, dataset_version_id, mode, status,
+        sample_size, seed, error_message, created_at, started_at, finished_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO rule_runs (
+            id, owner_id, workbook_id, workbook_version_id, dataset_version_id,
+            mode, status, sample_size, seed, error_message, created_at, started_at, finished_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId},
+            #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{workbookVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{mode}, #{status}, #{sampleSize,jdbcType=INTEGER}, #{seed,jdbcType=BIGINT},
+            #{errorMessage,jdbcType=VARCHAR},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{startedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{finishedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findByIdAndOwner" resultMap="RuleRunResultMap">
+        SELECT <include refid="runColumns"/>
+        FROM rule_runs
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </select>
+
+    <select id="findByIdAndOwnerForUpdate" resultMap="RuleRunResultMap">
+        SELECT <include refid="runColumns"/>
+        FROM rule_runs
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+        FOR UPDATE
+    </select>
+
+    <select id="findByWorkbookId" resultMap="RuleRunResultMap">
+        SELECT <include refid="runColumns"/>
+        FROM rule_runs
+        WHERE workbook_id = #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+        ORDER BY created_at DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <update id="updateStatusIfCurrent">
+        UPDATE rule_runs
+        SET status = #{newStatus},
+            started_at = COALESCE(started_at, #{startedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler}),
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            error_message = #{errorMessage,jdbcType=VARCHAR}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND status = #{expectedStatus}
+    </update>
+</mapper>

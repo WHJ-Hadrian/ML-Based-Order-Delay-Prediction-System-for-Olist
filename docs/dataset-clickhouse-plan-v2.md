@@ -798,6 +798,7 @@ V9 里 `rule_runs` 和 `rule_workbook_versions` 对 workbook 是 `ON DELETE CASC
 - 导入失败会删除本次已建的表；数据库事务回滚时也会触发同样的清理。
 - `addFile` 克隆版本时为新表生成新的物理表名，v1 不共享 `physical_table`。
 - ClickHouse 连接配置：`CLICKHOUSE_ENABLED`、`CLICKHOUSE_URL`、`CLICKHOUSE_DATABASE`、`CLICKHOUSE_USER`、`CLICKHOUSE_PASSWORD`。
+- 当前 `clickhouse-jdbc 0.6.5` 与新版 ClickHouse 的默认响应压缩不兼容，`CLICKHOUSE_URL` 需带 `?compress=0`；代码会为未显式设置压缩参数的 URL 自动补上。
 - `compose.yaml` 中 `dataset-service` 已接 ClickHouse，并新增 `infra/clickhouse/init/00-create-databases.sql` 初始化 `olist_datasets`、`olist_rule_staging`。
 
 ### 13.2 当前约束

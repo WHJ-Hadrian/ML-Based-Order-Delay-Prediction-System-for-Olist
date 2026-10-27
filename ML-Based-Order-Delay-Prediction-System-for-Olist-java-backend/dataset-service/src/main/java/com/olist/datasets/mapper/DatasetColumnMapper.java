@@ -1,6 +1,7 @@
 package com.olist.datasets.mapper;
 
 import com.olist.datasets.entity.DatasetColumn;
+import com.olist.datasets.entity.FieldCatalogRow;
 import java.util.List;
 import java.util.UUID;
 import org.apache.ibatis.annotations.Param;
@@ -19,4 +20,8 @@ public interface DatasetColumnMapper {
             @Param("logicalType") String logicalType,
             @Param("physicalName") String physicalName,
             @Param("clickhouseType") String clickhouseType);
+
+    List<FieldCatalogRow> findFieldCatalog(
+            @Param("datasetVersionId") UUID datasetVersionId,
+            @Param("ownerId") String ownerId);
 }

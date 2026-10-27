@@ -55,7 +55,7 @@ olist:
       max-scanned-rows: ${DATASET_TABLE_SEARCH_MAX_SCANNED_ROWS:250000}
   clickhouse:
     enabled: ${CLICKHOUSE_ENABLED:false}
-    url: ${CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123}
+    url: ${CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123?compress=0}
     database: ${CLICKHOUSE_DATABASE:olist_datasets}
     username: ${CLICKHOUSE_USER:olist}
     password: ${CLICKHOUSE_PASSWORD:}

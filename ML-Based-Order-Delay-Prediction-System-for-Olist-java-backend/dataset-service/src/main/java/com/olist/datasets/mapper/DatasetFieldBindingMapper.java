@@ -11,4 +11,8 @@ public interface DatasetFieldBindingMapper {
 
     List<DatasetFieldBinding> findByDatasetVersionId(
             @Param("datasetVersionId") UUID datasetVersionId);
+
+    DatasetFieldBinding findByFieldIdAndDatasetVersionId(
+            @Param("fieldId") UUID fieldId,
+            @Param("datasetVersionId") UUID datasetVersionId);
 }

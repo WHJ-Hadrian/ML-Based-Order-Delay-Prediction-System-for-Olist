@@ -47,6 +47,7 @@ import com.olist.datasets.security.DatasetOwnerProvider;
 import com.olist.datasets.service.DatasetService;
 import com.olist.datasets.storage.DatasetStorage;
 import com.olist.datasets.vo.DatasetCatalogVO;
+import com.olist.datasets.vo.DatasetColumnVO;
 import com.olist.datasets.vo.DatasetDetailVO;
 import com.olist.datasets.vo.DatasetReadinessVO;
 import com.olist.datasets.vo.DatasetVersionVO;
@@ -67,8 +68,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -498,6 +499,13 @@ public class DatasetServiceImpl implements DatasetService {
                     .computeIfAbsent(column.getTableId(), ignored -> new ArrayList<>())
                     .add(column);
         }
+        Map<UUID, UUID> fieldIdsByColumn = new LinkedHashMap<>();
+        for (DatasetFieldBinding binding :
+                datasetFieldBindingMapper.findByDatasetVersionId(version.getId())) {
+            if (binding.getColumnId() != null && binding.getFieldId() != null) {
+                fieldIdsByColumn.put(binding.getColumnId(), binding.getFieldId());
+            }
+        }
         List<ExecutionSnapshotVO.SnapshotTableVO> tableVOs = new ArrayList<>(tables.size());
         for (DatasetTable table : tables) {
             if (table.getPhysicalTable() == null || table.getPhysicalTable().isBlank()) {
@@ -513,21 +521,59 @@ public class DatasetServiceImpl implements DatasetService {
                     throw new DatasetNotReadyException(
                             "数据集版本 " + version.getId() + " 缺少 ClickHouse 物理列元数据");
                 }
+                String logicalType = column.getLogicalType() == null
+                        ? column.getDataType()
+                        : column.getLogicalType();
                 columnVOs.add(new ExecutionSnapshotVO.SnapshotColumnVO(
                         column.getId(),
+                        fieldIdsByColumn.get(column.getId()),
+                        column.getColumnName(),
                         column.getPhysicalName(),
+                        logicalType,
                         column.getClickhouseType(),
                         column.isNullable()));
             }
             tableVOs.add(new ExecutionSnapshotVO.SnapshotTableVO(
-                    table.getId(), table.getPhysicalTable(), columnVOs));
+                    table.getId(),
+                    table.getTableKey(),
+                    table.getTableName(),
+                    table.getPhysicalTable(),
+                    table.getRowCount(),
+                    columnVOs));
         }
         return new ExecutionSnapshotVO(
                 version.getId(),
+                version.getStatus().name(),
                 version.getSchemaHash(),
                 version.getManifestHash(),
                 clickHouseProperties.getDatabase(),
+                version.getRowCount(),
                 tableVOs);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DatasetColumnVO> columns(UUID datasetId) {
+        DatasetVersion version = resolveAnyVersion(datasetId, datasetOwnerProvider.currentOwnerId());
+        Map<UUID, String> tableNames = new LinkedHashMap<>();
+        for (DatasetTable table : datasetTableMapper.findByDatasetId(version.getId())) {
+            tableNames.put(table.getId(), table.getTableName());
+        }
+        return datasetColumnMapper.findByDatasetVersionId(version.getId()).stream()
+                .map(column -> new DatasetColumnVO(
+                        column.getId(),
+                        column.getDatasetVersionId(),
+                        column.getTableId(),
+                        tableNames.get(column.getTableId()),
+                        column.getColumnName(),
+                        column.getOrdinal(),
+                        column.getLogicalType() == null
+                                ? column.getDataType()
+                                : column.getLogicalType(),
+                        column.getPhysicalName(),
+                        column.getClickhouseType(),
+                        column.isNullable()))
+                .toList();
     }
 
     @Override

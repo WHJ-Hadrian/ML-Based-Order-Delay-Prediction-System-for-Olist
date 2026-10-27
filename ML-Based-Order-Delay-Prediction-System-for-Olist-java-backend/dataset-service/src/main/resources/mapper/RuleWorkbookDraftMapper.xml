@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.RuleWorkbookDraftMapper">
+
+    <resultMap id="RuleWorkbookDraftResultMap" type="com.olist.datasets.entity.RuleWorkbookDraft">
+        <id column="workbook_id" property="workbookId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="revision" property="revision"/>
+        <result column="document_json" property="documentJson"/>
+        <result column="updated_at" property="updatedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <insert id="insert">
+        INSERT INTO rule_workbook_drafts (workbook_id, revision, document_json, updated_at)
+        VALUES (
+            #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{revision}, #{documentJson},
+            #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findByWorkbookId" resultMap="RuleWorkbookDraftResultMap">
+        SELECT workbook_id, revision, document_json, updated_at
+        FROM rule_workbook_drafts
+        WHERE workbook_id = #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </select>
+
+    <update id="update">
+        UPDATE rule_workbook_drafts
+        SET revision = #{draft.revision},
+            document_json = #{draft.documentJson},
+            updated_at = #{draft.updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE workbook_id = #{draft.workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND revision = #{previousRevision}
+    </update>
+</mapper>

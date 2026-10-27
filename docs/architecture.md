@@ -251,6 +251,6 @@ docker compose --profile observability up -d
 - 前端使用邮箱先行的分步登录/注册界面：登录时输入邮箱后进入密码步骤，再通过 Keycloak 密码授权换取 access token（仅本地开发启用 password grant，生产应改用 Authorization Code + PKCE）；注册流程按姓名、生日与性别、密码分步完成。应用只保留这一个登录/注册入口，不再维护额外的 Keycloak 托管登录页；业务 API 使用 Keycloak 签发的 access token。数据集按 JWT `sub` 隔离。
 - Java 服务尚未实现订单、任务编排、预测、模型管理或分析查询等业务接口；数据集服务已实现文件上传、版本元数据查询、对象存储写入，以及字段库和清洗规则库的维护接口。
 - Python FastAPI 当前提供健康检查与指标基础；模型推理业务和 Temporal Worker 活动尚未实现。
-- `app/workers/` 与 `app/pipelines/` 当前包含职责说明，没有实际 Worker 或数据处理任务实现。
+- `app/workers/rule_execution/` 已实现冻结计划校验、READY execution snapshot 校验、稳定拓扑排序、运行控制和节点上报编排；ClickHouse 执行后端和 Temporal activity 尚未接入，`app/pipelines/` 仍只有职责说明。
 - Kafka 基础设施与订单状态事件契约已配置；契约不代表订单事件的生产者和消费者业务逻辑已实现。
 - Compose 与 Helm 描述本地及 Kubernetes 运行基础；实际运行时行为仍取决于对应服务代码和环境配置。

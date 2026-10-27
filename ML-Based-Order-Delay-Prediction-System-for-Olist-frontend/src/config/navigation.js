@@ -22,7 +22,7 @@ export const NAVIGATION_ITEMS = Object.freeze([
     description: '统一维护数据字段的定义、类型与业务含义。',
     emptyText: '字段库入口已就绪，等待接入字段数据',
     icon: Grid,
-    component: () => import('@/views/SectionPlaceholderView.vue'),
+    component: () => import('@/views/FieldLibraryView.vue'),
   },
   {
     key: 'rules',
@@ -31,7 +31,7 @@ export const NAVIGATION_ITEMS = Object.freeze([
     description: '集中管理数据校验、清洗和建模规则。',
     emptyText: '规则库入口已就绪，等待接入规则数据',
     icon: SetUp,
-    component: () => import('@/views/SectionPlaceholderView.vue'),
+    component: () => import('@/views/RuleLibraryView.vue'),
   },
 ])
 

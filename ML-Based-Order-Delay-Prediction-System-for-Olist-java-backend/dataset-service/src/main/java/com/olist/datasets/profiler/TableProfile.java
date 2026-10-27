@@ -14,4 +14,13 @@ public record TableProfile(
     public TableProfile {
         columns = List.copyOf(columns);
     }
+
+    public TableProfile(
+            String name,
+            String sourceFile,
+            DatasetFormat format,
+            long rowCount,
+            int columnCount) {
+        this(name, sourceFile, format, rowCount, columnCount, List.of());
+    }
 }

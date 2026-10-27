@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.RuleWorkbookVersionMapper">
+
+    <resultMap id="RuleWorkbookVersionResultMap" type="com.olist.datasets.entity.RuleWorkbookVersion">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="workbook_id" property="workbookId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="version_number" property="versionNumber"/>
+        <result column="dataset_version_id" property="datasetVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="status" property="status"/>
+        <result column="document_json" property="documentJson"/>
+        <result column="compiled_plan_json" property="compiledPlanJson"/>
+        <result column="content_hash" property="contentHash"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <sql id="versionColumns">
+        v.id, v.workbook_id, v.version_number, v.dataset_version_id, v.status,
+        v.document_json, v.compiled_plan_json, v.content_hash, v.created_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO rule_workbook_versions (
+            id, workbook_id, version_number, dataset_version_id, status,
+            document_json, compiled_plan_json, content_hash, created_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{versionNumber},
+            #{datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{status}, #{documentJson}, #{compiledPlanJson}, #{contentHash},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findByWorkbookId" resultMap="RuleWorkbookVersionResultMap">
+        SELECT <include refid="versionColumns"/>
+        FROM rule_workbook_versions v
+        JOIN rule_workbooks w ON w.id = v.workbook_id
+        WHERE v.workbook_id = #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND w.owner_id = #{ownerId}
+        ORDER BY v.version_number DESC
+    </select>
+
+    <select id="findByIdAndOwner" resultMap="RuleWorkbookVersionResultMap">
+        SELECT <include refid="versionColumns"/>
+        FROM rule_workbook_versions v
+        JOIN rule_workbooks w ON w.id = v.workbook_id
+        WHERE v.id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND w.owner_id = #{ownerId}
+    </select>
+
+    <select id="findByNumberAndOwner" resultMap="RuleWorkbookVersionResultMap">
+        SELECT <include refid="versionColumns"/>
+        FROM rule_workbook_versions v
+        JOIN rule_workbooks w ON w.id = v.workbook_id
+        WHERE v.workbook_id = #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND v.version_number = #{versionNumber}
+          AND w.owner_id = #{ownerId}
+    </select>
+
+    <select id="findLatestByWorkbook" resultMap="RuleWorkbookVersionResultMap">
+        SELECT <include refid="versionColumns"/>
+        FROM rule_workbook_versions v
+        JOIN rule_workbooks w ON w.id = v.workbook_id
+        WHERE v.workbook_id = #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND w.owner_id = #{ownerId}
+        ORDER BY v.version_number DESC
+        LIMIT 1
+    </select>
+
+    <select id="findMaxVersionNumber" resultType="int">
+        SELECT COALESCE(MAX(version_number), 0)
+        FROM rule_workbook_versions
+        WHERE workbook_id = #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </select>
+</mapper>

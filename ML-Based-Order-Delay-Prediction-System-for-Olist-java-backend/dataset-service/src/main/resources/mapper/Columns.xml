@@ -17,6 +17,20 @@
         <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
     </resultMap>
 
+    <resultMap id="FieldCatalogResultMap" type="com.olist.datasets.entity.FieldCatalogRow">
+        <result column="column_id" property="columnId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="field_id" property="fieldId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="field_name" property="fieldName"/>
+        <result column="field_display_name" property="fieldDisplayName"/>
+        <result column="dataset_id" property="datasetId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="dataset_name" property="datasetName"/>
+        <result column="table_id" property="tableId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="table_name" property="tableName"/>
+        <result column="column_name" property="columnName"/>
+        <result column="data_type" property="dataType"/>
+        <result column="ordinal" property="ordinal"/>
+    </resultMap>
+
     <sql id="DatasetColumnColumns">
         id, dataset_version_id, table_id, column_name, ordinal, data_type,
         physical_name, logical_type, clickhouse_type, nullable, file_id, created_at
@@ -60,5 +74,30 @@
         FROM dataset_columns
         WHERE table_id = #{tableId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
         ORDER BY ordinal
+    </select>
+
+    <select id="findFieldCatalog" resultMap="FieldCatalogResultMap">
+        SELECT c.id AS column_id,
+               b.field_id,
+               f.name AS field_name,
+               f.display_name AS field_display_name,
+               d.id AS dataset_id,
+               d.name AS dataset_name,
+               t.id AS table_id,
+               t.table_name,
+               c.column_name,
+               COALESCE(c.logical_type, c.data_type) AS data_type,
+               c.ordinal
+        FROM dataset_columns c
+        JOIN dataset_versions d ON d.id = c.dataset_version_id
+        JOIN dataset_tables t ON t.id = c.table_id
+        LEFT JOIN dataset_field_bindings b
+               ON b.column_id = c.id
+              AND b.dataset_version_id = c.dataset_version_id
+              AND b.owner_id = #{ownerId}
+        LEFT JOIN field_definitions f ON f.id = b.field_id
+        WHERE c.dataset_version_id = #{datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND d.owner_id = #{ownerId}
+        ORDER BY t.ordinal, c.ordinal
     </select>
 </mapper>

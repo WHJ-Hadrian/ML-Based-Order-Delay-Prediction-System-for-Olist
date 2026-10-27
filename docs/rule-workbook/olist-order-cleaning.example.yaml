@@ -1,0 +1,405 @@
+apiVersion: olist/rule-workbook/v1
+kind: RuleWorkbook
+metadata:
+  name: Olist 订单延误训练数据清洗
+  description: 字段检查、类目筛选、多表关联、聚合、延误标签、质量门禁和输出示例
+  datasetVersionId: olist-v1
+  version: 1
+spec:
+  nodes:
+    # 1. 下单时间缺失的订单不参与训练，隔离到错误数据区。
+    - id: check_purchase_ts
+      kind: CHECK
+      name: 下单时间必填
+      stage: CHECK
+      enabled: true
+      inputs:
+        - type: TABLE
+          datasetVersionId: olist-v1
+          tableId: table_orders
+          alias: orders_raw
+      config:
+        schemaVersion: 1
+        scope: ROW
+        predicate:
+          op: IS_NULL
+          args:
+            - type: FIELD
+              fieldId: field_orders_purchase_ts
+              nameSnapshot: order_purchase_timestamp
+        effect: QUARANTINE_ROWS
+        outputAlias: orders_with_purchase_ts
+        effectParams:
+          reason: 下单时间缺失
+          sampleLimit: 100
+      output:
+        alias: orders_with_purchase_ts
+      dependsOn: []
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 2. 订单主键去重，保留最新记录。
+    - id: dedupe_orders
+      kind: DEDUPE
+      name: 订单主键去重
+      stage: CLEAN
+      enabled: true
+      inputs:
+        - type: NODE_OUTPUT
+          nodeId: check_purchase_ts
+          outputAlias: orders_with_purchase_ts
+      config:
+        schemaVersion: 1
+        keys:
+          - type: FIELD
+            fieldId: field_orders_order_id
+            nameSnapshot: order_id
+        keep: LATEST
+        orderBy:
+          - field:
+              type: FIELD
+              fieldId: field_orders_purchase_ts
+              nameSnapshot: order_purchase_timestamp
+            direction: DESC
+        outputAlias: orders_deduped
+      output:
+        alias: orders_deduped
+      dependsOn: [check_purchase_ts]
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 3. 只保留两个目标商品类目。
+    - id: filter_target_categories
+      kind: FILTER
+      name: 目标商品类目筛选
+      stage: CLEAN
+      enabled: true
+      inputs:
+        - type: TABLE
+          datasetVersionId: olist-v1
+          tableId: table_products
+          alias: products_raw
+      config:
+        schemaVersion: 1
+        predicate:
+          op: IN
+          field:
+            type: FIELD
+            fieldId: field_products_category
+            nameSnapshot: product_category_name
+          values:
+            - cama_mesa_banho
+            - utilidades_domesticas
+        outputAlias: target_products
+      output:
+        alias: target_products
+      dependsOn: []
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 4. 订单明细关联目标商品，过滤掉非目标类目的明细。
+    - id: join_items_products
+      kind: JOIN
+      name: 明细关联目标商品
+      stage: RELATE
+      enabled: true
+      inputs:
+        - type: TABLE
+          datasetVersionId: olist-v1
+          tableId: table_order_items
+          alias: items
+        - type: NODE_OUTPUT
+          nodeId: filter_target_categories
+          outputAlias: target_products
+      config:
+        schemaVersion: 1
+        leftAlias: items
+        rightAlias: target_products
+        leftKeys:
+          - type: FIELD
+            fieldId: field_items_product_id
+            nameSnapshot: product_id
+        rightKeys:
+          - type: FIELD
+            fieldId: field_products_product_id
+            nameSnapshot: product_id
+        joinType: INNER
+        cardinality: N:1
+        duplicatePolicy: FAIL
+        outputAlias: items_target_products
+        guards:
+          rightKeyUnique: true
+          maxFanout: 1
+          minMatchRate: 0.95
+          onViolation: FAIL_RUN
+      output:
+        alias: items_target_products
+      dependsOn: [filter_target_categories]
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 5. 将订单明细压成每单一行，避免后续 1:N 关联放大订单。
+    - id: aggregate_items_by_order
+      kind: AGGREGATE
+      name: 订单明细聚合
+      stage: ENRICH
+      enabled: true
+      inputs:
+        - type: NODE_OUTPUT
+          nodeId: join_items_products
+          outputAlias: items_target_products
+      config:
+        schemaVersion: 1
+        groupBy:
+          - type: FIELD
+            fieldId: field_items_order_id
+            nameSnapshot: order_id
+        metrics:
+          - name: item_count
+            op: COUNT
+            field: "*"
+          - name: item_amount
+            op: SUM
+            field:
+              type: FIELD
+              fieldId: field_items_price
+              nameSnapshot: price
+          - name: freight_amount
+            op: SUM
+            field:
+              type: FIELD
+              fieldId: field_items_freight
+              nameSnapshot: freight_value
+        outputAlias: order_items_agg
+      output:
+        alias: order_items_agg
+      dependsOn: [join_items_products]
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 6. 订单与明细聚合 1:1 关联。
+    - id: join_orders_items
+      kind: JOIN
+      name: 订单关联明细聚合
+      stage: RELATE
+      enabled: true
+      inputs:
+        - type: NODE_OUTPUT
+          nodeId: dedupe_orders
+          outputAlias: orders_deduped
+        - type: NODE_OUTPUT
+          nodeId: aggregate_items_by_order
+          outputAlias: order_items_agg
+      config:
+        schemaVersion: 1
+        leftAlias: orders_deduped
+        rightAlias: order_items_agg
+        leftKeys:
+          - type: FIELD
+            fieldId: field_orders_order_id
+            nameSnapshot: order_id
+        rightKeys:
+          - type: FIELD
+            fieldId: field_items_order_id
+            nameSnapshot: order_id
+        joinType: LEFT
+        cardinality: 1:1
+        duplicatePolicy: FAIL
+        outputAlias: orders_with_items
+        guards:
+          rightKeyUnique: true
+          maxFanout: 1
+          minMatchRate: 0.95
+          onViolation: FAIL_RUN
+      output:
+        alias: orders_with_items
+      dependsOn: [dedupe_orders, aggregate_items_by_order]
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 7. 支付表先按订单聚合，再关联，避免支付明细放大订单。
+    - id: aggregate_payments
+      kind: AGGREGATE
+      name: 支付金额聚合
+      stage: ENRICH
+      enabled: true
+      inputs:
+        - type: TABLE
+          datasetVersionId: olist-v1
+          tableId: table_payments
+          alias: payments
+      config:
+        schemaVersion: 1
+        groupBy:
+          - type: FIELD
+            fieldId: field_payments_order_id
+            nameSnapshot: order_id
+        metrics:
+          - name: payment_count
+            op: COUNT
+            field: "*"
+          - name: payment_value
+            op: SUM
+            field:
+              type: FIELD
+              fieldId: field_payments_value
+              nameSnapshot: payment_value
+        outputAlias: order_payments_agg
+      output:
+        alias: order_payments_agg
+      dependsOn: []
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    - id: join_orders_payments
+      kind: JOIN
+      name: 订单关联支付聚合
+      stage: RELATE
+      enabled: true
+      inputs:
+        - type: NODE_OUTPUT
+          nodeId: join_orders_items
+          outputAlias: orders_with_items
+        - type: NODE_OUTPUT
+          nodeId: aggregate_payments
+          outputAlias: order_payments_agg
+      config:
+        schemaVersion: 1
+        leftAlias: orders_with_items
+        rightAlias: order_payments_agg
+        leftKeys:
+          - type: FIELD
+            fieldId: field_orders_order_id
+            nameSnapshot: order_id
+        rightKeys:
+          - type: FIELD
+            fieldId: field_payments_order_id
+            nameSnapshot: order_id
+        joinType: LEFT
+        cardinality: 1:1
+        duplicatePolicy: FAIL
+        outputAlias: orders_enriched
+        guards:
+          rightKeyUnique: true
+          maxFanout: 1
+          minMatchRate: 0.95
+          onViolation: FAIL_RUN
+      output:
+        alias: orders_enriched
+      dependsOn: [join_orders_items, aggregate_payments]
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 8. 排查签收早于下单等时间顺序异常。
+    - id: check_delivery_after_purchase
+      kind: CHECK
+      name: 签收时间不能早于下单时间
+      stage: CHECK
+      enabled: true
+      inputs:
+        - type: NODE_OUTPUT
+          nodeId: join_orders_payments
+          outputAlias: orders_enriched
+      config:
+        schemaVersion: 1
+        scope: ROW
+        predicate:
+          op: DATE_ORDER_INVALID
+          earlier:
+            type: FIELD
+            fieldId: field_orders_purchase_ts
+            nameSnapshot: order_purchase_timestamp
+          later:
+            type: FIELD
+            fieldId: field_orders_delivered_ts
+            nameSnapshot: order_delivered_customer_date
+        effect: QUARANTINE_ROWS
+        outputAlias: orders_valid_dates
+        effectParams:
+          reason: 签收时间早于下单时间
+        blocking: NONE
+      output:
+        alias: orders_valid_dates
+      dependsOn: [join_orders_payments]
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 9. 生成延误天数，供训练和门禁使用。
+    - id: derive_delay_days
+      kind: DERIVE
+      name: 生成延误天数
+      stage: FEATURE
+      enabled: true
+      inputs:
+        - type: NODE_OUTPUT
+          nodeId: check_delivery_after_purchase
+          outputAlias: orders_valid_dates
+      config:
+        schemaVersion: 1
+        outputField: delay_days
+        dataType: DECIMAL
+        expression:
+          op: DATE_DIFF_DAYS
+          left:
+            type: FIELD
+            fieldId: field_orders_delivered_ts
+            nameSnapshot: order_delivered_customer_date
+          right:
+            type: FIELD
+            fieldId: field_orders_estimated_ts
+            nameSnapshot: order_estimated_delivery_date
+      output:
+        alias: orders_with_delay
+      dependsOn: [check_delivery_after_purchase]
+      policy:
+        blocking: NONE
+        onError: FAIL_RUN
+
+    # 10. 关联匹配率低于 95% 时阻止发布。
+    - id: gate_join_match_rate
+      kind: GATE
+      name: 订单明细关联匹配率门禁
+      stage: VALIDATE
+      enabled: true
+      inputs: []
+      config:
+        schemaVersion: 1
+        metricRef: join_orders_items.match_rate
+        comparator: GTE
+        threshold: 0.95
+        effect: BLOCK_PUBLISH
+      dependsOn: [join_orders_items]
+      policy:
+        blocking: RUN
+        onError: FAIL_RUN
+
+    # 11. 生成新的数据集版本，供训练和预测使用。
+    - id: output_training_dataset
+      kind: OUTPUT
+      name: 输出订单延误训练数据集
+      stage: OUTPUT
+      enabled: true
+      inputs:
+        - type: NODE_OUTPUT
+          nodeId: derive_delay_days
+          outputAlias: orders_with_delay
+      config:
+        schemaVersion: 1
+        mode: MATERIALIZE_VERSION
+        format: PARQUET
+        name: olist_order_delay_training
+        partitionBy: []
+        overwritePolicy: NEW_VERSION
+      dependsOn: [derive_delay_days, gate_join_match_rate]
+      policy:
+        blocking: RUN
+        onError: FAIL_RUN

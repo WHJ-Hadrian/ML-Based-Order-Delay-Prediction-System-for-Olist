@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class ClickHouseProperties {
 
     private boolean enabled;
-    private String url = "jdbc:clickhouse://localhost:8123";
+    private String url = "jdbc:clickhouse://localhost:8123?compress=0";
     private String database = "olist_datasets";
     private String username = "olist";
     private String password = "";

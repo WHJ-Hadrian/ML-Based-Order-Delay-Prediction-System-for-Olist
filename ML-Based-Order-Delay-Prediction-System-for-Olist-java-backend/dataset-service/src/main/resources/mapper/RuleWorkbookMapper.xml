@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.RuleWorkbookMapper">
+
+    <resultMap id="RuleWorkbookResultMap" type="com.olist.datasets.entity.RuleWorkbook">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="name" property="name"/>
+        <result column="description" property="description"/>
+        <result column="dataset_version_id" property="datasetVersionId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="updated_at" property="updatedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <sql id="workbookColumns">
+        id, owner_id, name, description, dataset_version_id, status, created_at, updated_at
+    </sql>
+
+    <sql id="workbookFilters">
+        WHERE owner_id = #{ownerId}
+        <if test="status != null">
+            AND status = #{status}
+        </if>
+        <if test="keywordPattern != null">
+            AND (LOWER(name) LIKE #{keywordPattern}
+                 OR LOWER(COALESCE(description, '')) LIKE #{keywordPattern})
+        </if>
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO rule_workbooks (
+            id, owner_id, name, description, dataset_version_id, status, created_at, updated_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId}, #{name}, #{description,jdbcType=VARCHAR},
+            #{datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{status},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findById" resultMap="RuleWorkbookResultMap">
+        SELECT <include refid="workbookColumns"/>
+        FROM rule_workbooks
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </select>
+
+    <select id="findPage" resultMap="RuleWorkbookResultMap">
+        SELECT <include refid="workbookColumns"/>
+        FROM rule_workbooks
+        <include refid="workbookFilters"/>
+        ORDER BY updated_at DESC, name ASC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(*)
+        FROM rule_workbooks
+        <include refid="workbookFilters"/>
+    </select>
+
+    <update id="updateStatus">
+        UPDATE rule_workbooks
+        SET status = #{status}, updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </update>
+
+    <update id="touch">
+        UPDATE rule_workbooks
+        SET updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM rule_workbooks
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </delete>
+
+    <select id="countByName" resultType="long">
+        SELECT COUNT(*)
+        FROM rule_workbooks
+        WHERE owner_id = #{ownerId}
+          AND LOWER(name) = LOWER(#{name})
+        <if test="excludeId != null">
+            AND id &lt;&gt; #{excludeId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        </if>
+    </select>
+</mapper>
