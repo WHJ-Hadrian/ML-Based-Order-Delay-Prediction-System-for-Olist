@@ -23,10 +23,28 @@ final class JdbcClickHouseClient implements ClickHouseClient {
         this.database = properties.getDatabase();
         try {
             this.connection = DriverManager.getConnection(
-                    properties.getUrl(), properties.getUsername(), properties.getPassword());
+                    withDisabledCompression(properties.getUrl()),
+                    properties.getUsername(),
+                    properties.getPassword());
         } catch (SQLException exception) {
             throw new StorageException("连接 ClickHouse 失败", exception);
         }
+    }
+
+    private static String withDisabledCompression(String url) {
+        if (url == null || url.isBlank()) {
+            return url;
+        }
+        StringBuilder adjusted = new StringBuilder(url);
+        char separator = url.indexOf('?') >= 0 ? '&' : '?';
+        if (!url.contains("compress=")) {
+            adjusted.append(separator).append("compress=0");
+            separator = '&';
+        }
+        if (!url.contains("decompress=")) {
+            adjusted.append(separator).append("decompress=0");
+        }
+        return adjusted.toString();
     }
 
     @Override

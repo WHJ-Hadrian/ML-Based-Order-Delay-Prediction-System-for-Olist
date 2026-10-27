@@ -1,4 +1,4 @@
-# 连接真实 MySQL：SPRING_DATASOURCE_* 可用环境变量覆盖。
+# 连接真实 MySQL + ClickHouse：SPRING_DATASOURCE_*、CLICKHOUSE_* 可用环境变量覆盖。
 spring:
   autoconfigure:
     exclude:
@@ -10,6 +10,12 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
 
 olist:
+  clickhouse:
+    enabled: ${CLICKHOUSE_ENABLED:true}
+    url: ${CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123}
+    database: ${CLICKHOUSE_DATABASE:olist_datasets}
+    username: ${CLICKHOUSE_USER:olist}
+    password: ${CLICKHOUSE_PASSWORD:local-clickhouse-only}
   storage:
     type: local
     local-root: ./data/datasets
