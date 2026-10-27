@@ -5,6 +5,7 @@ import {
 } from '@/config/navigation'
 
 const authStudyPage = () => import('@/views/AuthStudyView.vue')
+const settingsPage = () => import('@/views/SettingsView.vue')
 
 const routes = [
   {
@@ -16,6 +17,12 @@ const routes = [
     name: 'login',
     component: authStudyPage,
     meta: { fullscreen: true },
+  },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: settingsPage,
+    meta: { hideNavigationActive: true },
   },
   ...NAVIGATION_ITEMS.map(({ component, ...item }) => ({
     path: item.path,

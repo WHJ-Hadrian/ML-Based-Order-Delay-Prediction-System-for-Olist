@@ -3,10 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import { ArrowDown, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowDown, Setting, SwitchButton, User } from '@element-plus/icons-vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import AuthRequiredDialog from '@/components/AuthRequiredDialog.vue'
+import SoftTipHost from '@/components/SoftTipHost.vue'
+import WorkspaceDock from '@/components/WorkspaceDock.vue'
 import liquidGlassBackdrop from '@/assets/videos/liquid-wave.mp4'
+import { useAppearance } from '@/state/appearance'
 import { provideWorkspaceState } from '@/state/workspace'
 import {
   AUTH_REQUIRED_EVENT,
@@ -14,7 +17,8 @@ import {
   useAuth,
 } from '@/auth/keycloak'
 
-const sidebarCollapsed = ref(false)
+const { appearance } = useAppearance()
+const sidebarCollapsed = ref(appearance.value.sidebarCollapsed)
 const authDialogVisible = ref(false)
 const locale = zhCn
 const route = useRoute()
@@ -52,22 +56,27 @@ function createWatermarkImage(text, options) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
 }
 
-const watermarkStyle = computed(() => ({
-  '--identity-watermark': createWatermarkImage(watermarkText.value, {
-    width: 220,
-    height: 92,
-    fontSize: 9,
-    rotation: -24,
-    opacity: 0.13,
-  }),
-  '--identity-watermark-hero': createWatermarkImage(watermarkText.value, {
-    width: 380,
-    height: 96,
-    fontSize: 17,
-    rotation: -8,
-    opacity: 0.09,
-  }),
-}))
+const watermarkStyle = computed(() => {
+  if (!appearance.value.watermark) {
+    return {}
+  }
+  return {
+    '--identity-watermark': createWatermarkImage(watermarkText.value, {
+      width: 220,
+      height: 92,
+      fontSize: 9,
+      rotation: -24,
+      opacity: 0.13,
+    }),
+    '--identity-watermark-hero': createWatermarkImage(watermarkText.value, {
+      width: 380,
+      height: 96,
+      fontSize: 17,
+      rotation: -8,
+      opacity: 0.09,
+    }),
+  }
+})
 
 function startLogin() {
   router.push({ name: 'login' })
@@ -78,6 +87,10 @@ function handleAuthenticationRequired() {
 }
 
 async function handleAccountCommand(command) {
+  if (command === 'settings') {
+    router.push({ name: 'settings' })
+    return
+  }
   if (command === 'logout') {
     try {
       await auth.logout()
@@ -86,6 +99,13 @@ async function handleAccountCommand(command) {
     }
   }
 }
+
+watch(
+  () => appearance.value.sidebarCollapsed,
+  (collapsed) => {
+    sidebarCollapsed.value = Boolean(collapsed)
+  },
+)
 
 watch(
   () => auth.state.authenticated,
@@ -111,6 +131,7 @@ onBeforeUnmount(() => {
     <div v-if="!isFullscreenRoute" class="app-frame" :style="watermarkStyle">
       <div class="app-backdrop" aria-hidden="true">
         <video
+          v-if="appearance.backgroundMotion"
           class="app-backdrop-media"
           :src="liquidGlassBackdrop"
           autoplay
@@ -142,7 +163,11 @@ onBeforeUnmount(() => {
                   <strong>{{ auth.state.user?.name }}</strong>
                   <span>{{ auth.state.user?.email }}</span>
                 </div>
-                <el-dropdown-item command="logout">
+                <el-dropdown-item command="settings">
+                  <el-icon><Setting /></el-icon>
+                  设置
+                </el-dropdown-item>
+                <el-dropdown-item divided command="logout">
                   <el-icon><SwitchButton /></el-icon>
                   退出登录
                 </el-dropdown-item>
@@ -166,6 +191,9 @@ onBeforeUnmount(() => {
           </Transition>
         </RouterView>
       </main>
+
+      <SoftTipHost />
+      <WorkspaceDock />
 
       <AuthRequiredDialog
         v-model="authDialogVisible"
