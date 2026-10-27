@@ -9,6 +9,7 @@ public class FieldDefinition {
 
     private UUID id;
     private String ownerId;
+    private UUID libraryId;
     private String name;
     private String displayName;
     private FieldDataType dataType;
@@ -16,6 +17,10 @@ public class FieldDefinition {
     private String sourceTable;
     private String description;
     private FieldStatus status;
+    private UUID sourceDatasetId;
+    private String sourceDatasetName;
+    private String sourceTableName;
+    private String sourceColumnName;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -33,6 +38,14 @@ public class FieldDefinition {
 
     public void setOwnerId(String ownerId) {
         this.ownerId = ownerId;
+    }
+
+    public UUID getLibraryId() {
+        return libraryId;
+    }
+
+    public void setLibraryId(UUID libraryId) {
+        this.libraryId = libraryId;
     }
 
     public String getName() {
@@ -89,6 +102,38 @@ public class FieldDefinition {
 
     public void setStatus(FieldStatus status) {
         this.status = status;
+    }
+
+    public UUID getSourceDatasetId() {
+        return sourceDatasetId;
+    }
+
+    public void setSourceDatasetId(UUID sourceDatasetId) {
+        this.sourceDatasetId = sourceDatasetId;
+    }
+
+    public String getSourceDatasetName() {
+        return sourceDatasetName;
+    }
+
+    public void setSourceDatasetName(String sourceDatasetName) {
+        this.sourceDatasetName = sourceDatasetName;
+    }
+
+    public String getSourceTableName() {
+        return sourceTableName;
+    }
+
+    public void setSourceTableName(String sourceTableName) {
+        this.sourceTableName = sourceTableName;
+    }
+
+    public String getSourceColumnName() {
+        return sourceColumnName;
+    }
+
+    public void setSourceColumnName(String sourceColumnName) {
+        this.sourceColumnName = sourceColumnName;
     }
 
     public Instant getCreatedAt() {

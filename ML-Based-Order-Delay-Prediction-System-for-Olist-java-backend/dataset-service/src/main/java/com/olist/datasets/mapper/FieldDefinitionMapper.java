@@ -14,6 +14,10 @@ public interface FieldDefinitionMapper {
 
     FieldDefinition findById(@Param("id") UUID id, @Param("ownerId") String ownerId);
 
+    List<FieldDefinition> findByLibraryId(
+            @Param("libraryId") UUID libraryId,
+            @Param("ownerId") String ownerId);
+
     List<FieldDefinition> findPage(
             @Param("keywordPattern") String keywordPattern,
             @Param("status") FieldStatus status,

@@ -5,6 +5,7 @@
     <resultMap id="FieldDefinitionResultMap" type="com.olist.datasets.entity.FieldDefinition">
         <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
         <result column="owner_id" property="ownerId"/>
+        <result column="library_id" property="libraryId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
         <result column="name" property="name"/>
         <result column="display_name" property="displayName"/>
         <result column="data_type" property="dataType"/>
@@ -12,13 +13,18 @@
         <result column="source_table" property="sourceTable"/>
         <result column="description" property="description"/>
         <result column="status" property="status"/>
+        <result column="source_dataset_id" property="sourceDatasetId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="source_dataset_name" property="sourceDatasetName"/>
+        <result column="source_table_name" property="sourceTableName"/>
+        <result column="source_column_name" property="sourceColumnName"/>
         <result column="created_at" property="createdAt"/>
         <result column="updated_at" property="updatedAt"/>
     </resultMap>
 
     <sql id="fieldColumns">
-        id, owner_id, name, display_name, data_type, semantic_role, source_table, description,
-        status, created_at, updated_at
+        id, owner_id, library_id, name, display_name, data_type, semantic_role, source_table,
+        description, status, source_dataset_id, source_dataset_name, source_table_name,
+        source_column_name, created_at, updated_at
     </sql>
 
     <sql id="fieldFilters">
@@ -40,13 +46,19 @@
 
     <insert id="insert">
         INSERT INTO field_definitions (
-            id, owner_id, name, display_name, data_type, semantic_role, source_table, description,
-            status, created_at, updated_at
+            id, owner_id, library_id, name, display_name, data_type, semantic_role, source_table,
+            description, status, source_dataset_id, source_dataset_name, source_table_name,
+            source_column_name, created_at, updated_at
         ) VALUES (
             #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
-            #{ownerId}, #{name}, #{displayName,jdbcType=VARCHAR}, #{dataType},
+            #{ownerId},
+            #{libraryId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler,jdbcType=CHAR},
+            #{name}, #{displayName,jdbcType=VARCHAR}, #{dataType},
             #{semanticRole,jdbcType=VARCHAR}, #{sourceTable,jdbcType=VARCHAR},
-            #{description,jdbcType=VARCHAR}, #{status}, #{createdAt}, #{updatedAt}
+            #{description,jdbcType=VARCHAR}, #{status},
+            #{sourceDatasetId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler,jdbcType=CHAR},
+            #{sourceDatasetName,jdbcType=VARCHAR}, #{sourceTableName,jdbcType=VARCHAR},
+            #{sourceColumnName,jdbcType=VARCHAR}, #{createdAt}, #{updatedAt}
         )
     </insert>
 
@@ -57,6 +69,7 @@
             data_type = #{dataType},
             semantic_role = #{semanticRole,jdbcType=VARCHAR},
             source_table = #{sourceTable,jdbcType=VARCHAR},
+            source_table_name = #{sourceTableName,jdbcType=VARCHAR},
             description = #{description,jdbcType=VARCHAR},
             status = #{status},
             updated_at = #{updatedAt}
@@ -69,6 +82,14 @@
         FROM field_definitions
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND owner_id = #{ownerId}
+    </select>
+
+    <select id="findByLibraryId" resultMap="FieldDefinitionResultMap">
+        SELECT <include refid="fieldColumns"/>
+        FROM field_definitions
+        WHERE owner_id = #{ownerId}
+          AND library_id = #{libraryId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        ORDER BY COALESCE(source_dataset_name, ''), COALESCE(source_table_name, ''), name ASC
     </select>
 
     <select id="findPage" resultMap="FieldDefinitionResultMap">

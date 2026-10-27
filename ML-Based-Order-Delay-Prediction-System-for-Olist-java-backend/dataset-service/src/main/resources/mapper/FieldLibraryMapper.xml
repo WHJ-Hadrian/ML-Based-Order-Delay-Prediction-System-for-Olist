@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.FieldLibraryMapper">
+
+    <resultMap id="FieldLibraryResultMap" type="com.olist.datasets.entity.FieldLibrary">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="name" property="name"/>
+        <result column="description" property="description"/>
+        <result column="source_type" property="sourceType"/>
+        <result column="field_count" property="fieldCount"/>
+        <result column="dataset_count" property="datasetCount"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="libraryColumns">
+        l.id, l.owner_id, l.name, l.description, l.source_type, l.created_at, l.updated_at,
+        (SELECT COUNT(*) FROM field_definitions f WHERE f.library_id = l.id) AS field_count,
+        (SELECT COUNT(DISTINCT f.source_dataset_id) FROM field_definitions f
+            WHERE f.library_id = l.id AND f.source_dataset_id IS NOT NULL) AS dataset_count
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO field_libraries (
+            id, owner_id, name, description, source_type, created_at, updated_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId}, #{name}, #{description,jdbcType=VARCHAR}, #{sourceType},
+            #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE field_libraries
+        SET name = #{name},
+            description = #{description,jdbcType=VARCHAR},
+            updated_at = #{updatedAt}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </update>
+
+    <select id="findById" resultMap="FieldLibraryResultMap">
+        SELECT <include refid="libraryColumns"/>
+        FROM field_libraries l
+        WHERE l.id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND l.owner_id = #{ownerId}
+    </select>
+
+    <select id="findAll" resultMap="FieldLibraryResultMap">
+        SELECT <include refid="libraryColumns"/>
+        FROM field_libraries l
+        WHERE l.owner_id = #{ownerId}
+        <if test="keywordPattern != null">
+            AND LOWER(l.name) LIKE #{keywordPattern}
+        </if>
+        ORDER BY l.updated_at DESC, l.name ASC
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM field_libraries
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </delete>
+
+    <select id="countByName" resultType="long">
+        SELECT COUNT(*)
+        FROM field_libraries
+        WHERE owner_id = #{ownerId}
+          AND LOWER(name) = LOWER(#{name})
+        <if test="excludeId != null">
+            AND id &lt;&gt; #{excludeId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        </if>
+    </select>
+</mapper>

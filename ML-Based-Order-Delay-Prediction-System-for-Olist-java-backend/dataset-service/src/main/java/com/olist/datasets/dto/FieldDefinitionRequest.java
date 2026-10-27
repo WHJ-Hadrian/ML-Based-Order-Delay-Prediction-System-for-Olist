@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.UUID;
 
 public class FieldDefinitionRequest {
 
@@ -27,6 +28,14 @@ public class FieldDefinitionRequest {
 
     @Size(max = 255, message = "来源表不能超过 255 个字符")
     private String sourceTable;
+
+    private UUID sourceDatasetId;
+
+    @Size(max = 255, message = "来源表名不能超过 255 个字符")
+    private String sourceTableName;
+
+    @Size(max = 255, message = "来源列不能超过 255 个字符")
+    private String sourceColumnName;
 
     @Size(max = 1000, message = "字段说明不能超过 1000 个字符")
     private String description;
@@ -71,6 +80,30 @@ public class FieldDefinitionRequest {
 
     public void setSourceTable(String sourceTable) {
         this.sourceTable = sourceTable;
+    }
+
+    public UUID getSourceDatasetId() {
+        return sourceDatasetId;
+    }
+
+    public void setSourceDatasetId(UUID sourceDatasetId) {
+        this.sourceDatasetId = sourceDatasetId;
+    }
+
+    public String getSourceTableName() {
+        return sourceTableName;
+    }
+
+    public void setSourceTableName(String sourceTableName) {
+        this.sourceTableName = sourceTableName;
+    }
+
+    public String getSourceColumnName() {
+        return sourceColumnName;
+    }
+
+    public void setSourceColumnName(String sourceColumnName) {
+        this.sourceColumnName = sourceColumnName;
     }
 
     public String getDescription() {
