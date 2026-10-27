@@ -31,6 +31,7 @@
   --glass-surface: rgba(248, 252, 250, 0.88);
   --glass-border: rgba(255, 255, 255, 0.84);
   --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --page-max-width: 1320px;
 }
 
 * {
@@ -408,7 +409,7 @@ select {
 }
 
 .page-content {
-  width: min(1280px, 100%);
+  width: min(var(--page-max-width), 100%);
   margin: 0 auto;
 }
 

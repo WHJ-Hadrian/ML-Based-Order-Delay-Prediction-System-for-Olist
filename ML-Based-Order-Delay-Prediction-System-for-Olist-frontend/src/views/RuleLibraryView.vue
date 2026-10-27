@@ -1799,10 +1799,6 @@ onBeforeUnmount(stopRunPolling)
 </template>
 
 <style scoped>
-.page-content {
-  width: min(1440px, 100%);
-}
-
 .rule-page-header {
   align-items: flex-end;
 }
