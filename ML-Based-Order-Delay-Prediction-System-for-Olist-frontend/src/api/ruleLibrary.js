@@ -172,3 +172,72 @@ export function getRuleRunExecution(runId) {
 export function listRuleRunNodes(runId) {
   return request(`/rule-runs/${encodeURIComponent(runId)}/nodes`)
 }
+
+export function listFieldLibraries({ keyword = '' } = {}) {
+  const params = new URLSearchParams()
+  if (keyword.trim()) {
+    params.set('keyword', keyword.trim())
+  }
+  const query = params.toString()
+  return request(`/field-libraries${query ? `?${query}` : ''}`)
+}
+
+export function createFieldLibrary({ name, description = '' }) {
+  return request('/field-libraries', {
+    method: 'POST',
+    body: JSON.stringify({ name, description }),
+  })
+}
+
+export function updateFieldLibrary(id, { name, description = '' }) {
+  return request(`/field-libraries/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name, description }),
+  })
+}
+
+export function deleteFieldLibrary(id) {
+  return request(`/field-libraries/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function listFieldLibraryFields(id) {
+  return request(`/field-libraries/${encodeURIComponent(id)}/fields`)
+}
+
+export function createFieldLibraryField(id, payload) {
+  return request(`/field-libraries/${encodeURIComponent(id)}/fields`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateFieldLibraryField(id, fieldId, payload) {
+  return request(
+    `/field-libraries/${encodeURIComponent(id)}/fields/${encodeURIComponent(fieldId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function deleteFieldLibraryField(id, fieldId) {
+  return request(
+    `/field-libraries/${encodeURIComponent(id)}/fields/${encodeURIComponent(fieldId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export function bulkCreateFieldLibraryFields(id, rows) {
+  return request(`/field-libraries/${encodeURIComponent(id)}/fields/bulk`, {
+    method: 'POST',
+    body: JSON.stringify({ rows }),
+  })
+}
+
+export function importFieldsToLibrary(id, payload) {
+  return request(`/field-libraries/${encodeURIComponent(id)}/import`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}

@@ -160,6 +160,13 @@ function changeSize(nextSize) {
   loadDatasets()
 }
 
+function handleExtractFields(item) {
+  router.push({
+    path: '/fields',
+    query: { extract: item.id, name: item.name },
+  })
+}
+
 function handleSignIn() {
   router.push({ name: 'login' })
 }
@@ -646,6 +653,7 @@ function syncRowFromDetail(id, detail) {
               @rename-table="handleRenameTable"
               @delete-table="handleDeleteTable"
               @retry-detail="loadDetail($event, true)"
+              @extract-fields="handleExtractFields"
             />
 
             <el-empty

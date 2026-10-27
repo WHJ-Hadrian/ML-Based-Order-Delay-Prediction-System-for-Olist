@@ -4,6 +4,7 @@ import {
   ArrowRight,
   CircleCheck,
   Clock,
+  Collection,
   Delete,
   Document,
   EditPen,
@@ -42,6 +43,7 @@ const emit = defineEmits([
   'rename-table',
   'delete-table',
   'retry-detail',
+  'extract-fields',
 ])
 
 const TABLE_PREVIEW_LIMIT = 5
@@ -507,6 +509,9 @@ function selectFile(file) {
       </el-tag>
 
       <div class="row-actions" @click.stop>
+        <el-button link type="primary" :icon="Collection" @click="emit('extract-fields', item)">
+          提取字段
+        </el-button>
         <el-button
           v-if="item.status === 'UPLOADED' || item.status === 'PROCESSING'"
           link
