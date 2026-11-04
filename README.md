@@ -38,7 +38,7 @@ Java 应用位于 `ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
 
 1. 在仓库根目录复制 `.env.example` 为 `.env`，仅使用其中的本地开发凭据。
 2. 启动核心基础设施：`docker compose up -d`。
-3. 启动全部 Java 服务：`docker compose --profile apps up --build`。
+3. 启动全部应用：`docker compose --profile apps up --build`。这不会自动启动规则队列消费者。
 4. 运行 Java 构建和测试：进入 Java 后端目录运行 `.\mvnw.cmd test`。
 5. 启动 Python 模型服务：进入 Python 目录后运行 `python -m uvicorn app.main:app --reload --port 8090`。
 6. 前端目录运行 `pnpm install` 和 `pnpm dev`；Vite 将 `/api` 转发到 Gateway 的 `8080` 端口。
@@ -90,11 +90,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\fix-auth.ps1
 
 默认 Compose 不启动高资源计算集群。需要调试时可显式启用 `batch`（Spark）、`stream`（Flink）和 `observability`（Prometheus/Grafana）profile。`apps` profile 会同时启动 MLflow 与各应用。Python 的 `features` 依赖组提供 Feast/Redis 集成，但不进入默认模型服务镜像。上述计算与监控配置是运行时选型，不代表服务边界留待以后再设计。
 
+### 规则 PREVIEW 队列消费者
+
+规则 Worker 默认不启动。要启用真实的只读 ClickHouse PREVIEW 队列消费，先在仓库根目录 `.env` 配置随机共享令牌和独立只读账户密码，再同时启用 `apps` 与 `rule-worker` profile：
+
+```powershell
+$env:RULE_WORKER_INTERNAL_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
+docker compose --profile apps --profile rule-worker up --build -d
+```
+
+也可以把生成的令牌持久写入 `.env` 的 `RULE_WORKER_INTERNAL_TOKEN`，避免仅在当前 PowerShell 会话中有效。Worker 只领取 `PREVIEW` 运行；过期租约可安全重跑，因为当前执行不会物化输出。`FULL` 物化仍未开放。ClickHouse 用户和租约边界见 `docs/rule-workbook/worker-execution.md`。
+
 ## 健康检查
 
 - Gateway：`http://localhost:8080/actuator/health`
 - Java 服务均暴露 Actuator 健康与 Prometheus 指标端点。
-- Python 模型服务：`http://localhost:8090/health/live` 和 `/health/ready`
+- Python 模型服务：`http://localhost:8090/health/live` 和 `/health/ready`；训练/试炼 API 仅由 Java 模型服务携带内部令牌调用
 - Keycloak：`http://localhost:8180`
 - Temporal UI：`http://localhost:8233`
 - S3 API：`http://localhost:4566`（本地开发凭据见 `.env.example`）

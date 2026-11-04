@@ -763,7 +763,7 @@ V9 里 `rule_runs` 和 `rule_workbook_versions` 对 workbook 是 `ON DELETE CASC
 - `Decimal` 的默认精度和金额字段精度是否需要数据集级配置。
 - 输出登记是同步导入还是异步任务；是否需要回调通知。
 - 归档/硬删除的保留期和引用检查规则。
-- 规则执行是否需要 Temporal 或独立 job queue；当前 `QUEUED` 只是占位状态，尚无 worker 消费。
+- [x] 规则 PREVIEW 先使用 dataset-service 原子 claim/lease 队列和独立只读 Worker；Temporal 留给需要持久编排、取消和 FULL 物化的后续任务。
 - 已有 blob 的迁移和去重策略：保留原 storage key，还是逐步迁移到内容寻址。
 - 新版本重新导入所有物理表的成本上限；超过阈值时是否需要异步分批或物理表复用。
 - 字段绑定迁移时 `table_key` 变化、重复列名、类型变化的处理规则。

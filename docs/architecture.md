@@ -142,7 +142,7 @@ Kafka 用于可回放的领域事件；Temporal 用于有状态、可重试的�
 
 ### 启动基础设施与全部服务
 
-以下命令均从仓库根目录使用 PowerShell 执行：
+以下命令均从仓库根目录使用 PowerShell 执行。默认只启动规则 Worker 以外的应用服务：
 
 ```powershell
 Copy-Item .env.example .env
@@ -221,7 +221,7 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8090
 ```
 
-健康检查地址为 `http://localhost:8090/health/live` 和 `http://localhost:8090/health/ready`。当前模型服务只提供健康检查和指标端点，预测业务接口尚未实现。
+健康检查地址为 `http://localhost:8090/health/live` 和 `http://localhost:8090/health/ready`。Python 模型服务提供受内部令牌保护的真实 scikit-learn 训练与试炼端点；用户 API、权限校验和模型版本登记由 Java `model-management-service` 提供。模型在线推理服务仍未实现。
 
 ### 启动前端
 
@@ -250,7 +250,7 @@ docker compose --profile observability up -d
 - Java Maven 工程和各服务启动类、基础安全及健康检查配置已经建立；服务模块边界和 Gateway 路由已配置。
 - 前端使用邮箱先行的分步登录/注册界面：登录时输入邮箱后进入密码步骤，再通过 Keycloak 密码授权换取 access token（仅本地开发启用 password grant，生产应改用 Authorization Code + PKCE）；注册流程按姓名、生日与性别、密码分步完成。应用只保留这一个登录/注册入口，不再维护额外的 Keycloak 托管登录页；业务 API 使用 Keycloak 签发的 access token。数据集按 JWT `sub` 隔离。
 - Java 服务尚未实现订单、任务编排、预测、模型管理或分析查询等业务接口；数据集服务已实现文件上传、版本元数据查询、对象存储写入，以及字段库和清洗规则库的维护接口。
-- Python FastAPI 当前提供健康检查与指标基础；模型推理业务和 Temporal Worker 活动尚未实现。
-- `app/workers/rule_execution/` 已实现冻结计划校验、READY execution snapshot 校验、稳定拓扑排序、运行控制和节点上报编排；ClickHouse 执行后端和 Temporal activity 尚未接入，`app/pipelines/` 仍只有职责说明。
+- Python FastAPI 已提供健康检查、指标、受保护的模型训练/试炼端点和规则 PREVIEW Worker；模型在线推理与 Temporal Worker 活动尚未实现。
+- `app/workers/rule_execution/` 已实现冻结计划校验、READY execution snapshot、稳定拓扑排序、受限只读 ClickHouse PREVIEW、运行上报，以及 claim/lease/fencing 自动消费；FULL 物化和 Temporal activity 尚未接入，`app/pipelines/` 仍只有职责说明。
 - Kafka 基础设施与订单状态事件契约已配置；契约不代表订单事件的生产者和消费者业务逻辑已实现。
 - Compose 与 Helm 描述本地及 Kubernetes 运行基础；实际运行时行为仍取决于对应服务代码和环境配置。
