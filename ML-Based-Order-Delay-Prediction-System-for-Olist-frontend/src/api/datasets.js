@@ -84,6 +84,58 @@ export function getDataset(id) {
   return request(`${API_BASE}/${encodeURIComponent(id)}`)
 }
 
+export function getDatasetCatalog(id) {
+  return request(`${API_BASE}/${encodeURIComponent(id)}/catalog`)
+}
+
+export function getDatasetVersions(id) {
+  return request(`${API_BASE}/${encodeURIComponent(id)}/versions`)
+}
+
+export function analyzeDatasetColumn(datasetId, tableId, columnId) {
+  const params = new URLSearchParams({ columnId })
+  return request(
+    `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/analysis?${params.toString()}`,
+  )
+}
+
+export function analyzeDatasetRelation(datasetId, tableId, xColumnId, yColumnId) {
+  const params = new URLSearchParams({ xColumnId, yColumnId })
+  return request(
+    `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/relation?${params.toString()}`,
+  )
+}
+
+const ANALYSIS_WORKSPACE_API = '/api/v1/analysis-workspaces'
+
+export function listAnalysisWorkspaces() {
+  return request(ANALYSIS_WORKSPACE_API)
+}
+
+export function getAnalysisWorkspace(id) {
+  return request(`${ANALYSIS_WORKSPACE_API}/${encodeURIComponent(id)}`)
+}
+
+export function createAnalysisWorkspace(payload) {
+  return request(ANALYSIS_WORKSPACE_API, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateAnalysisWorkspace(id, payload) {
+  return request(`${ANALYSIS_WORKSPACE_API}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteAnalysisWorkspace(id) {
+  return request(`${ANALYSIS_WORKSPACE_API}/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function createDataset({ name = '', description = '' } = {}) {
   return request(API_BASE, {
     method: 'POST',

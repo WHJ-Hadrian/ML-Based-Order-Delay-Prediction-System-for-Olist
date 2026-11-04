@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.olist.datasets.mapper.AnalysisWorkspaceMapper">
+
+    <resultMap id="AnalysisWorkspaceResultMap" type="com.olist.datasets.entity.AnalysisWorkspace">
+        <id column="id" property="id" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="name" property="name"/>
+        <result column="revision" property="revision"/>
+        <result column="cards_json" property="cardsJson"/>
+        <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="updated_at" property="updatedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+    </resultMap>
+
+    <sql id="workspaceColumns">
+        id, owner_id, name, revision, cards_json, created_at, updated_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO analysis_workspaces (
+            id, owner_id, name, revision, cards_json, created_at, updated_at
+        ) VALUES (
+            #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            #{ownerId}, #{name}, #{revision}, #{cardsJson},
+            #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        )
+    </insert>
+
+    <select id="findById" resultMap="AnalysisWorkspaceResultMap">
+        SELECT <include refid="workspaceColumns"/>
+        FROM analysis_workspaces
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </select>
+
+    <select id="findByOwner" resultMap="AnalysisWorkspaceResultMap">
+        SELECT <include refid="workspaceColumns"/>
+        FROM analysis_workspaces
+        WHERE owner_id = #{ownerId}
+        ORDER BY updated_at DESC, name ASC
+        LIMIT 100
+    </select>
+
+    <update id="update">
+        UPDATE analysis_workspaces
+        SET name = #{workspace.name},
+            revision = #{workspace.revision},
+            cards_json = #{workspace.cardsJson},
+            updated_at = #{workspace.updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{workspace.id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{workspace.ownerId}
+          AND revision = #{expectedRevision}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM analysis_workspaces
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </delete>
+
+    <select id="countByName" resultType="long">
+        SELECT COUNT(*)
+        FROM analysis_workspaces
+        WHERE owner_id = #{ownerId}
+          AND LOWER(name) = LOWER(#{name})
+        <if test="excludeId != null">
+            AND id &lt;&gt; #{excludeId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+        </if>
+    </select>
+</mapper>

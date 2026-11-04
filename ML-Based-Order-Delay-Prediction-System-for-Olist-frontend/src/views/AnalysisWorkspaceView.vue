@@ -1,0 +1,1443 @@
+<script setup>
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { Check, Close, DataAnalysis, Delete, FolderOpened, Plus, Refresh } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus'
+import * as echarts from 'echarts/core'
+import { BarChart, ScatterChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import {
+  analyzeDatasetColumn,
+  analyzeDatasetRelation,
+  createAnalysisWorkspace,
+  deleteAnalysisWorkspace,
+  getAnalysisWorkspace,
+  getDatasetCatalog,
+  listAnalysisWorkspaces,
+  listDatasets,
+  updateAnalysisWorkspace,
+} from '@/api/datasets'
+import { useAuth } from '@/auth/keycloak'
+
+echarts.use([BarChart, ScatterChart, GridComponent, TooltipComponent, CanvasRenderer])
+
+const router = useRouter()
+const auth = useAuth()
+const datasets = ref([])
+const catalog = ref(null)
+const analysis = ref(null)
+const selectedDatasetId = ref('')
+const selectedTableId = ref('')
+const selectedColumnId = ref('')
+const relationColumnId = ref('')
+const relation = ref(null)
+const boardCards = ref([])
+const addingToBoard = ref(false)
+const workspaces = ref([])
+const activeWorkspaceId = ref('')
+const selectedWorkspaceId = ref('')
+const workspaceName = ref('新建分析方案')
+const workspaceRevision = ref(null)
+const workspaceState = ref('new')
+const workspaceError = ref('')
+const loadingWorkspaces = ref(false)
+const loadingDatasets = ref(false)
+const loadingCatalog = ref(false)
+const loadingAnalysis = ref(false)
+const loadingRelation = ref(false)
+const datasetError = ref('')
+const catalogError = ref('')
+const analysisError = ref('')
+const relationError = ref('')
+const chartElement = ref(null)
+const relationChartElement = ref(null)
+
+let chart = null
+let resizeObserver = null
+let relationChart = null
+let relationResizeObserver = null
+let catalogRequest = 0
+let analysisRequest = 0
+let relationRequest = 0
+let workspaceRequest = 0
+
+const selectedTable = computed(() =>
+  catalog.value?.tables?.find((table) => table.tableId === selectedTableId.value) || null,
+)
+const selectedColumn = computed(() =>
+  selectedTable.value?.columns?.find((column) => column.columnId === selectedColumnId.value) || null,
+)
+const selectedDataset = computed(() =>
+  datasets.value.find((dataset) => dataset.id === selectedDatasetId.value) || null,
+)
+const isHistogram = computed(() => analysis.value?.chartType === 'histogram')
+const relationColumn = computed(() =>
+  selectedTable.value?.columns?.find((column) => column.columnId === relationColumnId.value) || null,
+)
+const workspaceStateLabel = computed(() => ({
+  new: '新建方案',
+  dirty: '有未保存更改',
+  saving: '保存中',
+  loading: '载入中',
+  saved: '已保存',
+  warning: '部分卡片不可用',
+  error: '保存失败',
+}[workspaceState.value] || ''))
+
+function formatNumber(value) {
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(Number(value || 0))
+}
+
+function datasetLabel(dataset) {
+  return dataset?.name || dataset?.originalFilename || '未命名数据集'
+}
+
+function markWorkspaceDirty() {
+  workspaceState.value = 'dirty'
+  workspaceError.value = ''
+}
+
+async function addCurrentAnalysis() {
+  if (!analysis.value || !selectedDataset.value || !selectedTable.value || !selectedColumn.value) return
+  const exists = boardCards.value.some((card) =>
+    card.datasetVersionId === analysis.value.datasetVersionId
+      && card.tableId === selectedTableId.value
+      && card.columnId === selectedColumnId.value,
+  )
+  if (exists) return
+
+  addingToBoard.value = true
+  try {
+    boardCards.value = [...boardCards.value, {
+      id: `${analysis.value.datasetVersionId}:${selectedTableId.value}:${selectedColumnId.value}`,
+      datasetVersionId: analysis.value.datasetVersionId,
+      tableId: selectedTableId.value,
+      columnId: selectedColumnId.value,
+      datasetName: datasetLabel(selectedDataset.value),
+      tableName: selectedTable.value.tableName,
+      columnName: selectedColumn.value.name,
+      logicalType: analysis.value.logicalType,
+      chartType: analysis.value.chartType,
+      points: analysis.value.points || [],
+      rowCount: analysis.value.rowCount,
+      uniqueCountEstimate: analysis.value.uniqueCountEstimate,
+      missingCount: analysis.value.missingCount,
+      minimum: analysis.value.minimum,
+      maximum: analysis.value.maximum,
+    }]
+    markWorkspaceDirty()
+  } finally {
+    addingToBoard.value = false
+  }
+}
+
+function removeBoardCard(cardId) {
+  boardCards.value = boardCards.value.filter((card) => card.id !== cardId)
+  markWorkspaceDirty()
+}
+
+function savedCardReference(card) {
+  return {
+    datasetVersionId: card.datasetVersionId,
+    tableId: card.tableId,
+    columnId: card.columnId,
+  }
+}
+
+async function loadAnalysisCard(reference) {
+  try {
+    const [dataCatalog, result] = await Promise.all([
+      getDatasetCatalog(reference.datasetVersionId),
+      analyzeDatasetColumn(reference.datasetVersionId, reference.tableId, reference.columnId),
+    ])
+    const table = dataCatalog.tables?.find((item) => item.tableId === reference.tableId)
+    const column = table?.columns?.find((item) => item.columnId === reference.columnId)
+    if (!table || !column) throw new Error('数据版本中的表或字段已不存在')
+    const dataset = datasets.value.find((item) => item.id === reference.datasetVersionId)
+    return {
+      id: `${reference.datasetVersionId}:${reference.tableId}:${reference.columnId}`,
+      datasetVersionId: reference.datasetVersionId,
+      tableId: reference.tableId,
+      columnId: reference.columnId,
+      datasetName: dataset ? datasetLabel(dataset) : `数据版本 ${reference.datasetVersionId}`,
+      tableName: table.tableName,
+      columnName: column.name,
+      logicalType: result.logicalType,
+      chartType: result.chartType,
+      points: result.points || [],
+      rowCount: result.rowCount,
+      uniqueCountEstimate: result.uniqueCountEstimate,
+      missingCount: result.missingCount,
+      minimum: result.minimum,
+      maximum: result.maximum,
+    }
+  } catch (error) {
+    return {
+      id: `${reference.datasetVersionId}:${reference.tableId}:${reference.columnId}`,
+      ...reference,
+      datasetName: `数据版本 ${reference.datasetVersionId}`,
+      tableName: '无法读取数据表',
+      columnName: '分析卡片不可用',
+      points: [],
+      error: error.message || '数据版本或字段当前不可用',
+    }
+  }
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = Array(items.length)
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++
+      results[index] = await mapper(items[index], index)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+async function refreshWorkspaces() {
+  loadingWorkspaces.value = true
+  try {
+    workspaces.value = await listAnalysisWorkspaces()
+    if (!activeWorkspaceId.value && !selectedWorkspaceId.value && workspaces.value.length) {
+      selectedWorkspaceId.value = workspaces.value[0].id
+      await openSelectedWorkspace()
+    }
+  } catch (error) {
+    workspaceError.value = error.message || '分析方案列表加载失败'
+  } finally {
+    loadingWorkspaces.value = false
+  }
+}
+
+async function confirmDiscardChanges() {
+  if (workspaceState.value !== 'dirty') return true
+  try {
+    await ElMessageBox.confirm(
+      '当前画布有尚未保存的更改，继续操作会放弃这些更改。',
+      '放弃未保存更改？',
+      { confirmButtonText: '放弃更改', cancelButtonText: '继续编辑', type: 'warning' },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function openSelectedWorkspace() {
+  const id = selectedWorkspaceId.value
+  if (!id || id === activeWorkspaceId.value || !(await confirmDiscardChanges())) return
+  const requestId = ++workspaceRequest
+  workspaceState.value = 'loading'
+  workspaceError.value = ''
+  try {
+    const workspace = await getAnalysisWorkspace(id)
+    const cards = await mapWithConcurrency(workspace.cards || [], 3, loadAnalysisCard)
+    if (requestId !== workspaceRequest) return
+    boardCards.value = cards
+    activeWorkspaceId.value = workspace.id
+    selectedWorkspaceId.value = workspace.id
+    workspaceName.value = workspace.name
+    workspaceRevision.value = workspace.revision
+    const unavailableCount = cards.filter((card) => card.error).length
+    workspaceState.value = unavailableCount ? 'warning' : 'saved'
+    workspaceError.value = unavailableCount ? `${unavailableCount} 张卡片无法重新读取，已保留其引用。` : ''
+  } catch (error) {
+    if (requestId !== workspaceRequest) return
+    workspaceState.value = 'error'
+    workspaceError.value = error.message || '分析方案载入失败'
+  }
+}
+
+async function startNewWorkspace() {
+  if (!(await confirmDiscardChanges())) return
+  workspaceRequest += 1
+  activeWorkspaceId.value = ''
+  selectedWorkspaceId.value = ''
+  workspaceName.value = '新建分析方案'
+  workspaceRevision.value = null
+  boardCards.value = []
+  workspaceState.value = 'new'
+  workspaceError.value = ''
+}
+
+async function saveWorkspace() {
+  const name = workspaceName.value.trim()
+  if (!name) {
+    workspaceError.value = '请先填写分析方案名称'
+    workspaceState.value = 'error'
+    return
+  }
+  if (boardCards.value.length > 20) {
+    workspaceError.value = '一个分析方案最多保存 20 张卡片'
+    workspaceState.value = 'error'
+    return
+  }
+
+  workspaceState.value = 'saving'
+  workspaceError.value = ''
+  const payload = {
+    name,
+    expectedRevision: workspaceRevision.value,
+    cards: boardCards.value.map(savedCardReference),
+  }
+  try {
+    const workspace = activeWorkspaceId.value
+      ? await updateAnalysisWorkspace(activeWorkspaceId.value, payload)
+      : await createAnalysisWorkspace(payload)
+    activeWorkspaceId.value = workspace.id
+    selectedWorkspaceId.value = workspace.id
+    workspaceName.value = workspace.name
+    workspaceRevision.value = workspace.revision
+    workspaceState.value = 'saved'
+    await refreshWorkspaces()
+  } catch (error) {
+    workspaceState.value = 'error'
+    workspaceError.value = error.message || '分析方案保存失败'
+  }
+}
+
+async function removeWorkspace() {
+  if (!activeWorkspaceId.value || !(await confirmDiscardChanges())) return
+  try {
+    await ElMessageBox.confirm(
+      `删除“${workspaceName.value}”？此操作不会删除数据集。`,
+      '删除分析方案',
+      { confirmButtonText: '删除方案', cancelButtonText: '取消', type: 'warning' },
+    )
+    await deleteAnalysisWorkspace(activeWorkspaceId.value)
+    workspaceState.value = 'saved'
+    await startNewWorkspace()
+    await refreshWorkspaces()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    workspaceError.value = error.message || '分析方案删除失败'
+  }
+}
+
+function pointWidth(points, value) {
+  const max = Math.max(1, ...points.map((point) => Number(point.value) || 0))
+  return `${Math.max(2, ((Number(value) || 0) / max) * 100)}%`
+}
+
+async function loadDatasets() {
+  loadingDatasets.value = true
+  datasetError.value = ''
+  try {
+    const result = await listDatasets({ status: 'READY', page: 0, size: 100 })
+    datasets.value = result.items || []
+    if (!datasets.value.some((dataset) => dataset.id === selectedDatasetId.value)) {
+      selectedDatasetId.value = datasets.value[0]?.id || ''
+    }
+  } catch (error) {
+    datasets.value = []
+    datasetError.value = error.message || '数据集加载失败'
+  } finally {
+    loadingDatasets.value = false
+  }
+}
+
+async function loadCatalog(datasetId) {
+  const requestId = ++catalogRequest
+  catalog.value = null
+  selectedTableId.value = ''
+  selectedColumnId.value = ''
+  relationColumnId.value = ''
+  relation.value = null
+  relationError.value = ''
+  analysis.value = null
+  analysisError.value = ''
+  analysisRequest += 1
+  relationRequest += 1
+  loadingRelation.value = false
+  loadingAnalysis.value = false
+  catalogError.value = ''
+  if (!datasetId) {
+    loadingCatalog.value = false
+    return
+  }
+
+  loadingCatalog.value = true
+  try {
+    const result = await getDatasetCatalog(datasetId)
+    if (requestId !== catalogRequest) return
+    catalog.value = result
+    selectedTableId.value = result.tables?.[0]?.tableId || ''
+  } catch (error) {
+    if (requestId === catalogRequest) {
+      catalogError.value = error.message || '数据目录加载失败'
+    }
+  } finally {
+    if (requestId === catalogRequest) loadingCatalog.value = false
+  }
+}
+
+async function loadAnalysis(datasetId, tableId, columnId) {
+  const requestId = ++analysisRequest
+  analysis.value = null
+  analysisError.value = ''
+  if (!datasetId || !tableId || !columnId) return
+
+  loadingAnalysis.value = true
+  try {
+    const result = await analyzeDatasetColumn(datasetId, tableId, columnId)
+    if (requestId === analysisRequest) analysis.value = result
+  } catch (error) {
+    if (requestId === analysisRequest) {
+      analysisError.value = error.message || '字段分析失败'
+    }
+  } finally {
+    if (requestId === analysisRequest) loadingAnalysis.value = false
+  }
+}
+
+async function loadRelation() {
+  const requestId = ++relationRequest
+  relation.value = null
+  relationError.value = ''
+  if (!selectedDatasetId.value || !selectedTableId.value || !selectedColumnId.value || !relationColumnId.value) return
+  loadingRelation.value = true
+  try {
+    const result = await analyzeDatasetRelation(
+      selectedDatasetId.value, selectedTableId.value, selectedColumnId.value, relationColumnId.value,
+    )
+    if (requestId === relationRequest) relation.value = result
+  } catch (error) {
+    if (requestId === relationRequest) relationError.value = error.message || '字段关系分析失败'
+  } finally {
+    if (requestId === relationRequest) loadingRelation.value = false
+  }
+}
+
+function renderChart() {
+  if (!chartElement.value || !analysis.value) return
+  if (!chart) chart = echarts.init(chartElement.value)
+
+  const points = analysis.value.points || []
+  chart.setOption({
+    animationDuration: 280,
+    color: ['#176b57', '#2c8290', '#5a9e9b', '#83b5a8', '#c38b39'],
+    grid: { left: 18, right: 24, top: 16, bottom: 18, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      confine: true,
+      formatter: (items) => {
+        const item = Array.isArray(items) ? items[0] : items
+        const label = points[item?.dataIndex]?.label || item?.name || ''
+        return `${label}<br/><strong>${formatNumber(item?.value)}</strong> 条记录`
+      },
+    },
+    xAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: '#64736d' },
+      axisLine: { lineStyle: { color: '#dce5e0' } },
+      splitLine: { lineStyle: { color: '#e9efec', type: 'dashed' } },
+    },
+    yAxis: {
+      type: 'category',
+      inverse: true,
+      data: points.map((point) => point.label),
+      axisTick: { show: false },
+      axisLine: { show: false },
+      axisLabel: {
+        color: '#40534b',
+        width: 170,
+        overflow: 'truncate',
+        ellipsis: '…',
+        hideOverlap: true,
+      },
+    },
+    series: [{
+      type: 'bar',
+      data: points.map((point) => point.value),
+      barMaxWidth: 22,
+      showBackground: true,
+      backgroundStyle: { color: 'rgba(23, 107, 87, 0.055)', borderRadius: [0, 4, 4, 0] },
+      itemStyle: { borderRadius: [0, 4, 4, 0] },
+      emphasis: { focus: 'self' },
+    }],
+  }, true)
+}
+
+function renderRelationChart() {
+  if (!relationChartElement.value || !relation.value) return
+  if (!relationChart) relationChart = echarts.init(relationChartElement.value)
+  const points = relation.value.points || []
+  const scatter = relation.value.chartType === 'scatter'
+  relationChart.setOption({
+    animationDuration: 260,
+    color: ['#287d79'],
+    grid: { left: 48, right: 22, top: 22, bottom: 48, containLabel: true },
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      formatter: (item) => scatter
+        ? `${relation.value.xColumnName}: ${formatNumber(item.value[0])}<br/>${relation.value.yColumnName}: ${formatNumber(item.value[1])}`
+        : `${item.name}<br/><strong>${formatNumber(item.value)}</strong> · ${formatNumber(points[item.dataIndex]?.rowCount, 0)} 条有效记录`,
+    },
+    xAxis: scatter
+      ? { type: 'value', name: relation.value.xColumnName, nameLocation: 'middle', nameGap: 30, splitLine: { lineStyle: { color: '#e9efec', type: 'dashed' } } }
+      : { type: 'category', name: relation.value.groupColumnName, data: points.map((point) => point.label), axisLabel: { width: 120, overflow: 'truncate', hideOverlap: true }, axisTick: { show: false } },
+    yAxis: scatter
+      ? { type: 'value', name: relation.value.yColumnName, nameLocation: 'middle', nameGap: 40, splitLine: { lineStyle: { color: '#e9efec', type: 'dashed' } } }
+      : { type: 'value', name: `平均 ${relation.value.valueColumnName}`, splitLine: { lineStyle: { color: '#e9efec', type: 'dashed' } } },
+    series: scatter
+      ? [{ type: 'scatter', data: points.map((point) => [point.x, point.y]), symbolSize: 8, emphasis: { focus: 'self' } }]
+      : [{ type: 'bar', data: points.map((point) => point.y), barMaxWidth: 28, itemStyle: { borderRadius: [4, 4, 0, 0] } }],
+  }, true)
+}
+
+function refreshCurrentAnalysis() {
+  if (selectedDatasetId.value && selectedTableId.value && selectedColumnId.value) {
+    loadAnalysis(selectedDatasetId.value, selectedTableId.value, selectedColumnId.value)
+    if (relation.value) loadRelation()
+  } else {
+    loadDatasets()
+  }
+}
+
+function openDatasets() {
+  router.push('/datasets')
+}
+
+watch(
+  () => auth.state.status,
+  (status) => {
+    if (status === 'authenticated') {
+      loadDatasets()
+      refreshWorkspaces()
+    } else if (status === 'anonymous') {
+      datasets.value = []
+      catalog.value = null
+      analysis.value = null
+      relation.value = null
+      selectedDatasetId.value = ''
+      selectedTableId.value = ''
+      selectedColumnId.value = ''
+      relationColumnId.value = ''
+      boardCards.value = []
+      workspaces.value = []
+      activeWorkspaceId.value = ''
+      selectedWorkspaceId.value = ''
+      workspaceRevision.value = null
+      workspaceState.value = 'new'
+    }
+  },
+  { immediate: true },
+)
+
+watch(selectedDatasetId, (datasetId) => loadCatalog(datasetId))
+watch(selectedTableId, (tableId) => {
+  selectedColumnId.value = selectedTable.value?.columns?.[0]?.columnId || ''
+  relationColumnId.value = selectedTable.value?.columns?.find((column) => column.columnId !== selectedColumnId.value)?.columnId || ''
+  relation.value = null
+  if (!tableId) analysis.value = null
+})
+watch(selectedColumnId, (columnId) => {
+  if (columnId && columnId === relationColumnId.value) {
+    relationColumnId.value = selectedTable.value?.columns?.find((column) => column.columnId !== columnId)?.columnId || ''
+  }
+})
+watch([selectedDatasetId, selectedTableId, selectedColumnId], ([datasetId, tableId, columnId]) => {
+  loadAnalysis(datasetId, tableId, columnId)
+})
+watch([selectedDatasetId, selectedTableId, selectedColumnId, relationColumnId], () => {
+  relationRequest += 1
+  loadingRelation.value = false
+  relation.value = null
+  relationError.value = ''
+})
+watch(analysis, async (value) => {
+  if (!value) {
+    chart?.clear()
+    return
+  }
+  await nextTick()
+  renderChart()
+})
+
+watch(relation, async (value) => {
+  if (!value) {
+    relationChart?.clear()
+    return
+  }
+  await nextTick()
+  renderRelationChart()
+})
+
+watch(chartElement, (element) => {
+  resizeObserver?.disconnect()
+  if (!element || typeof ResizeObserver === 'undefined') return
+  resizeObserver = new ResizeObserver(() => chart?.resize())
+  resizeObserver.observe(element)
+})
+
+watch(relationChartElement, (element) => {
+  relationResizeObserver?.disconnect()
+  if (!element || typeof ResizeObserver === 'undefined') return
+  relationResizeObserver = new ResizeObserver(() => relationChart?.resize())
+  relationResizeObserver.observe(element)
+})
+
+onBeforeUnmount(() => {
+  catalogRequest += 1
+  analysisRequest += 1
+  relationRequest += 1
+  resizeObserver?.disconnect()
+  relationResizeObserver?.disconnect()
+  chart?.dispose()
+  relationChart?.dispose()
+  chart = null
+  relationChart = null
+})
+</script>
+
+<template>
+  <main class="page-content analysis-page">
+    <header class="page-header analysis-header">
+      <div>
+        <span class="analysis-kicker">DATA WORKSPACE</span>
+        <h1>分析工作台</h1>
+        <p>结构化数据 · 多方案探索</p>
+      </div>
+      <el-button
+        circle
+        aria-label="刷新分析"
+        title="刷新分析"
+        :icon="Refresh"
+        :loading="loadingDatasets || loadingCatalog || loadingAnalysis || loadingRelation"
+        @click="refreshCurrentAnalysis"
+      />
+    </header>
+
+    <section class="analysis-workspace-toolbar" aria-label="分析方案">
+      <label class="workspace-picker">
+        <span>分析方案</span>
+        <el-select
+          v-model="selectedWorkspaceId"
+          filterable
+          :loading="loadingWorkspaces"
+          placeholder="打开已保存方案"
+          no-data-text="还没有保存的分析方案"
+        >
+          <el-option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id" :label="workspace.name">
+            <span class="workspace-option" :title="workspace.name">{{ workspace.name }}</span>
+          </el-option>
+        </el-select>
+      </label>
+      <label class="workspace-name-field">
+        <span>方案名称</span>
+        <el-input
+          v-model="workspaceName"
+          maxlength="255"
+          placeholder="给这组分析起个名字"
+          @input="markWorkspaceDirty"
+        />
+      </label>
+      <el-button :icon="FolderOpened" :disabled="!selectedWorkspaceId || workspaceState === 'loading'" @click="openSelectedWorkspace">打开</el-button>
+      <el-button :icon="Plus" @click="startNewWorkspace">新建</el-button>
+      <el-button
+        type="primary"
+        :icon="Check"
+        :loading="workspaceState === 'saving'"
+        :disabled="workspaceState === 'loading'"
+        @click="saveWorkspace"
+      >保存</el-button>
+      <el-button
+        v-if="activeWorkspaceId"
+        circle
+        aria-label="删除分析方案"
+        title="删除分析方案"
+        :icon="Delete"
+        :disabled="workspaceState === 'saving' || workspaceState === 'loading'"
+        @click="removeWorkspace"
+      />
+      <span class="workspace-state" :class="`is-${workspaceState}`" role="status">{{ workspaceStateLabel }}</span>
+    </section>
+    <div v-if="workspaceError" class="analysis-message is-error" role="alert">
+      <span>{{ workspaceError }}</span>
+      <el-button v-if="workspaceState === 'error' && selectedWorkspaceId" text :icon="FolderOpened" @click="openSelectedWorkspace">重新载入</el-button>
+      <el-button v-else text :icon="Refresh" @click="refreshWorkspaces">重试</el-button>
+    </div>
+
+    <section class="analysis-controls" aria-label="分析对象">
+      <label class="control-field">
+        <span>数据集</span>
+        <el-select
+          v-model="selectedDatasetId"
+          filterable
+          :loading="loadingDatasets"
+          :disabled="loadingDatasets || !datasets.length"
+          :title="selectedDataset ? datasetLabel(selectedDataset) : ''"
+          placeholder="选择已就绪的数据集"
+        >
+          <el-option
+            v-for="dataset in datasets"
+            :key="dataset.id"
+            :value="dataset.id"
+            :label="datasetLabel(dataset)"
+          >
+            <div class="dataset-option" :title="datasetLabel(dataset)">
+              <span>{{ datasetLabel(dataset) }}</span>
+              <small>{{ dataset.tableCount }} 张表</small>
+            </div>
+          </el-option>
+        </el-select>
+      </label>
+      <label class="control-field">
+        <span>数据表</span>
+        <el-select
+          v-model="selectedTableId"
+          :loading="loadingCatalog"
+          :disabled="loadingCatalog || !catalog?.tables?.length"
+          :title="selectedTable?.tableName || ''"
+          placeholder="选择数据表"
+        >
+          <el-option
+            v-for="table in catalog?.tables || []"
+            :key="table.tableId"
+            :value="table.tableId"
+            :label="table.tableName"
+          >
+            <span class="option-truncate" :title="table.tableName">{{ table.tableName }}</span>
+          </el-option>
+        </el-select>
+      </label>
+      <label class="control-field">
+        <span>分析字段</span>
+        <el-select
+          v-model="selectedColumnId"
+          filterable
+          :disabled="!selectedTable?.columns?.length"
+          :title="selectedColumn?.name || ''"
+          placeholder="选择字段"
+        >
+          <el-option
+            v-for="column in selectedTable?.columns || []"
+            :key="column.columnId"
+            :value="column.columnId"
+            :label="column.name"
+          >
+            <div class="column-option" :title="column.name">
+              <span>{{ column.name }}</span>
+              <small>{{ column.logicalType || '未分类' }}</small>
+            </div>
+          </el-option>
+        </el-select>
+      </label>
+      <label class="control-field">
+        <span>关系字段</span>
+        <el-select
+          v-model="relationColumnId"
+          filterable
+          :disabled="!selectedTable?.columns?.length"
+          :title="relationColumn?.name || ''"
+          placeholder="选择第二个字段"
+        >
+          <el-option
+            v-for="column in selectedTable?.columns?.filter((item) => item.columnId !== selectedColumnId) || []"
+            :key="column.columnId"
+            :value="column.columnId"
+            :label="column.name"
+          >
+            <div class="column-option" :title="column.name">
+              <span>{{ column.name }}</span>
+              <small>{{ column.logicalType || '未分类' }}</small>
+            </div>
+          </el-option>
+        </el-select>
+      </label>
+    </section>
+
+    <div v-if="datasetError" class="analysis-message is-error" role="alert">
+      <span>{{ datasetError }}</span>
+      <el-button text :icon="Refresh" @click="loadDatasets">重试</el-button>
+    </div>
+    <div v-else-if="catalogError" class="analysis-message is-error" role="alert">
+      <span>{{ catalogError }}</span>
+      <el-button text :icon="Refresh" @click="loadCatalog(selectedDatasetId)">重试</el-button>
+    </div>
+    <div v-else-if="analysisError" class="analysis-message is-error" role="alert">
+      <span>{{ analysisError }}</span>
+      <el-button text :icon="Refresh" @click="refreshCurrentAnalysis">重试</el-button>
+    </div>
+
+    <section v-if="datasets.length && selectedTable" class="analysis-metrics" aria-label="数据概况">
+      <div class="metric-cell">
+        <span>记录数</span>
+        <strong :title="formatNumber(analysis?.rowCount ?? selectedTable.rowCount)">{{ formatNumber(analysis?.rowCount ?? selectedTable.rowCount) }}</strong>
+        <small>当前数据表</small>
+      </div>
+      <div class="metric-cell">
+        <span>字段数</span>
+        <strong :title="formatNumber(selectedTable.columnCount)">{{ formatNumber(selectedTable.columnCount) }}</strong>
+        <small>当前数据表</small>
+      </div>
+      <div class="metric-cell">
+        <span>唯一值估算</span>
+        <strong :title="analysis ? formatNumber(analysis.uniqueCountEstimate) : ''">{{ loadingAnalysis ? '...' : analysis ? formatNumber(analysis.uniqueCountEstimate) : '—' }}</strong>
+        <small>当前字段</small>
+      </div>
+      <div class="metric-cell">
+        <span>缺失记录</span>
+        <strong :title="analysis ? formatNumber(analysis.missingCount) : ''">{{ loadingAnalysis ? '...' : analysis ? formatNumber(analysis.missingCount) : '—' }}</strong>
+        <small>当前字段</small>
+      </div>
+    </section>
+
+    <section v-if="datasets.length && selectedTable" class="chart-panel" aria-label="字段分布图">
+      <div class="chart-heading">
+        <div class="chart-title-group">
+          <span class="chart-mark"><el-icon><DataAnalysis /></el-icon></span>
+          <div class="chart-title-copy">
+            <h2 :title="selectedColumn?.name || '字段分布'">{{ selectedColumn?.name || '字段分布' }}</h2>
+            <span :title="selectedTable.tableName">{{ selectedTable.tableName }} · {{ isHistogram ? '数值分布' : '类别频数' }}</span>
+          </div>
+        </div>
+        <el-tag v-if="analysis" effect="plain" type="success" size="small">
+          {{ analysis.logicalType || '字段' }}
+        </el-tag>
+        <el-button
+          v-if="analysis"
+          size="small"
+          plain
+          :icon="Plus"
+          :loading="addingToBoard"
+          :disabled="boardCards.length >= 20 || boardCards.some((card) => card.id === `${analysis.datasetVersionId}:${selectedTableId}:${selectedColumnId}`)"
+          @click="addCurrentAnalysis"
+        >加入画布</el-button>
+      </div>
+
+      <div class="chart-body" :class="{ 'is-loading': loadingAnalysis }">
+        <el-skeleton v-if="loadingAnalysis" :rows="7" animated />
+        <div v-else-if="analysisError" class="chart-empty">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>分析暂不可用</span>
+        </div>
+        <el-empty
+          v-else-if="analysis && !analysis.points?.length"
+          description="当前字段没有可绘制的数据"
+          :image-size="84"
+        />
+        <div v-else ref="chartElement" class="distribution-chart"></div>
+      </div>
+
+      <div v-if="analysis && isHistogram" class="chart-footnote">
+        <span>范围 {{ formatNumber(analysis.minimum) }} 至 {{ formatNumber(analysis.maximum) }}</span>
+        <span>共 {{ analysis.points.length }} 个区间</span>
+      </div>
+      <div v-else-if="analysis" class="chart-footnote">
+        <span>显示频数最高的 {{ analysis.points.length }} 个类别</span>
+        <span>唯一值为近似估算</span>
+      </div>
+    </section>
+
+    <section v-if="boardCards.length || activeWorkspaceId || workspaceState === 'dirty'" class="analysis-board" aria-label="分析画布">
+      <header class="board-heading">
+        <div>
+          <h2>分析画布</h2>
+          <span>{{ boardCards.length }} 个分析 · 可跨数据集比较</span>
+        </div>
+        <el-button text :icon="Close" :disabled="!boardCards.length" @click="boardCards = []; markWorkspaceDirty()">清空画布</el-button>
+      </header>
+      <el-empty v-if="!boardCards.length" description="画布为空，可以从字段分布加入分析" :image-size="64" />
+      <div v-else class="board-grid">
+        <article v-for="card in boardCards" :key="card.id" class="board-card">
+          <header class="board-card-heading">
+            <div class="board-card-title" :title="card.columnName">
+              <strong>{{ card.columnName }}</strong>
+              <span :title="`${card.datasetName} · ${card.tableName}`">{{ card.datasetName }} · {{ card.tableName }}</span>
+            </div>
+            <el-button circle text aria-label="移除分析卡片" title="移除分析卡片" :icon="Close" @click="removeBoardCard(card.id)" />
+          </header>
+          <div class="board-card-stats">
+            <span :title="`记录数 ${formatNumber(card.rowCount)}`">{{ formatNumber(card.rowCount) }} 行</span>
+            <span :title="`缺失记录 ${formatNumber(card.missingCount)}`">缺失 {{ formatNumber(card.missingCount) }}</span>
+            <span>{{ card.logicalType || '字段' }}</span>
+          </div>
+          <div v-if="card.points.length" class="board-bars">
+            <div v-for="point in card.points.slice(0, 8)" :key="point.label" class="board-bar-row" :title="`${point.label}: ${formatNumber(point.value)}`">
+              <span>{{ point.label }}</span>
+              <div class="board-bar-track"><i :style="{ width: pointWidth(card.points, point.value) }"></i></div>
+              <b>{{ formatNumber(point.value) }}</b>
+            </div>
+          </div>
+          <el-empty v-else :description="card.error || '没有可绘制的数据'" :image-size="56" />
+        </article>
+      </div>
+    </section>
+
+    <section v-if="datasets.length && selectedTable?.columns?.length > 1" class="relation-panel" aria-label="字段关系分析">
+      <div class="relation-heading">
+        <div><h2>字段关系</h2><span :title="`${selectedColumn?.name || ''} · ${relationColumn?.name || ''}`">{{ selectedColumn?.name }} · {{ relationColumn?.name }}</span></div>
+        <el-button type="primary" plain :loading="loadingRelation" :disabled="!selectedColumnId || !relationColumnId || selectedColumnId === relationColumnId" @click="loadRelation">分析关系</el-button>
+      </div>
+      <div v-if="relationError" class="analysis-message is-error" role="alert"><span>{{ relationError }}</span><el-button text :icon="Refresh" @click="loadRelation">重试</el-button></div>
+      <el-skeleton v-else-if="loadingRelation" :rows="5" animated />
+      <el-empty v-else-if="relation && !relation.points?.length" description="所选字段没有可用于关系分析的记录" :image-size="76" />
+      <div v-else-if="relation" ref="relationChartElement" class="relation-chart"></div>
+      <p class="relation-note">数值字段显示最多 250 个确定性样本点；类别与数值字段显示前 12 组的数值均值。两个类别字段暂不支持关系分析。</p>
+    </section>
+
+    <section v-else-if="!loadingDatasets && !datasetError && !catalogError" class="analysis-empty">
+      <div class="empty-icon"><el-icon><DataAnalysis /></el-icon></div>
+      <h2>{{ datasets.length ? '当前数据集没有可分析的数据表' : '暂无已就绪的数据集' }}</h2>
+      <p>{{ datasets.length ? '选择其他版本或前往数据集库检查数据表。' : '先将一个数据集发布为 READY，再回来查看字段分布。' }}</p>
+      <el-button type="primary" @click="openDatasets">打开数据集库</el-button>
+    </section>
+  </main>
+</template>
+
+<style scoped>
+.analysis-page {
+  padding-bottom: 30px;
+}
+
+.analysis-header {
+  align-items: center;
+}
+
+.analysis-kicker {
+  display: inline-block;
+  margin-bottom: 5px;
+  color: #568374;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.analysis-header h1 {
+  letter-spacing: 0;
+}
+
+.analysis-header p {
+  color: #64736d;
+}
+
+.analysis-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) repeat(3, minmax(160px, 1fr));
+  gap: 14px;
+  padding: 16px;
+  background: rgba(250, 253, 251, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(27, 61, 50, 0.055);
+}
+
+.control-field {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  color: #586b63;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.control-field :deep(.el-select) {
+  width: 100%;
+}
+
+.control-field :deep(.el-select__selected-item) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataset-option,
+.column-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dataset-option > span,
+.column-option > span,
+.option-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataset-option small,
+.column-option small {
+  flex: 0 0 auto;
+  color: #83918b;
+  font-size: 10px;
+}
+
+.analysis-message {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.analysis-message > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.analysis-message.is-error {
+  color: #8d3c35;
+  background: #fff4f0;
+  border: 1px solid #f1d2c8;
+}
+
+.analysis-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-block: 15px;
+  overflow: hidden;
+  background: rgba(250, 253, 251, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(27, 61, 50, 0.05);
+}
+
+.metric-cell {
+  display: flex;
+  min-width: 0;
+  min-height: 94px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 13px 19px;
+  border-right: 1px solid #e7eeea;
+}
+
+.metric-cell:last-child {
+  border-right: 0;
+}
+
+.metric-cell > span {
+  color: #62736b;
+  font-size: 11px;
+}
+
+.metric-cell strong {
+  overflow: hidden;
+  color: #1a3e32;
+  font-size: 21px;
+  font-weight: 680;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-cell small {
+  color: #91a099;
+  font-size: 10px;
+}
+
+.chart-panel {
+  overflow: hidden;
+  background: rgba(250, 253, 251, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(27, 61, 50, 0.065);
+}
+
+.analysis-board {
+  min-width: 0;
+  margin-top: 16px;
+}
+
+.board-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.board-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.board-heading h2 {
+  margin: 0;
+  color: #20372f;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.board-heading span {
+  color: #829089;
+  font-size: 10px;
+}
+
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.board-card {
+  min-width: 0;
+  overflow: hidden;
+  padding: 13px 14px 12px;
+  background: rgba(250, 253, 251, 0.86);
+  border: 1px solid #e1eae5;
+  border-radius: 7px;
+}
+
+.board-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.board-card-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.board-card-title strong,
+.board-card-title span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-card-title strong {
+  color: #20372f;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.board-card-title span {
+  color: #829089;
+  font-size: 10px;
+}
+
+.board-card-stats {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 11px;
+  color: #64736d;
+  font-size: 10px;
+}
+
+.board-card-stats > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-bars {
+  display: grid;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.board-bar-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(50px, 0.9fr) minmax(30px, 1.4fr) minmax(28px, auto);
+  align-items: center;
+  gap: 8px;
+  color: #586b63;
+  font-size: 10px;
+}
+
+.board-bar-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-bar-track {
+  height: 7px;
+  overflow: hidden;
+  background: #edf2ef;
+  border-radius: 4px;
+}
+
+.board-bar-track i {
+  display: block;
+  height: 100%;
+  background: #43836d;
+  border-radius: inherit;
+}
+
+.board-bar-row b {
+  overflow: hidden;
+  color: #344d42;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relation-panel {
+  min-width: 0;
+  margin-top: 15px;
+  padding: 16px 19px 11px;
+  background: rgba(250, 253, 251, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(27, 61, 50, 0.05);
+}
+
+.relation-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.relation-heading > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.relation-heading h2 { margin: 0; color: #20372f; font-size: 14px; font-weight: 650; }
+.relation-heading span { max-width: 100%; overflow: hidden; color: #829089; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.relation-chart { width: 100%; height: 330px; }
+.relation-note { margin: 0; color: #829089; font-size: 10px; line-height: 1.5; }
+
+.chart-heading {
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 20px;
+  border-bottom: 1px solid #e7eeea;
+}
+
+.chart-title-group {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.chart-mark,
+.empty-icon {
+  display: grid;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: #176b57;
+  background: #e4f1eb;
+  border-radius: 7px;
+}
+
+.chart-title-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chart-title-copy h2 {
+  max-width: 540px;
+  margin: 0;
+  overflow: hidden;
+  color: #20372f;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-title-copy > span {
+  overflow: hidden;
+  color: #829089;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-body {
+  min-height: 380px;
+  padding: 17px 14px 9px;
+}
+
+.chart-body.is-loading {
+  padding: 32px 24px;
+}
+
+.distribution-chart {
+  width: 100%;
+  height: 352px;
+}
+
+.chart-empty {
+  display: flex;
+  min-height: 345px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #75857d;
+  font-size: 12px;
+}
+
+.chart-empty .el-icon {
+  color: #93b7aa;
+  font-size: 29px;
+}
+
+.chart-footnote {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 20px;
+  color: #819089;
+  font-size: 10px;
+  border-top: 1px solid #e7eeea;
+}
+
+.chart-footnote > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-empty {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 15px;
+  padding: 28px;
+  text-align: center;
+  background: rgba(250, 253, 251, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+}
+
+.empty-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 10px;
+  font-size: 20px;
+}
+
+.analysis-empty h2 {
+  margin: 0;
+  color: #273d35;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.analysis-empty p {
+  max-width: 440px;
+  margin: 9px 0 17px;
+  color: #73837b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .analysis-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control-field:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 600px) {
+  .analysis-controls {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .control-field:first-child {
+    grid-column: auto;
+  }
+
+  .analysis-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-cell {
+    min-height: 84px;
+    padding: 11px 14px;
+  }
+
+  .metric-cell:nth-child(2) {
+    border-right: 0;
+  }
+
+  .metric-cell:nth-child(-n + 2) {
+    border-bottom: 1px solid #e7eeea;
+  }
+
+  .metric-cell strong {
+    font-size: 19px;
+  }
+
+  .chart-heading {
+    flex-wrap: wrap;
+    min-height: 62px;
+    padding-inline: 12px;
+  }
+
+  .chart-heading > .el-button {
+    margin-left: auto;
+  }
+
+  .chart-body {
+    min-height: 338px;
+    padding-inline: 5px;
+  }
+
+  .distribution-chart {
+    height: 310px;
+  }
+
+  .relation-panel { padding: 13px 11px 10px; }
+  .relation-chart { height: 270px; }
+
+  .board-grid { grid-template-columns: minmax(0, 1fr); }
+  .board-card { padding-inline: 11px; }
+
+  .chart-footnote {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    padding-block: 7px;
+  }
+}
+</style>
