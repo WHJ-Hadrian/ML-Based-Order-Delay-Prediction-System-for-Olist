@@ -1,5 +1,6 @@
 package com.olist.datasets.controller;
 
+import com.olist.datasets.dto.AnalysisWorkspaceCopyRequest;
 import com.olist.datasets.dto.AnalysisWorkspaceRequest;
 import com.olist.datasets.service.AnalysisWorkspaceService;
 import com.olist.datasets.vo.AnalysisWorkspaceVO;
@@ -44,6 +45,17 @@ public class AnalysisWorkspaceController {
     @GetMapping("/{id}")
     public AnalysisWorkspaceVO get(@PathVariable UUID id) {
         return service.get(id);
+    }
+
+    @PostMapping("/{id}/copy")
+    public ResponseEntity<AnalysisWorkspaceVO> copy(
+            @PathVariable UUID id,
+            @Valid @RequestBody AnalysisWorkspaceCopyRequest request) {
+        AnalysisWorkspaceVO copy = service.copy(id, request.name());
+        URI location = ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/api/v1/analysis-workspaces/{id}")
+                .buildAndExpand(copy.id()).toUri();
+        return ResponseEntity.created(location).body(copy);
     }
 
     @PutMapping("/{id}")

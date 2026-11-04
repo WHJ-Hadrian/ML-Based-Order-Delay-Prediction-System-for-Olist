@@ -75,6 +75,30 @@ public class AnalysisWorkspaceServiceImpl implements AnalysisWorkspaceService {
     }
 
     @Override
+    @Transactional
+    public AnalysisWorkspaceVO copy(UUID id, String requestedName) {
+        AnalysisWorkspace source = requireWorkspace(id);
+        String name = normalizeName(requestedName);
+        String ownerId = source.getOwnerId();
+        requireUniqueName(name, ownerId, null);
+        Instant now = Instant.now();
+        AnalysisWorkspace copy = new AnalysisWorkspace();
+        copy.setId(UUID.randomUUID());
+        copy.setOwnerId(ownerId);
+        copy.setName(name);
+        copy.setRevision(1);
+        copy.setCardsJson(source.getCardsJson());
+        copy.setCreatedAt(now);
+        copy.setUpdatedAt(now);
+        try {
+            mapper.insert(copy);
+        } catch (DuplicateKeyException exception) {
+            throw new AnalysisWorkspaceConflictException("同名分析方案已存在");
+        }
+        return toVO(copy);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public AnalysisWorkspaceVO get(UUID id) {
         return toVO(requireWorkspace(id));

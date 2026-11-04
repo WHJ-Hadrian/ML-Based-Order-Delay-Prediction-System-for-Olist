@@ -127,6 +127,13 @@ export function createAnalysisWorkspace(payload) {
   })
 }
 
+export function copyAnalysisWorkspace(id, { name } = {}) {
+  return request(`${ANALYSIS_WORKSPACE_API}/${encodeURIComponent(id)}/copy`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
 export function updateAnalysisWorkspace(id, payload) {
   return request(`${ANALYSIS_WORKSPACE_API}/${encodeURIComponent(id)}`, {
     method: 'PUT',

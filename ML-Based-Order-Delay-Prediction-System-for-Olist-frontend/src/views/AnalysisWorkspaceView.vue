@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Check, Close, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh } from '@element-plus/icons-vue'
+import { ArrowRight, Check, Close, CopyDocument, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { BarChart, ScatterChart } from 'echarts/charts'
@@ -10,6 +10,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import {
   analyzeDatasetColumn,
   analyzeDatasetRelation,
+  copyAnalysisWorkspace,
   createAnalysisWorkspace,
   deleteAnalysisWorkspace,
   getAnalysisWorkspace,
@@ -45,6 +46,7 @@ const workspaceRevision = ref(null)
 const workspaceState = ref('new')
 const workspaceError = ref('')
 const loadingWorkspaces = ref(false)
+const copyingWorkspace = ref(false)
 const loadingDatasets = ref(false)
 const loadingCatalog = ref(false)
 const loadingAnalysis = ref(false)
@@ -330,6 +332,42 @@ async function saveWorkspace() {
   } catch (error) {
     workspaceState.value = 'error'
     workspaceError.value = error.message || '分析方案保存失败'
+  }
+}
+
+function nextWorkspaceCopyName() {
+  const baseName = `${workspaceName.value.trim() || '分析方案'} 副本`
+  const existingNames = new Set(workspaces.value.map((workspace) => workspace.name.toLocaleLowerCase('zh-CN')))
+  let candidate = baseName
+  let suffix = 2
+  while (existingNames.has(candidate.toLocaleLowerCase('zh-CN'))) {
+    candidate = `${baseName} ${suffix}`
+    suffix += 1
+  }
+  return candidate.slice(0, 255)
+}
+
+async function copyWorkspace() {
+  if (!activeWorkspaceId.value || !['saved', 'warning'].includes(workspaceState.value)) return
+  workspaceError.value = ''
+  copyingWorkspace.value = true
+  try {
+    const { value } = await ElMessageBox.prompt('为副本命名，原方案不会被修改。', '复制分析方案', {
+      confirmButtonText: '创建副本',
+      cancelButtonText: '取消',
+      inputValue: nextWorkspaceCopyName(),
+      inputMaxlength: 255,
+      inputValidator: (value) => Boolean(value?.trim()) || '方案名称不能为空',
+    })
+    const copy = await copyAnalysisWorkspace(activeWorkspaceId.value, { name: value.trim() })
+    workspaces.value = [copy, ...workspaces.value.filter((workspace) => workspace.id !== copy.id)]
+    selectedWorkspaceId.value = copy.id
+    await openSelectedWorkspace()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    workspaceError.value = error.message || '分析方案复制失败'
+  } finally {
+    copyingWorkspace.value = false
   }
 }
 
@@ -698,6 +736,13 @@ onBeforeUnmount(() => {
       </label>
       <el-button :icon="FolderOpened" :disabled="!selectedWorkspaceId || workspaceState === 'loading'" @click="openSelectedWorkspace">打开</el-button>
       <el-button :icon="Plus" @click="startNewWorkspace">新建</el-button>
+      <el-button
+        v-if="activeWorkspaceId"
+        :icon="CopyDocument"
+        :loading="copyingWorkspace"
+        :disabled="copyingWorkspace || !['saved', 'warning'].includes(workspaceState)"
+        @click="copyWorkspace"
+      >复制</el-button>
       <el-button
         type="primary"
         :icon="Check"

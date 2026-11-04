@@ -11,6 +11,8 @@ public interface AnalysisWorkspaceService {
 
     AnalysisWorkspaceVO create(AnalysisWorkspaceRequest request);
 
+    AnalysisWorkspaceVO copy(UUID id, String name);
+
     AnalysisWorkspaceVO get(UUID id);
 
     AnalysisWorkspaceVO update(UUID id, AnalysisWorkspaceRequest request);

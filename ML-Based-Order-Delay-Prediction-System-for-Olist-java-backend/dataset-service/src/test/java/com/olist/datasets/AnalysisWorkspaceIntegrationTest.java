@@ -105,6 +105,64 @@ class AnalysisWorkspaceIntegrationTest {
     }
 
     @Test
+    void copiesWorkspaceCardsIntoAnIndependentOwnerScopedWorkspace() throws Exception {
+        UUID datasetVersionId = createReadyDataset();
+        var catalogResult = mockMvc.perform(get("/api/v1/datasets/{id}/catalog", datasetVersionId)
+                        .with(jwt().jwt(token -> token.subject("owner-a"))))
+                .andExpect(status().isOk())
+                .andReturn();
+        var table = objectMapper.readTree(catalogResult.getResponse().getContentAsString())
+                .path("tables").get(0);
+        UUID tableId = UUID.fromString(table.path("tableId").asText());
+        UUID columnId = UUID.fromString(table.path("columns").get(0).path("columnId").asText());
+        var created = mockMvc.perform(post("/api/v1/analysis-workspaces")
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request("收入分析", null, true, datasetVersionId, tableId, columnId)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String sourceId = objectMapper.readTree(created.getResponse().getContentAsString()).path("id").asText();
+
+        var copied = mockMvc.perform(post("/api/v1/analysis-workspaces/{id}/copy", sourceId)
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"收入分析 副本\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("收入分析 副本"))
+                .andExpect(jsonPath("$.revision").value(1))
+                .andExpect(jsonPath("$.cards[0].datasetVersionId").value(datasetVersionId.toString()))
+                .andExpect(jsonPath("$.cards[0].tableId").value(tableId.toString()))
+                .andExpect(jsonPath("$.cards[0].columnId").value(columnId.toString()))
+                .andReturn();
+        String copyId = objectMapper.readTree(copied.getResponse().getContentAsString()).path("id").asText();
+        org.junit.jupiter.api.Assertions.assertNotEquals(sourceId, copyId);
+
+        mockMvc.perform(put("/api/v1/analysis-workspaces/{id}", copyId)
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request("收入分析 副本", 1, false, datasetVersionId, tableId, columnId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(2))
+                .andExpect(jsonPath("$.cards").isEmpty());
+
+        mockMvc.perform(get("/api/v1/analysis-workspaces/{id}", sourceId)
+                        .with(jwt().jwt(token -> token.subject("owner-a"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("收入分析"))
+                .andExpect(jsonPath("$.cards.length()").value(1));
+        mockMvc.perform(post("/api/v1/analysis-workspaces/{id}/copy", sourceId)
+                        .with(jwt().jwt(token -> token.subject("owner-b")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"越权副本\"}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/v1/analysis-workspaces/{id}/copy", sourceId)
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"收入分析 副本\"}"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
     void rejectsDuplicateNamesAndMoreThanTwentyCards() throws Exception {
         UUID datasetVersionId = UUID.randomUUID();
         UUID tableId = UUID.randomUUID();
