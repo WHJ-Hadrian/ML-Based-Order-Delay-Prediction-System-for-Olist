@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Aim,
+  ArrowLeft,
   ArrowRight,
   Check,
   Close,
@@ -61,6 +62,8 @@ const libraryPage = ref(0)
 const libraryPageSize = ref(5)
 const extractDatasetId = ref('')
 const extractDatasetName = ref('')
+const extractReturn = ref(null)
+const extractResult = ref(null)
 const importingIntoLibrary = ref(false)
 
 const extractBannerRef = ref(null)
@@ -162,6 +165,15 @@ watch(
     if (query.extract) {
       extractDatasetId.value = String(query.extract)
       extractDatasetName.value = String(query.name || '')
+      extractReturn.value = {
+        dataset: String(query.extract),
+        keyword: String(query.keyword || ''),
+        format: String(query.format || ''),
+        page: Number.parseInt(String(query.page || '0'), 10) || 0,
+        size: Number.parseInt(String(query.size || '10'), 10) || 10,
+        tab: String(query.tab || 'all'),
+      }
+      extractResult.value = null
       libraryPage.value = 0
       focusedLibraryId.value = ''
       return
@@ -497,13 +509,51 @@ function handleLibraryClick(library) {
   toggleLibrary(library)
 }
 
-function exitExtractMode() {
+function exitExtractMode({ goBack = false } = {}) {
+  const fallbackDatasetId = extractDatasetId.value
+  const hadExtractQuery = Boolean(route.query.extract)
   extractDatasetId.value = ''
   extractDatasetName.value = ''
   stopGuidance()
-  if (route.query.extract) {
+  if (goBack) {
+    returnToDatasetLibrary(fallbackDatasetId)
+    return
+  }
+  if (hadExtractQuery) {
     router.replace({ path: '/fields' })
   }
+}
+
+function hasUnsavedDrafts() {
+  return Object.values(draftsByLibrary).some((rows) => Array.isArray(rows) && rows.length > 0)
+}
+
+async function returnToDatasetLibrary(fallbackDatasetId = '') {
+  if (hasUnsavedDrafts()) {
+    try {
+      await ElMessageBox.confirm(
+        '字段库里还有尚未保存的字段草稿，返回数据集库后这些草稿会丢失。',
+        '还有未保存的字段',
+        {
+          confirmButtonText: '仍然返回',
+          cancelButtonText: '留在这里',
+          type: 'warning',
+        },
+      )
+    } catch {
+      return
+    }
+  }
+  const origin = extractReturn.value || {}
+  const datasetId = origin.dataset || fallbackDatasetId
+  const query = {}
+  if (datasetId) query.dataset = datasetId
+  if (origin.keyword) query.keyword = origin.keyword
+  if (origin.format) query.format = origin.format
+  if (origin.page) query.page = String(origin.page)
+  if (origin.size && origin.size !== 10) query.size = String(origin.size)
+  if (origin.tab && origin.tab !== 'all') query.tab = origin.tab
+  router.push({ path: '/datasets', query })
 }
 
 function clearGuidanceTimers() {
@@ -729,7 +779,14 @@ async function confirmImportIntoLibrary(library) {
     await loadFields(library.id)
     library.fieldCount = (library.fieldCount || 0) + result.created
     library.datasetCount = Math.max(library.datasetCount || 0, 1)
+    const datasetName = extractDatasetName.value || '当前数据集'
     exitExtractMode()
+    extractResult.value = {
+      count: result.created,
+      skipped: result.skipped,
+      libraryName: library.name,
+      datasetName,
+    }
   } catch (error) {
     if (error instanceof AuthenticationRequiredError) {
       return
@@ -766,7 +823,14 @@ async function createLibraryAndImport() {
       created.datasetCount = 1
       await loadFields(created.id)
       ElMessage.success(`已导入 ${result.created} 个字段，可以直接修改字段库名称`)
+      const datasetName = extractDatasetName.value || '当前数据集'
       exitExtractMode()
+      extractResult.value = {
+        count: result.created,
+        skipped: result.skipped,
+        libraryName: created.name,
+        datasetName,
+      }
     } catch (error) {
       if (error instanceof AuthenticationRequiredError) {
         return
@@ -1262,7 +1326,7 @@ async function applyPaste() {
       <div class="extract-banner-copy">
         <strong>正在为数据集「{{ extractDatasetName || '当前数据集' }}」提取字段</strong>
         <span v-if="libraries.length">
-          把鼠标移到任意字段库行，点击整行即可导入；也可以直接新建字段库并导入。
+          把鼠标移到任意字段库行，点击整行即可导入；也可以直接新建字段库并导入。完成后可回到数据集库继续。
         </span>
         <span v-else>还没有字段库，点击右侧「新建字段库并导入」即可开始。</span>
       </div>
@@ -1275,7 +1339,21 @@ async function applyPaste() {
         >
           新建字段库并导入
         </el-button>
-        <el-button @click="exitExtractMode">退出提取</el-button>
+        <el-button :icon="ArrowLeft" @click="exitExtractMode({ goBack: true })">返回数据集库</el-button>
+      </div>
+    </div>
+
+    <div v-if="extractResult" class="extract-result" role="status" aria-live="polite">
+      <span class="extract-result-icon"><el-icon><Check /></el-icon></span>
+      <div class="extract-result-copy">
+        <strong>已导入 {{ extractResult.count }} 个字段</strong>
+        <span>
+          数据集「{{ extractResult.datasetName }}」已导入到字段库「{{ extractResult.libraryName }}」<template v-if="extractResult.skipped">，跳过 {{ extractResult.skipped }} 个重复字段</template>。
+        </span>
+      </div>
+      <div class="extract-result-actions">
+        <el-button @click="extractResult = null">留在字段库</el-button>
+        <el-button type="primary" :icon="ArrowLeft" @click="returnToDatasetLibrary()">返回数据集库</el-button>
       </div>
     </div>
 
@@ -1921,6 +1999,56 @@ async function applyPaste() {
   color: #176b57;
   font-size: 12px;
   font-weight: 600;
+}
+
+.extract-result {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 14px 18px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(23, 107, 87, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 10px 26px rgba(10, 45, 37, 0.06);
+  flex-wrap: wrap;
+}
+
+.extract-result-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  color: #0f5c49;
+  font-size: 17px;
+  background: #e2f3eb;
+  border-radius: 50%;
+}
+
+.extract-result-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.extract-result-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.extract-result-copy span {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.extract-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .library-item.is-guide-target .library-summary {

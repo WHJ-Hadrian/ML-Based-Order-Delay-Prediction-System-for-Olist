@@ -26,6 +26,14 @@ function initialQueryEmail() {
   return new URLSearchParams(window.location.search).get('email') || ''
 }
 
+function postLoginPath() {
+  const redirect = new URLSearchParams(window.location.search).get('redirect')
+  if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
+    return redirect
+  }
+  return '/'
+}
+
 const isRegistration = ref(false)
 const stage = ref(stages.identifier)
 const email = ref(initialQueryEmail())
@@ -266,7 +274,7 @@ async function submitLogin() {
   try {
     await loginWithPassword(loginProfile.value.email, password.value)
     password.value = ''
-    await router.push('/')
+    await router.push(postLoginPath())
   } catch (error) {
     setMessage(error.message)
   } finally {
@@ -341,12 +349,13 @@ async function resendCode() {
 
 function returnToLoginAfterRegistration() {
   const registeredEmail = email.value
+  const redirect = new URLSearchParams(window.location.search).get('redirect')
   returnToLogin()
   email.value = registeredEmail
-  router.replace({
-    name: 'login',
-    query: registeredEmail ? { email: registeredEmail } : {},
-  }).catch(() => {
+  const query = {}
+  if (registeredEmail) query.email = registeredEmail
+  if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) query.redirect = redirect
+  router.replace({ name: 'login', query }).catch(() => {
     setMessage('无法返回登录页面，请刷新后重试。')
   })
 }

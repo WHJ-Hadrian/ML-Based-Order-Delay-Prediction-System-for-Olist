@@ -116,6 +116,13 @@ export function createRuleWorkbook(payload) {
   })
 }
 
+export function updateRuleWorkbook(id, payload) {
+  return request(`/rule-workbooks/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function getRuleWorkbook(id) {
   return request(`/rule-workbooks/${encodeURIComponent(id)}`)
 }
@@ -163,6 +170,14 @@ export function listRuleRuns(id, limit = 20) {
 
 export function getRuleRun(runId) {
   return request(`/rule-runs/${encodeURIComponent(runId)}`)
+}
+
+export function cancelRuleRun(runId) {
+  return request(`/rule-runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+}
+
+export function retryRuleRun(runId) {
+  return request(`/rule-runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' })
 }
 
 export function getRuleRunExecution(runId) {

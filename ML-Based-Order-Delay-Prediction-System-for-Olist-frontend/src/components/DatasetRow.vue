@@ -24,6 +24,9 @@ const props = defineProps({
   expanded: { type: Boolean, default: false },
   editing: { type: Boolean, default: false },
   detail: { type: Object, default: null },
+  versions: { type: Array, default: () => [] },
+  versionsLoading: { type: Boolean, default: false },
+  versionsError: { type: String, default: '' },
   detailLoading: { type: Boolean, default: false },
   detailError: { type: String, default: '' },
   uploading: { type: Boolean, default: false },
@@ -43,6 +46,7 @@ const emit = defineEmits([
   'rename-table',
   'delete-table',
   'retry-detail',
+  'retry-versions',
   'extract-fields',
 ])
 
@@ -559,6 +563,42 @@ function selectFile(file) {
           </div>
 
           <template v-else-if="detail">
+            <section class="version-history" aria-label="数据集版本历史">
+              <div class="version-history-heading">
+                <strong>版本与来源</strong>
+                <span v-if="versions.length">{{ versions.length }} 个版本</span>
+              </div>
+              <el-skeleton v-if="versionsLoading && !versions.length" :rows="1" animated />
+              <el-alert
+                v-else-if="versionsError"
+                type="error"
+                :closable="false"
+                :title="versionsError"
+              >
+                <template #default>
+                  <el-button link type="primary" @click="emit('retry-versions', item.id)">重试</el-button>
+                </template>
+              </el-alert>
+              <div v-else class="version-history-list">
+                <div v-for="version in versions" :key="version.datasetVersionId" class="version-history-row">
+                  <span class="version-number">v{{ version.versionNo }}</span>
+                  <el-tag :type="statusTagType(version.status)" size="small" effect="plain">
+                    {{ statusLabel(version.status) }}
+                  </el-tag>
+                  <time :title="formatDateTime(version.createdAt)">{{ formatDateTime(version.createdAt) }}</time>
+                  <span class="version-source" :title="version.sourceNodeId || version.sourceType || '未记录来源'">
+                    <template v-if="version.sourceRunId">
+                      规则运行 {{ version.sourceRunId.slice(0, 8) }} · {{ version.sourceNodeId || '输出节点' }}
+                    </template>
+                    <template v-else>{{ version.sourceType || '来源未记录' }}</template>
+                  </span>
+                  <span v-if="version.sourceWorkbookVersionId" class="version-workbook" :title="version.sourceWorkbookVersionId">
+                    规则版本 {{ version.sourceWorkbookVersionId.slice(0, 8) }}
+                  </span>
+                </div>
+                <span v-if="!versions.length" class="version-empty">暂无版本记录</span>
+              </div>
+            </section>
             <div class="detail-meta">
               <span>
                 <el-icon><Clock /></el-icon>

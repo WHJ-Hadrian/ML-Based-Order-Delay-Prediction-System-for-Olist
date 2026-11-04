@@ -799,6 +799,90 @@ select {
   gap: 4px;
 }
 
+.version-history {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.version-history-heading,
+.version-history-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.version-history-heading {
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.version-history-heading span,
+.version-empty {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.version-history-list {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.version-history-row {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-left: 2px solid #8cb8a7;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.version-number {
+  flex: 0 0 auto;
+  color: var(--ink-primary);
+  font-weight: 650;
+}
+
+.version-history-row time {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.version-source,
+.version-workbook {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-source {
+  flex: 1 1 180px;
+}
+
+.version-workbook {
+  flex: 0 1 190px;
+}
+
+@media (max-width: 720px) {
+  .version-history-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .version-history-row time {
+    margin-left: auto;
+  }
+
+  .version-source,
+  .version-workbook {
+    flex: 1 1 100%;
+  }
+}
+
 .detail-error {
   margin-bottom: 12px;
 }

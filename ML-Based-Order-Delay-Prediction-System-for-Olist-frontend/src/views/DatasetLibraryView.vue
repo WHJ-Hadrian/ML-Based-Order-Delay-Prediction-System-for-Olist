@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { FolderAdd, Lock, Refresh, Search } from '@element-plus/icons-vue'
@@ -21,6 +21,7 @@ import {
   deleteDataset,
   deleteDatasetTable,
   getDataset,
+  getDatasetVersions,
   listDatasets,
   markDatasetReady,
   renameDataset,
@@ -38,10 +39,17 @@ const loading = ref(false)
 const loadError = ref('')
 const authRequired = ref(false)
 const creating = ref(false)
-const page = ref(0)
-const size = ref(10)
+const initialQuery = route.query
+const initialPageValue = Number.parseInt(String(initialQuery.page || '0'), 10)
+const initialSizeValue = Number.parseInt(String(initialQuery.size || '10'), 10)
+const initialTabValue = String(initialQuery.tab || '')
+const page = ref(Number.isFinite(initialPageValue) && initialPageValue > 0 ? initialPageValue : 0)
+const size = ref([10, 20, 50].includes(initialSizeValue) ? initialSizeValue : 10)
 const totalElements = useDatasetTotal()
-const activeTab = ref(DATASET_TAB_KEYS.ALL)
+const activeTab = ref(
+  DATASET_TABS.some((tab) => tab.name === initialTabValue) ? initialTabValue : DATASET_TAB_KEYS.ALL,
+)
+const focusDatasetId = ref(String(initialQuery.dataset || ''))
 const expandedIds = ref([])
 const editingId = ref('')
 const uploadingId = ref('')
@@ -49,13 +57,22 @@ const readyingId = ref('')
 const uploadController = ref(null)
 
 const filters = reactive({
-  keyword: '',
-  format: '',
+  keyword: String(initialQuery.keyword || ''),
+  format: DATASET_FORMATS.some((format) => format.value === String(initialQuery.format || ''))
+    ? String(initialQuery.format)
+    : '',
 })
+
+if (Object.keys(initialQuery).length) {
+  router.replace({ path: route.path })
+}
 
 const details = reactive({})
 const detailLoading = reactive({})
 const detailErrors = reactive({})
+const datasetVersions = reactive({})
+const versionLoading = reactive({})
+const versionErrors = reactive({})
 const uploadProgress = reactive({})
 
 let datasetRequestSequence = 0
@@ -115,6 +132,7 @@ async function loadDatasets() {
     if (typeof result?.size === 'number') {
       size.value = result.size
     }
+    await focusRequestedDataset()
   } catch (error) {
     if (requestSequence !== datasetRequestSequence) {
       return
@@ -161,10 +179,16 @@ function changeSize(nextSize) {
 }
 
 function handleExtractFields(item) {
-  router.push({
-    path: '/fields',
-    query: { extract: item.id, name: item.name },
-  })
+  const query = {
+    extract: item.id,
+    name: item.name,
+    keyword: filters.keyword.trim() || undefined,
+    format: filters.format || undefined,
+    page: page.value ? String(page.value) : undefined,
+    size: size.value !== 10 ? String(size.value) : undefined,
+    tab: activeTab.value !== DATASET_TAB_KEYS.ALL ? activeTab.value : undefined,
+  }
+  router.push({ path: '/fields', query })
 }
 
 function handleSignIn() {
@@ -217,6 +241,26 @@ async function toggleDataset(id) {
   if (!details[id] && !detailLoading[id]) {
     await loadDetail(id)
   }
+  if (!datasetVersions[id] && !versionLoading[id]) {
+    await loadDatasetVersions(id)
+  }
+}
+
+async function focusRequestedDataset() {
+  const datasetId = focusDatasetId.value
+  if (!datasetId) {
+    return
+  }
+  focusDatasetId.value = ''
+  if (!datasets.value.some((item) => item.id === datasetId)) {
+    return
+  }
+  if (!isExpanded(datasetId)) {
+    await toggleDataset(datasetId)
+  }
+  await nextTick()
+  const target = document.querySelector('[data-dataset-id="' + CSS.escape(datasetId) + '"]')
+  target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
 async function loadDetail(id, force = false) {
@@ -233,6 +277,24 @@ async function loadDetail(id, force = false) {
     detailErrors[id] = error.message
   } finally {
     detailLoading[id] = false
+  }
+}
+
+async function loadDatasetVersions(id, force = false) {
+  if (versionLoading[id] || (datasetVersions[id] && !force)) {
+    return
+  }
+  versionLoading[id] = true
+  versionErrors[id] = ''
+  try {
+    const versions = await getDatasetVersions(id)
+    if (datasets.value.some((item) => item.id === id)) {
+      datasetVersions[id] = versions
+    }
+  } catch (error) {
+    versionErrors[id] = error?.message || '加载数据集版本失败'
+  } finally {
+    versionLoading[id] = false
   }
 }
 
@@ -299,6 +361,8 @@ async function handleDeleteDataset(id) {
     expandedIds.value = expandedIds.value.filter((value) => value !== id)
     delete details[id]
     delete detailErrors[id]
+    delete datasetVersions[id]
+    delete versionErrors[id]
     if (editingId.value === id) {
       editingId.value = ''
     }
@@ -475,6 +539,8 @@ function applyDatasetDetail(previousId, detail) {
       detailErrors[nextId] = detailErrors[previousId]
       delete detailErrors[previousId]
     }
+    delete datasetVersions[previousId]
+    delete versionErrors[previousId]
     expandedIds.value = expandedIds.value.map((value) => (
       value === previousId ? nextId : value
     ))
@@ -495,6 +561,9 @@ function applyDatasetDetail(previousId, detail) {
   }
   detailErrors[nextId] = ''
   syncRowFromDetail(previousId, detail)
+  if (nextId !== previousId && isExpanded(nextId)) {
+    loadDatasetVersions(nextId, true)
+  }
   return nextId
 }
 function syncRowFromDetail(id, detail) {
@@ -633,10 +702,14 @@ function syncRowFromDetail(id, detail) {
             <DatasetRow
               v-for="item in datasets"
               :key="item.id"
+              :data-dataset-id="item.id"
               :item="item"
               :expanded="isExpanded(item.id)"
               :editing="editingId === item.id"
               :detail="details[item.id]"
+              :versions="datasetVersions[item.id] || []"
+              :versions-loading="Boolean(versionLoading[item.id])"
+              :versions-error="versionErrors[item.id] || ''"
               :detail-loading="Boolean(detailLoading[item.id])"
               :detail-error="detailErrors[item.id] || ''"
               :uploading="uploadingId === item.id"
@@ -653,6 +726,7 @@ function syncRowFromDetail(id, detail) {
               @rename-table="handleRenameTable"
               @delete-table="handleDeleteTable"
               @retry-detail="loadDetail($event, true)"
+              @retry-versions="loadDatasetVersions($event, true)"
               @extract-fields="handleExtractFields"
             />
 

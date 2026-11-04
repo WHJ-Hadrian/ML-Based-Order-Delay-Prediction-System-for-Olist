@@ -22,7 +22,7 @@ const routes = [
     path: '/settings',
     name: 'settings',
     component: settingsPage,
-    meta: { hideNavigationActive: true },
+    meta: { hideNavigationActive: true, fullscreen: true },
   },
   ...NAVIGATION_ITEMS.map(({ component, ...item }) => ({
     path: item.path,

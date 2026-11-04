@@ -1,6 +1,9 @@
 import {
   Collection,
+  DataAnalysis,
   Grid,
+  Cpu,
+  MagicStick,
   SetUp,
 } from '@element-plus/icons-vue'
 
@@ -14,6 +17,33 @@ export const NAVIGATION_ITEMS = Object.freeze([
     icon: Collection,
     showTotal: true,
     component: () => import('@/views/DatasetLibraryView.vue'),
+  },
+  {
+    key: 'analysis',
+    path: '/analysis',
+    title: '分析工作台',
+    description: '探索已就绪数据集中的字段分布与记录概况。',
+    emptyText: '选择一个已就绪的数据集开始分析',
+    icon: DataAnalysis,
+    component: () => import('@/views/AnalysisWorkspaceView.vue'),
+  },
+  {
+    key: 'models',
+    path: '/models',
+    title: '模型训练',
+    description: '使用数据集版本配置分类或回归训练，并查看已登记的模型版本。',
+    emptyText: '选择 READY 数据集版本开始训练',
+    icon: Cpu,
+    component: () => import('@/views/ModelWorkspaceView.vue'),
+  },
+  {
+    key: 'trials',
+    path: '/model-trials',
+    title: '模型试炼场',
+    description: '用独立数据版本运行预测、评估和模型比较。',
+    emptyText: '选择已登记模型开始试炼',
+    icon: MagicStick,
+    component: () => import('@/views/ModelTrialView.vue'),
   },
   {
     key: 'fields',

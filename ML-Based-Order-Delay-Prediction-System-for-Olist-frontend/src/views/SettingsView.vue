@@ -7,15 +7,23 @@ import {
   ArrowRight,
   Bell,
   Brush,
+  Camera,
   Close,
   Collection,
+  Fold,
   Grid,
   InfoFilled,
+  Lock,
+  Message,
+  Monitor,
+  Postcard,
+  QuestionFilled,
   RefreshLeft,
   Search,
   SetUp,
-  SwitchButton,
+  Timer,
   User,
+  View,
 } from '@element-plus/icons-vue'
 import { useAuth } from '@/auth/keycloak'
 import {
@@ -34,7 +42,7 @@ import {
 import { useSoftTipSettings } from '@/state/softTips'
 
 const sectionItems = [
-  { key: 'account', title: '个人中心', description: '账户与登录状态', icon: User },
+  { key: 'account', title: '个人信息', description: '账户资料与登录状态', icon: User },
   { key: 'tips', title: '使用提示', description: '柔性提示的出现方式', icon: Bell },
   { key: 'appearance', title: '外观', description: '背景、水印与侧边栏', icon: Brush },
 ]
@@ -51,6 +59,7 @@ const requestedSection = String(route.query.section || '')
 const activeSection = ref(validSections.has(requestedSection) ? requestedSection : 'account')
 const tipDraft = ref(cloneSoftTipSettings(settings.value))
 const appearanceDraft = ref(cloneAppearance(appearance.value))
+const searchInputRef = ref(null)
 const searchQuery = ref('')
 const tipDrawerVisible = ref(false)
 const activePageKey = ref('')
@@ -58,6 +67,16 @@ const highlightedTipKey = ref('')
 const accountBusy = ref(false)
 const allowLeave = ref(false)
 const returnPath = ref(resolveReturnPath())
+const activeSectionMeta = computed(
+  () => sectionItems.find((item) => item.key === activeSection.value) || sectionItems[0],
+)
+const returnLabel = computed(() => {
+  const pathname = returnPath.value.split('?')[0]
+  if (pathname.startsWith('/datasets')) return '返回数据集库'
+  if (pathname.startsWith('/fields')) return '返回字段库'
+  if (pathname.startsWith('/rules')) return '返回规则库'
+  return '返回工作台'
+})
 let highlightTimer = null
 
 const accountInitial = computed(() =>
@@ -109,8 +128,8 @@ const searchEntries = computed(() => {
     {
       key: 'account',
       section: 'account',
-      title: '个人中心',
-      subtitle: '账户信息、登录与退出',
+      title: '个人信息',
+      subtitle: '账户资料、登录与退出',
       icon: User,
     },
     {
@@ -180,12 +199,14 @@ const searchEntries = computed(() => {
   return entries
 })
 
+const INTERNAL_RETURN_PATHS = ['/datasets', '/fields', '/rules']
+
 function resolveReturnPath() {
   const back = window.history.state?.back
   if (typeof back === 'string' && back) {
     try {
       const url = new URL(back, window.location.origin)
-      if (!url.pathname.startsWith('/settings')) {
+      if (INTERNAL_RETURN_PATHS.includes(url.pathname)) {
         return `${url.pathname}${url.search}${url.hash}`
       }
     } catch {
@@ -268,6 +289,18 @@ async function ensureLeavable({ notifyOnSave = false } = {}) {
 
 function goToReturnPath() {
   allowLeave.value = true
+  const back = window.history.state?.back
+  if (typeof back === 'string' && back) {
+    try {
+      const url = new URL(back, window.location.origin)
+      if (`${url.pathname}${url.search}${url.hash}` === returnPath.value) {
+        router.back()
+        return
+      }
+    } catch {
+      // Fall through to a direct navigation.
+    }
+  }
   router.push(returnPath.value)
 }
 
@@ -382,7 +415,7 @@ async function resetAppearanceDefaults() {
 
 async function handleLogin() {
   if (await ensureLeavable({ notifyOnSave: true })) {
-    router.push({ name: 'login' })
+    router.push({ name: 'login', query: { redirect: route.fullPath } })
   }
 }
 
@@ -423,186 +456,187 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <div class="settings-page">
-    <el-breadcrumb separator="/" class="page-breadcrumb">
-      <el-breadcrumb-item>工作台</el-breadcrumb-item>
-      <el-breadcrumb-item>设置</el-breadcrumb-item>
-    </el-breadcrumb>
-
-    <header class="page-header settings-hero">
-      <div>
-        <h1>设置</h1>
-        <p>管理账户、柔性提示与界面外观。修改会先保留在本页，保存后一次性生效。</p>
+  <main class="settings-shell">
+    <header class="settings-topbar">
+      <div class="settings-topbar-leading">
+        <button type="button" class="settings-back-button" :title="returnLabel" :aria-label="returnLabel" @click="handleBack">
+          <el-icon><ArrowLeft /></el-icon>
+        </button>
+        <span class="settings-brand">SeekDateSet</span>
+        <span class="settings-brand-suffix">设置</span>
       </div>
-      <div class="settings-hero-actions">
-        <span class="settings-state-pill" :class="dirty ? 'is-dirty' : 'is-saved'">
-          {{ dirty ? '有未保存的修改' : '设置已保存' }}
-        </span>
-        <el-button :icon="ArrowLeft" @click="handleBack">返回工作台</el-button>
+
+      <div class="settings-searchbox">
+        <el-input
+          ref="searchInputRef"
+          v-model="searchQuery"
+          :prefix-icon="Search"
+          placeholder="搜索 SeekDateSet 设置"
+          aria-label="搜索 SeekDateSet 设置"
+          clearable
+          @keyup.enter="openFirstSearchResult"
+        />
+      </div>
+
+      <div class="settings-topbar-actions">
+        <button type="button" class="settings-round-button" title="使用提示设置" aria-label="使用提示设置" @click="setActiveSection('tips')">
+          <el-icon><QuestionFilled /></el-icon>
+        </button>
+        <button type="button" class="settings-round-button" :title="returnLabel" :aria-label="returnLabel" @click="handleBack">
+          <el-icon><Grid /></el-icon>
+        </button>
+        <button type="button" class="settings-avatar-button" :title="accountName" @click="setActiveSection('account')">
+          {{ accountInitial }}
+        </button>
       </div>
     </header>
 
-    <div class="settings-layout">
-      <aside class="settings-rail">
-        <div class="settings-search">
-          <el-input
-            v-model="searchQuery"
-            :prefix-icon="Search"
-            placeholder="搜索设置或提示"
-            clearable
-            @keyup.enter="openFirstSearchResult"
-          />
-          <span class="settings-search-hint">试试搜索“水印”“剪贴板”或“一分钟”</span>
-        </div>
-
-        <nav class="settings-nav" aria-label="设置分类">
-          <button
-            v-for="item in sectionItems"
-            :key="item.key"
-            type="button"
-            class="settings-nav-item"
-            :class="{ 'is-active': activeSection === item.key && !searchQuery.trim() }"
-            :aria-current="activeSection === item.key ? 'page' : undefined"
-            @click="setActiveSection(item.key)"
-          >
-            <el-icon class="settings-nav-icon"><component :is="item.icon" /></el-icon>
-            <span class="settings-nav-copy">
-              <strong>{{ item.title }}</strong>
-              <span>{{ item.description }}</span>
-            </span>
-          </button>
-        </nav>
+    <div class="settings-body">
+      <aside class="settings-nav" aria-label="设置分类">
+        <p class="settings-nav-caption">设置</p>
+        <button
+          v-for="item in sectionItems"
+          :key="item.key"
+          type="button"
+          class="settings-nav-item"
+          :class="{ 'is-active': activeSection === item.key && !searchQuery.trim() }"
+          :aria-current="activeSection === item.key && !searchQuery.trim() ? 'page' : undefined"
+          @click="setActiveSection(item.key)"
+        >
+          <span class="settings-nav-orb" :class="`is-${item.key}`">
+            <el-icon><component :is="item.icon" /></el-icon>
+          </span>
+          <span class="settings-nav-copy">
+            <strong>{{ item.title }}</strong>
+            <span>{{ item.description }}</span>
+          </span>
+        </button>
+        <span class="settings-nav-divider" aria-hidden="true"></span>
+        <button type="button" class="settings-nav-item is-return" @click="handleBack">
+          <span class="settings-nav-orb is-return"><el-icon><ArrowLeft /></el-icon></span>
+          <span class="settings-nav-copy">
+            <strong>{{ returnLabel }}</strong>
+            <span>回到刚才的页面</span>
+          </span>
+        </button>
       </aside>
 
-      <div class="settings-main">
+      <section class="settings-main">
         <template v-if="searchQuery.trim()">
-          <section class="settings-section">
-            <header class="settings-section-head">
-              <span class="settings-section-index settings-section-index-icon">
-                <el-icon><Search /></el-icon>
-              </span>
-              <div>
-                <h2>搜索结果</h2>
-                <p>找到 {{ searchResults.length }} 项与“{{ searchQuery.trim() }}”相关的设置。</p>
-              </div>
-            </header>
+          <header class="settings-page-head">
+            <h1>搜索结果</h1>
+            <p>找到 {{ searchResults.length }} 项与“{{ searchQuery.trim() }}”相关的设置。</p>
+          </header>
 
-            <div v-if="searchResults.length" class="settings-card settings-search-list">
-              <button
-                v-for="result in searchResults"
-                :key="result.key"
-                type="button"
-                class="settings-search-result"
-                @click="openSearchResult(result)"
-              >
-                <span class="settings-result-icon">
-                  <el-icon><component :is="result.icon" /></el-icon>
-                </span>
-                <span class="settings-result-copy">
-                  <strong>{{ result.title }}</strong>
-                  <span>{{ result.subtitle }}</span>
-                </span>
-                <el-icon class="settings-chevron"><ArrowRight /></el-icon>
-              </button>
-            </div>
-            <div v-else class="settings-empty-card">
-              <el-icon><Search /></el-icon>
-              <strong>没有找到相关设置</strong>
-              <span>换一个关键词，或清空搜索后按分类查看。</span>
-              <el-button link type="primary" @click="searchQuery = ''">清空搜索</el-button>
-            </div>
-          </section>
+          <div v-if="searchResults.length" class="settings-panel">
+            <button
+              v-for="result in searchResults"
+              :key="result.key"
+              type="button"
+              class="settings-row settings-row-button"
+              @click="openSearchResult(result)"
+            >
+              <span class="settings-row-icon">
+                <el-icon><component :is="result.icon" /></el-icon>
+              </span>
+              <span class="settings-row-body">
+                <strong>{{ result.title }}</strong>
+                <span>{{ result.subtitle }}</span>
+              </span>
+              <el-icon class="settings-chevron"><ArrowRight /></el-icon>
+            </button>
+          </div>
+
+          <div v-else class="settings-empty">
+            <el-icon class="settings-empty-icon"><Search /></el-icon>
+            <strong>没有找到相关设置</strong>
+            <span>换一个关键词，或清空搜索后按分类查看。</span>
+            <button type="button" class="settings-link-button" @click="searchQuery = ''">清空搜索</button>
+          </div>
         </template>
 
         <template v-else>
-          <section v-if="activeSection === 'account'" class="settings-section">
-            <header class="settings-section-head">
-              <span class="settings-section-index">01</span>
-              <div>
-                <h2>个人中心</h2>
-                <p>查看当前账户与登录状态。</p>
-              </div>
-            </header>
+          <header class="settings-page-head">
+            <h1>{{ activeSectionMeta.title }}</h1>
+            <p v-if="activeSection === 'account'">查看账户资料和登录状态。账户信息由 SeekDateSet 统一管理。</p>
+            <p v-else-if="activeSection === 'tips'">柔性提示只在你停留并聚焦当前页面时计时，出现后继续操作会自动隐藏。</p>
+            <p v-else>这些选项会改变整个工作台的呈现方式，保存后立即应用。</p>
+          </header>
 
-            <div class="settings-card">
-              <div class="settings-profile">
-                <span class="settings-avatar">{{ accountInitial }}</span>
-                <div class="settings-profile-copy">
-                  <strong>{{ accountName }}</strong>
-                  <span>{{ accountEmail }}</span>
-                </div>
-                <span class="settings-account-chip" :class="{ 'is-online': authState.authenticated }">
-                  {{ authState.authenticated ? '已登录' : '未登录' }}
+          <template v-if="activeSection === 'account'">
+            <div class="settings-panel">
+              <div class="settings-row">
+                <span class="settings-row-icon"><el-icon><Camera /></el-icon></span>
+                <span class="settings-row-body">
+                  <strong>个人资料照片</strong>
+                  <span>用于在工作台中识别你</span>
+                </span>
+                <span class="settings-profile-avatar">{{ accountInitial }}</span>
+              </div>
+              <div class="settings-row">
+                <span class="settings-row-icon"><el-icon><User /></el-icon></span>
+                <span class="settings-row-body">
+                  <strong>姓名</strong>
+                  <span>{{ authState.authenticated ? accountName : '登录后显示' }}</span>
                 </span>
               </div>
-
               <div class="settings-row">
-                <div class="settings-row-copy">
-                  <strong>显示名称</strong>
-                  <span>来自统一登录服务的账户资料。</span>
-                </div>
-                <span class="settings-value">{{ authState.authenticated ? accountName : '—' }}</span>
-              </div>
-              <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><Message /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>邮箱</strong>
-                  <span>用于识别你的工作台身份。</span>
-                </div>
-                <span class="settings-value">{{ authState.authenticated ? authState.user?.email || '—' : '—' }}</span>
+                  <span>{{ authState.authenticated ? (authState.user?.email || '未设置邮箱') : '登录后显示' }}</span>
+                </span>
               </div>
               <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><Lock /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>账户状态</strong>
                   <span>退出登录不会删除数据集、字段库或规则库。</span>
-                </div>
-                <el-button
-                  v-if="!authState.authenticated"
-                  type="primary"
-                  :disabled="authState.status === 'checking'"
-                  @click="handleLogin"
-                >
-                  {{ authState.status === 'checking' ? '验证中…' : '登录 / 注册' }}
-                </el-button>
-                <el-button
-                  v-else
-                  :icon="SwitchButton"
-                  :loading="accountBusy"
-                  @click="handleLogout"
-                >
-                  退出登录
-                </el-button>
+                </span>
+                <span class="settings-row-trailing">
+                  <span class="settings-status-chip" :class="{ 'is-online': authState.authenticated }">
+                    {{ authState.authenticated ? '已登录' : '未登录' }}
+                  </span>
+                  <button
+                    v-if="!authState.authenticated"
+                    type="button"
+                    class="settings-primary-button"
+                    :disabled="authState.status === 'checking'"
+                    @click="handleLogin"
+                  >
+                    {{ authState.status === 'checking' ? '验证中…' : '登录 / 注册' }}
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="settings-outline-button"
+                    :disabled="accountBusy"
+                    @click="handleLogout"
+                  >
+                    {{ accountBusy ? '退出中…' : '退出登录' }}
+                  </button>
+                </span>
               </div>
             </div>
+          </template>
 
-          </section>
-
-          <section v-else-if="activeSection === 'tips'" class="settings-section">
-            <header class="settings-section-head">
-              <span class="settings-section-index">02</span>
-              <div>
-                <h2>使用提示</h2>
-                <p>提示只在你停留并聚焦当前页面时计时，出现后继续操作会自动隐藏。</p>
-              </div>
-            </header>
-
-            <div class="settings-card">
+          <template v-else-if="activeSection === 'tips'">
+            <div class="settings-panel">
               <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><Bell /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>启用柔性提示</strong>
                   <span>关闭后，所有页面都不再出现这类提示。</span>
-                </div>
+                </span>
                 <el-switch v-model="tipDraft.enabled" />
               </div>
               <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><Timer /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>默认等待时间</strong>
                   <span>页面停留且没有操作这么久后出现；单条提示可以单独覆盖。</span>
-                </div>
-                <el-select
-                  v-model="tipDraft.idleSeconds"
-                  class="settings-select"
-                  :disabled="!tipDraft.enabled"
-                >
+                </span>
+                <el-select v-model="tipDraft.idleSeconds" class="settings-select" :disabled="!tipDraft.enabled">
                   <el-option
                     v-for="option in SOFT_TIP_DELAY_OPTIONS"
                     :key="option.value"
@@ -612,92 +646,79 @@ onBeforeUnmount(() => {
                 </el-select>
               </div>
               <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><View /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>计时方式</strong>
                   <span>切到其他标签页、窗口失焦或打开弹窗时不会计时。</span>
-                </div>
-                <span class="settings-value">仅页面可见且聚焦时</span>
+                </span>
+                <span class="settings-row-value">仅页面可见且聚焦时</span>
               </div>
             </div>
 
-            <div class="settings-subhead">
-              <div>
-                <h3>按页面管理</h3>
-                <p>点击页面打开右侧详情，调整单条提示的开关和等待时间。</p>
-              </div>
-              <span class="settings-count">{{ enabledTipCount }} / {{ totalTipCount }} 条已启用</span>
+            <div class="settings-group">
+              <h2>按页面管理</h2>
+              <p>点击页面打开右侧详情，调整单条提示的开关和等待时间。{{ enabledTipCount }} / {{ totalTipCount }} 条已启用。</p>
             </div>
 
-            <div class="settings-page-grid">
+            <div class="settings-panel">
               <article
                 v-for="page in SOFT_TIP_PAGES"
                 :key="page.key"
-                class="settings-page-card"
-                :class="{ 'is-page-disabled': !tipDraft.enabled || !tipDraft.pages[page.key].enabled }"
+                class="settings-row settings-row-button"
+                :class="{ 'is-muted': !tipDraft.enabled || !tipDraft.pages[page.key].enabled }"
                 role="button"
                 tabindex="0"
                 @click="openTipDrawer(page.key)"
                 @keydown.enter.prevent="openTipDrawer(page.key)"
                 @keydown.space.prevent="openTipDrawer(page.key)"
               >
-                <span class="settings-page-icon">
-                  <el-icon><component :is="pageIcons[page.key]" /></el-icon>
-                </span>
-                <span class="settings-page-copy">
+                <span class="settings-row-icon"><el-icon><component :is="pageIcons[page.key]" /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>{{ page.title }}</strong>
                   <span>{{ page.description }}</span>
-                  <span class="settings-page-meta">
-                    {{ enabledTipsInPage(page) }}/{{ page.tips.length }} 条
-                    · {{ tipDraft.pages[page.key].enabled ? '页面已启用' : '页面已关闭' }}
+                  <span class="settings-row-meta">
+                    {{ enabledTipsInPage(page) }}/{{ page.tips.length }} 条 · {{ tipDraft.pages[page.key].enabled ? '页面已启用' : '页面已关闭' }}
                   </span>
                 </span>
-                <span class="settings-page-controls" @click.stop @keydown.stop>
-                  <el-switch
-                    v-model="tipDraft.pages[page.key].enabled"
-                    size="small"
-                    :disabled="!tipDraft.enabled"
-                  />
+                <span class="settings-row-trailing" @click.stop @keydown.stop>
+                  <el-switch v-model="tipDraft.pages[page.key].enabled" size="small" :disabled="!tipDraft.enabled" />
+                  <el-icon class="settings-chevron"><ArrowRight /></el-icon>
                 </span>
-                <el-icon class="settings-chevron"><ArrowRight /></el-icon>
               </article>
             </div>
 
-            <div class="settings-inline-actions">
-              <el-button link type="primary" :icon="RefreshLeft" @click="resetTipsDefaults">
+            <div class="settings-inline-action">
+              <button type="button" class="settings-link-button" @click="resetTipsDefaults">
+                <el-icon><RefreshLeft /></el-icon>
                 恢复默认提示设置
-              </el-button>
+              </button>
             </div>
-          </section>
+          </template>
 
-          <section v-else-if="activeSection === 'appearance'" class="settings-section">
-            <header class="settings-section-head">
-              <span class="settings-section-index">03</span>
-              <div>
-                <h2>外观</h2>
-                <p>这些选项会改变整个工作台的呈现方式，保存后立即应用。</p>
-              </div>
-            </header>
-
-            <div class="settings-card">
+          <template v-else>
+            <div class="settings-panel">
               <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><Monitor /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>背景动效</strong>
                   <span>在工作台背景播放流动光波视频；关闭后使用静态渐变。</span>
-                </div>
+                </span>
                 <el-switch v-model="appearanceDraft.backgroundMotion" />
               </div>
               <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><Postcard /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>身份水印</strong>
                   <span>在背景和页面卡片上显示当前账户的身份水印。</span>
-                </div>
+                </span>
                 <el-switch v-model="appearanceDraft.watermark" />
               </div>
               <div class="settings-row">
-                <div class="settings-row-copy">
+                <span class="settings-row-icon"><el-icon><Fold /></el-icon></span>
+                <span class="settings-row-body">
                   <strong>侧边栏默认收起</strong>
                   <span>下次进入工作台时以收起状态显示左侧导航栏。</span>
-                </div>
+                </span>
                 <el-switch v-model="appearanceDraft.sidebarCollapsed" />
               </div>
             </div>
@@ -723,19 +744,13 @@ onBeforeUnmount(() => {
                   >
                     <div class="settings-preview-brand">
                       <span class="settings-preview-brand-mark"></span>
-                      <span
-                        v-if="!appearanceDraft.sidebarCollapsed"
-                        class="settings-preview-brand-copy"
-                      >
+                      <span v-if="!appearanceDraft.sidebarCollapsed" class="settings-preview-brand-copy">
                         <i class="is-strong"></i>
                         <i></i>
                       </span>
                     </div>
 
-                    <span
-                      v-if="!appearanceDraft.sidebarCollapsed"
-                      class="settings-preview-section"
-                    >工作区</span>
+                    <span v-if="!appearanceDraft.sidebarCollapsed" class="settings-preview-section">工作区</span>
 
                     <div class="settings-preview-menu">
                       <span
@@ -745,23 +760,14 @@ onBeforeUnmount(() => {
                         :class="{ 'is-active': index === 1 }"
                       >
                         <i class="settings-preview-menu-icon"></i>
-                        <i
-                          v-if="!appearanceDraft.sidebarCollapsed"
-                          class="settings-preview-menu-label"
-                        ></i>
-                        <i
-                          v-if="!appearanceDraft.sidebarCollapsed && index === 1"
-                          class="settings-preview-menu-badge"
-                        ></i>
+                        <i v-if="!appearanceDraft.sidebarCollapsed" class="settings-preview-menu-label"></i>
+                        <i v-if="!appearanceDraft.sidebarCollapsed && index === 1" class="settings-preview-menu-badge"></i>
                       </span>
                     </div>
 
                     <div class="settings-preview-sidebar-footer">
                       <i class="settings-preview-menu-icon"></i>
-                      <i
-                        v-if="!appearanceDraft.sidebarCollapsed"
-                        class="settings-preview-menu-label"
-                      ></i>
+                      <i v-if="!appearanceDraft.sidebarCollapsed" class="settings-preview-menu-label"></i>
                     </div>
                   </aside>
 
@@ -793,21 +799,14 @@ onBeforeUnmount(() => {
                         <i></i>
                         <i class="is-meta"></i>
                       </div>
-                      <span
-                        v-for="index in 3"
-                        :key="index"
-                        class="settings-preview-row"
-                      >
+                      <span v-for="index in 3" :key="index" class="settings-preview-row">
                         <i class="settings-preview-row-icon"></i>
                         <i class="settings-preview-row-text"></i>
                         <i class="settings-preview-row-meta"></i>
                       </span>
                     </div>
 
-                    <span
-                      v-if="appearanceDraft.watermark"
-                      class="settings-preview-watermark"
-                    >SeekDateSet</span>
+                    <span v-if="appearanceDraft.watermark" class="settings-preview-watermark">SeekDateSet</span>
                   </div>
                 </div>
               </div>
@@ -817,28 +816,39 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="settings-inline-actions">
-              <el-button link type="primary" :icon="RefreshLeft" @click="resetAppearanceDefaults">
+            <div class="settings-inline-action">
+              <button type="button" class="settings-link-button" @click="resetAppearanceDefaults">
+                <el-icon><RefreshLeft /></el-icon>
                 恢复默认外观
-              </el-button>
+              </button>
             </div>
-          </section>
+          </template>
         </template>
 
-        <footer class="settings-savebar" :class="{ 'is-dirty': dirty }">
-          <div class="settings-savebar-state">
-            <div>
-              <strong>{{ dirty ? '有未保存的修改' : '所有设置已保存' }}</strong>
-              <span>保存范围：使用提示与外观 · 全部页面</span>
-            </div>
+        <div class="settings-actions" :class="{ 'is-dirty': dirty }">
+          <div class="settings-actions-copy">
+            <strong>{{ dirty ? '有未保存的修改' : '所有设置已保存' }}</strong>
+            <span>保存范围：使用提示与外观 · 所有页面</span>
           </div>
-          <div class="settings-savebar-actions">
-            <el-button :disabled="!dirty" @click="saveAll()">保存</el-button>
-            <el-button type="primary" title="保存并返回工作台" @click="confirmAndLeave">确定</el-button>
+          <div class="settings-actions-buttons">
+            <button type="button" class="settings-outline-button" :disabled="!dirty" @click="saveAll()">保存</button>
+            <button type="button" class="settings-primary-button" @click="confirmAndLeave">确定</button>
           </div>
-        </footer>
-      </div>
+        </div>
+
+        <p class="settings-note">「保存」只保存设置并留在此页；「确定」会保存并{{ returnLabel }}。</p>
+      </section>
     </div>
+
+    <footer class="settings-footer">
+      <nav aria-label="设置快捷入口">
+        <button type="button" @click="setActiveSection('account')">个人信息</button>
+        <button type="button" @click="setActiveSection('tips')">使用提示</button>
+        <button type="button" @click="setActiveSection('appearance')">外观</button>
+        <button type="button" @click="handleBack">{{ returnLabel }}</button>
+      </nav>
+      <span>SeekDateSet · 设置</span>
+    </footer>
 
     <el-drawer
       v-model="tipDrawerVisible"
@@ -870,10 +880,7 @@ onBeforeUnmount(() => {
               <strong>启用「{{ activePage.title }}」页面的提示</strong>
               <span>关闭后只影响这个页面，其他页面不受影响。</span>
             </div>
-            <el-switch
-              v-model="tipDraft.pages[activePage.key].enabled"
-              :disabled="!tipDraft.enabled"
-            />
+            <el-switch v-model="tipDraft.pages[activePage.key].enabled" :disabled="!tipDraft.enabled" />
           </div>
 
           <div class="tip-drawer-bulk">
@@ -936,140 +943,252 @@ onBeforeUnmount(() => {
         </footer>
       </div>
     </el-drawer>
-  </div>
-</template>
-<style scoped>
-.settings-page {
-  width: min(var(--page-max-width), 100%);
-  margin: 0 auto;
-  padding-bottom: 28px;
+  </main>
+</template><style scoped>
+.settings-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: #1f1f1f;
+  font-family: var(--font-sans);
+  background: #f0f4f9;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.settings-eyebrow {
-  color: #176b57;
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+.settings-shell *,
+.settings-shell *::before,
+.settings-shell *::after {
+  box-sizing: border-box;
 }
 
-.settings-hero p {
-  max-width: 640px;
+.settings-shell button,
+.settings-shell input,
+.settings-shell select {
+  font: inherit;
 }
 
-.settings-hero-actions {
+.settings-shell button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
+  align-items: center;
+  gap: clamp(12px, 2vw, 24px);
+  height: 72px;
+  padding: 0 clamp(14px, 2.6vw, 32px);
+  background: rgba(240, 244, 249, 0.94);
+  backdrop-filter: blur(16px);
+}
+
+.settings-topbar-leading {
+  display: flex;
+  min-width: 0;
   flex: 0 0 auto;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
-.settings-state-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 5px 10px;
-  color: #176b57;
-  font-size: 10.5px;
-  font-weight: 600;
-  background: rgba(228, 245, 237, 0.9);
-  border: 1px solid rgba(23, 107, 87, 0.1);
-  border-radius: 999px;
-}
-
-.settings-state-pill.is-dirty {
-  color: #a96818;
-  background: #fdf3e4;
-  border-color: rgba(211, 143, 44, 0.16);
-}
-
-.settings-layout {
+.settings-back-button,
+.settings-round-button {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  gap: 26px;
-  align-items: start;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  color: #444746;
+  font-size: 20px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
 }
 
-.settings-rail {
-  position: sticky;
-  top: 18px;
-  padding: 14px;
-  background: rgba(255, 255, 255, 0.64);
-  border: 1px solid rgba(255, 255, 255, 0.82);
-  border-radius: 18px;
-  box-shadow:
-    0 14px 38px rgba(10, 45, 37, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(18px);
+.settings-back-button:hover,
+.settings-round-button:hover {
+  color: #1f1f1f;
+  background: #e3e9f2;
 }
 
-.settings-search :deep(.el-input__wrapper) {
-  background: rgba(247, 251, 249, 0.86);
-  border: 1px solid rgba(23, 107, 87, 0.1);
-  border-radius: 11px;
+.settings-brand {
+  overflow: hidden;
+  color: #3c4043;
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-brand-suffix {
+  color: #5f6368;
+  font-size: 21px;
+  font-weight: 400;
+}
+
+.settings-searchbox {
+  width: min(720px, 52vw);
+  max-width: 720px;
+  flex: 0 1 720px;
+  margin: 0;
+}
+
+.settings-searchbox :deep(.el-input__wrapper) {
+  height: 48px;
+  padding: 0 18px;
+  background: #e4ebf5;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.settings-searchbox :deep(.el-input__wrapper:hover) {
+  background: #dde6f2;
   box-shadow: none;
 }
 
-.settings-search :deep(.el-input__wrapper.is-focus) {
-  border-color: rgba(23, 107, 87, 0.32);
-  box-shadow: 0 0 0 3px rgba(23, 107, 87, 0.08);
+.settings-searchbox :deep(.el-input__wrapper.is-focus) {
+  background: #fff;
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.16),
+    0 1px 3px 1px rgba(60, 64, 67, 0.1);
 }
 
-.settings-search-hint {
-  display: block;
-  margin: 7px 2px 0;
-  color: var(--ink-faint);
-  font-size: 10px;
-  line-height: 1.5;
+.settings-searchbox :deep(.el-input__inner) {
+  color: #1f1f1f;
+  font-size: 15px;
+}
+
+.settings-searchbox :deep(.el-input__inner::placeholder) {
+  color: #5f6368;
+}
+
+.settings-searchbox :deep(.el-input__prefix) {
+  margin-right: 6px;
+  color: #444746;
+  font-size: 19px;
+}
+
+.settings-topbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.settings-avatar-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  margin-left: 6px;
+  flex: 0 0 36px;
+  place-items: center;
+  color: #0c5c48;
+  font-size: 14px;
+  font-weight: 600;
+  background: #d9efe5;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.18);
+  cursor: pointer;
+}
+
+.settings-avatar-button:hover {
+  background: #c8e8da;
+}
+
+.settings-body {
+  display: grid;
+  width: min(1440px, 100%);
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: clamp(24px, 4vw, 72px);
+  align-items: start;
+  margin: 0 auto;
+  padding: 12px clamp(16px, 3vw, 48px) 40px;
 }
 
 .settings-nav {
+  position: sticky;
+  top: 88px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 14px;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.settings-nav-caption {
+  margin: 0 0 8px 18px;
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
 
 .settings-nav-item {
   display: flex;
   width: 100%;
+  min-height: 52px;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  color: var(--ink-soft);
+  gap: 16px;
+  padding: 6px 16px 6px 8px;
+  color: #1f1f1f;
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: 12px;
+  border-radius: 999px;
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition: background 0.16s ease;
 }
 
 .settings-nav-item:hover {
-  background: rgba(23, 107, 87, 0.06);
+  background: #e3e9f2;
 }
 
 .settings-nav-item.is-active {
+  background: #d9ece4;
+}
+
+.settings-nav-item.is-active .settings-nav-copy strong {
   color: #0f5c49;
-  background: linear-gradient(135deg, #e4f5ed, #f1faf5);
-  box-shadow: inset 0 0 0 1px rgba(23, 107, 87, 0.1);
 }
 
-.settings-nav-icon {
+.settings-nav-orb {
   display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
   place-items: center;
-  color: var(--ink-faint);
-  font-size: 15px;
-  background: rgba(255, 255, 255, 0.62);
-  border-radius: 9px;
+  color: #444746;
+  font-size: 19px;
+  background: #e8eaed;
+  border-radius: 50%;
+  transition: background 0.16s ease, color 0.16s ease;
 }
 
-.settings-nav-item.is-active .settings-nav-icon {
+.settings-nav-orb.is-account {
   color: #176b57;
-  background: #fff;
+  background: #dff2ea;
+}
+
+.settings-nav-orb.is-tips {
+  color: #a25a00;
+  background: #fdead0;
+}
+
+.settings-nav-orb.is-appearance {
+  color: #8e24aa;
+  background: #f4e4f8;
+}
+
+.settings-nav-item.is-active .settings-nav-orb {
+  color: #fff;
+  background: #176b57;
 }
 
 .settings-nav-copy {
@@ -1081,414 +1200,455 @@ onBeforeUnmount(() => {
 }
 
 .settings-nav-copy strong {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.settings-nav-copy span {
   overflow: hidden;
-  color: var(--ink-faint);
-  font-size: 10.5px;
+  font-size: 14.5px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.settings-nav-copy span {
+  overflow: hidden;
+  color: #5f6368;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-nav-divider {
+  display: block;
+  height: 1px;
+  margin: 12px 18px;
+  background: #dbe1e8;
+}
+
+.settings-nav-item.is-return {
+  color: #444746;
+}
+
+.settings-nav-item.is-return .settings-nav-copy strong {
+  font-weight: 450;
+}
+
 .settings-main {
   display: flex;
-  min-width: 0;
+  width: 100%;
+  max-width: 720px;
   flex-direction: column;
-  gap: 18px;
+  margin: 0 auto;
+  padding-top: 8px;
 }
 
-.settings-section {
-  animation: settingsSectionIn 0.26s ease-out;
+.settings-page-head {
+  margin: 0 0 20px;
 }
 
-.settings-section-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.settings-section-index {
-  display: grid;
-  min-width: 34px;
-  height: 26px;
-  flex: 0 0 auto;
-  place-items: center;
-  padding: 0 7px;
-  color: #176b57;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  background: #e5f5ed;
-  border-radius: 8px;
-}
-
-.settings-section-index-icon {
-  padding: 0;
-  font-size: 13px;
-}
-
-.settings-section-head h2 {
-  margin: 0 0 3px;
-  color: var(--ink);
-  font-size: 19px;
-  font-weight: 650;
+.settings-page-head h1 {
+  margin: 0 0 6px;
+  color: #1f1f1f;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.3;
   letter-spacing: -0.01em;
 }
 
-.settings-section-head p {
+.settings-page-head p {
+  max-width: 640px;
   margin: 0;
-  color: var(--ink-soft);
-  font-size: 11.5px;
+  color: #444746;
+  font-size: 14px;
   line-height: 1.6;
 }
 
-.settings-card {
+.settings-panel {
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(23, 107, 87, 0.1);
-  border-radius: 16px;
-  box-shadow: 0 12px 32px rgba(10, 45, 37, 0.06);
-  backdrop-filter: blur(14px);
+  background: #fff;
+  border-radius: 24px;
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.08),
+    0 1px 3px 1px rgba(60, 64, 67, 0.04);
 }
 
 .settings-row {
-  display: flex;
+  display: grid;
+  min-height: 74px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 20px;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 15px 18px;
-  border-top: 1px solid rgba(23, 107, 87, 0.08);
+  padding: 16px 24px;
+  border-top: 1px solid #e8eaed;
 }
 
 .settings-row:first-child {
   border-top: 0;
 }
 
-.settings-row-copy {
+.settings-row-icon {
+  display: grid;
+  place-items: center;
+  color: #444746;
+  font-size: 22px;
+}
+
+.settings-row-body {
   display: flex;
   min-width: 0;
-  flex: 1;
   flex-direction: column;
   gap: 3px;
 }
 
-.settings-row-copy strong {
-  color: var(--ink);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.settings-row-copy span {
-  color: var(--ink-faint);
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.settings-value {
-  max-width: 55%;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: 11.5px;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-chevron {
-  flex: 0 0 auto;
-  color: var(--ink-faint);
-}
-
-.settings-profile {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 18px;
-  background: linear-gradient(135deg, rgba(226, 244, 236, 0.92), rgba(247, 252, 249, 0.92));
-}
-
-.settings-avatar {
-  display: grid;
-  width: 46px;
-  height: 46px;
-  flex: 0 0 46px;
-  place-items: center;
-  color: #0c5c48;
-  font-size: 17px;
-  font-weight: 700;
-  background: #d5efe3;
-  border: 1px solid rgba(23, 107, 87, 0.12);
-  border-radius: 50%;
-}
-
-.settings-profile-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.settings-profile-copy strong,
-.settings-profile-copy span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-profile-copy strong {
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.settings-profile-copy span {
-  color: var(--ink-soft);
-  font-size: 11px;
-}
-
-.settings-account-chip {
-  flex: 0 0 auto;
-  padding: 4px 9px;
-  color: var(--ink-faint);
-  font-size: 10px;
-  background: rgba(255, 255, 255, 0.72);
-  border-radius: 999px;
-}
-
-.settings-account-chip.is-online {
-  color: #176b57;
-  background: #e3f4ec;
-}
-
-.settings-select {
-  width: 126px;
-  flex: 0 0 126px;
-}
-
-.settings-subhead {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 14px;
-  margin: 18px 0 10px;
-}
-
-.settings-subhead h3 {
-  margin: 0 0 3px;
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.settings-subhead p {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: 10.5px;
-  line-height: 1.55;
-}
-
-.settings-count {
-  flex: 0 0 auto;
-  padding: 4px 9px;
-  color: #176b57;
-  font-size: 10.5px;
-  font-weight: 600;
-  background: #e8f6ef;
-  border-radius: 999px;
-}
-
-.settings-page-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 12px;
-}
-
-.settings-page-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  gap: 12px;
-  align-items: center;
-  padding: 15px;
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(23, 107, 87, 0.1);
-  border-radius: 16px;
-  box-shadow: 0 8px 24px rgba(10, 45, 37, 0.04);
-  cursor: pointer;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
-    border-color 0.18s ease;
-}
-
-.settings-page-card:hover,
-.settings-page-card:focus-visible {
-  border-color: rgba(23, 107, 87, 0.24);
-  outline: none;
-  box-shadow: 0 16px 34px rgba(10, 45, 37, 0.1);
-  transform: translateY(-2px);
-}
-
-.settings-page-card.is-page-disabled {
-  opacity: 0.64;
-}
-
-.settings-page-icon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  place-items: center;
-  color: #176b57;
-  font-size: 17px;
-  background: #e7f5ee;
-  border-radius: 11px;
-}
-
-.settings-page-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.settings-page-copy strong {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.settings-page-copy > span {
-  color: var(--ink-faint);
-  font-size: 10.5px;
+.settings-row-body strong {
+  color: #1f1f1f;
+  font-size: 15px;
+  font-weight: 500;
   line-height: 1.45;
 }
 
-.settings-page-meta {
-  margin-top: 2px;
-  color: #176b57 !important;
-  font-size: 10px !important;
+.settings-row-body span {
+  color: #444746;
+  font-size: 13.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
-.settings-page-controls {
+.settings-row-body .settings-row-meta {
+  margin-top: 1px;
+  color: #176b57;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.settings-row-value {
+  color: #444746;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.settings-row-trailing {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-}
-
-.settings-inline-actions {
-  display: flex;
+  gap: 12px;
   justify-content: flex-end;
-  margin-top: 8px;
 }
 
-.settings-search-list {
-  padding: 0;
-}
-
-.settings-search-result {
-  display: flex;
+.settings-row-button {
   width: 100%;
-  align-items: center;
-  gap: 11px;
-  padding: 14px 18px;
+  color: inherit;
   text-align: left;
   background: transparent;
   border: 0;
-  border-top: 1px solid rgba(23, 107, 87, 0.08);
+  border-top: 1px solid #e8eaed;
   cursor: pointer;
   transition: background 0.16s ease;
 }
 
-.settings-search-result:first-child {
+.settings-row-button:first-child {
   border-top: 0;
 }
 
-.settings-search-result:hover {
-  background: rgba(23, 107, 87, 0.05);
+.settings-row-button:hover {
+  background: #f8fafd;
 }
 
-.settings-result-icon {
+.settings-row-button:focus-visible {
+  outline: 2px solid #176b57;
+  outline-offset: -2px;
+}
+
+.settings-row-button.is-muted .settings-row-body {
+  opacity: 0.78;
+}
+
+.settings-row-button.is-muted .settings-row-trailing {
+  opacity: 1;
+}
+
+.settings-chevron {
+  color: #5f6368;
+  font-size: 18px;
+}
+
+.settings-profile-avatar {
   display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 56px;
+  height: 56px;
   place-items: center;
-  color: #176b57;
-  font-size: 14px;
-  background: #e8f6ef;
-  border-radius: 9px;
+  color: #0c5c48;
+  font-size: 22px;
+  font-weight: 600;
+  background: #dff2ea;
+  border-radius: 50%;
 }
 
-.settings-result-copy {
+.settings-status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  color: #5f6368;
+  font-size: 12.5px;
+  font-weight: 500;
+  background: #f1f3f4;
+  border-radius: 999px;
+}
+
+.settings-status-chip.is-online {
+  color: #0f5c49;
+  background: #e2f3eb;
+}
+
+.settings-select {
+  width: 190px;
+}
+
+.settings-select :deep(.el-select__wrapper) {
+  min-height: 38px;
+  font-size: 14px;
+}
+
+.settings-group {
+  margin: 28px 0 10px;
+}
+
+.settings-group h2 {
+  margin: 0 0 4px;
+  color: #1f1f1f;
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.settings-group p {
+  margin: 0;
+  color: #5f6368;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-inline-action {
+  display: flex;
+  margin: 14px 2px 0;
+}
+
+.settings-link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  color: #176b57;
+  font-size: 13.5px;
+  font-weight: 500;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.settings-link-button:hover {
+  color: #0d4d3e;
+  text-decoration: underline;
+}
+
+.settings-link-button:focus-visible {
+  outline: 2px solid #176b57;
+  outline-offset: 2px;
+}
+
+.settings-empty {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 52px 24px;
+  text-align: center;
+  background: #fff;
+  border-radius: 24px;
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.08),
+    0 1px 3px 1px rgba(60, 64, 67, 0.04);
+}
+
+.settings-empty-icon {
+  margin-bottom: 4px;
+  color: #5f6368;
+  font-size: 28px;
+}
+
+.settings-empty strong {
+  color: #1f1f1f;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.settings-empty span {
+  color: #5f6368;
+  font-size: 13.5px;
+}
+
+.settings-actions {
+  position: sticky;
+  bottom: 18px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 28px;
+  padding: 14px 20px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.12),
+    0 10px 28px rgba(60, 64, 67, 0.14);
+}
+
+.settings-actions-copy {
   display: flex;
   min-width: 0;
-  flex: 1;
   flex-direction: column;
   gap: 2px;
 }
 
-.settings-result-copy strong {
-  font-size: 12px;
-  font-weight: 600;
+.settings-actions-copy strong {
+  color: #1f1f1f;
+  font-size: 14px;
+  font-weight: 500;
 }
 
-.settings-result-copy span {
-  color: var(--ink-faint);
-  font-size: 10.5px;
-}
-
-.settings-empty-card {
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  gap: 7px;
-  padding: 36px 20px;
-  color: var(--ink-faint);
-  text-align: center;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px dashed rgba(23, 107, 87, 0.16);
-  border-radius: 16px;
-}
-
-.settings-empty-card > .el-icon {
-  color: #7aa998;
-  font-size: 22px;
-}
-
-.settings-empty-card strong {
-  color: var(--ink);
+.settings-actions-copy span {
+  color: #5f6368;
   font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.settings-actions.is-dirty .settings-actions-copy strong {
+  color: #8a4b00;
+}
+
+.settings-actions-buttons {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.settings-outline-button,
+.settings-primary-button {
+  display: inline-flex;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.settings-outline-button {
+  color: #176b57;
+  background: transparent;
+  border: 1px solid #747775;
+}
+
+.settings-outline-button:hover:not(:disabled) {
+  background: #eef7f3;
+}
+
+.settings-primary-button {
+  color: #fff;
+  background: #176b57;
+  border: 1px solid #176b57;
+}
+
+.settings-primary-button:hover:not(:disabled) {
+  background: #0f5c49;
+  border-color: #0f5c49;
+}
+
+.settings-outline-button:disabled,
+.settings-primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.settings-outline-button:focus-visible,
+.settings-primary-button:focus-visible {
+  outline: 2px solid #176b57;
+  outline-offset: 2px;
+}
+
+.settings-note {
+  margin: 12px 4px 0;
+  color: #5f6368;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.settings-footer {
+  display: flex;
+  width: min(1440px, 100%);
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 auto;
+  padding: 8px clamp(16px, 3vw, 48px) 30px;
+}
+
+.settings-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+}
+
+.settings-footer button {
+  padding: 0;
+  color: #444746;
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.settings-footer button:hover {
+  color: #176b57;
+  text-decoration: underline;
+}
+
+.settings-footer span {
+  color: #5f6368;
+  font-size: 12px;
+}
+
+.settings-eyebrow {
+  color: #176b57;
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
-
-.settings-empty-card span {
-  font-size: 11px;
-}
-
 .settings-preview {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 14px;
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(23, 107, 87, 0.1);
-  border-radius: 16px;
+  margin-top: 24px;
+  padding: 20px;
+  background: #fff;
+  border: 0;
+  border-radius: 24px;
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.08),
+    0 1px 3px 1px rgba(60, 64, 67, 0.04);
 }
 
 .settings-preview-stage {
   position: relative;
-  height: 214px;
+  height: 236px;
   padding: 10px;
   overflow: hidden;
   background:
     linear-gradient(130deg, rgba(230, 246, 239, 0.94), rgba(220, 239, 232, 0.94) 46%, rgba(248, 252, 250, 0.97));
   border: 1px solid rgba(23, 107, 87, 0.1);
-  border-radius: 13px;
+  border-radius: 16px;
 }
 
 .settings-preview-app {
@@ -1848,64 +2008,18 @@ onBeforeUnmount(() => {
 }
 
 .settings-preview-meta strong {
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
+  color: #1f1f1f;
+  font-size: 14.5px;
+  font-weight: 500;
 }
 
 .settings-preview-meta span {
-  color: var(--ink-faint);
-  font-size: 10.5px;
-  line-height: 1.5;
+  color: #5f6368;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
-.settings-savebar {
-  position: sticky;
-  bottom: 16px;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 2px;
-  padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(23, 107, 87, 0.12);
-  border-radius: 16px;
-  box-shadow: 0 18px 46px rgba(10, 45, 37, 0.14);
-  backdrop-filter: blur(18px);
-}
 
-.settings-savebar-state {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.settings-savebar-state > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.settings-savebar-state strong {
-  color: var(--ink);
-  font-size: 11.5px;
-  font-weight: 600;
-}
-
-.settings-savebar-state span {
-  color: var(--ink-faint);
-  font-size: 10px;
-}
-
-.settings-savebar-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
-}
 
 .settings-tip-drawer {
   max-width: 100vw;
@@ -1913,7 +2027,7 @@ onBeforeUnmount(() => {
 
 :global(.settings-tip-drawer) {
   max-width: 100vw;
-  background: #f4f8f7;
+  background: #f7f9fc;
   box-shadow: -22px 0 54px rgba(8, 30, 24, 0.16);
 }
 
@@ -1931,7 +2045,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex-direction: column;
   color: var(--ink);
-  background: #f4f8f7;
+  background: #f7f9fc;
 }
 
 .tip-drawer-header {
@@ -1957,21 +2071,21 @@ onBeforeUnmount(() => {
 
 .tip-drawer-heading p {
   margin: 0;
-  color: var(--ink-faint);
-  font-size: 10.5px;
+  color: #5f6368;
+  font-size: 12.5px;
   line-height: 1.6;
 }
 
 .tip-drawer-close {
   display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   place-items: center;
-  color: var(--ink-faint);
+  color: #5f6368;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(23, 107, 87, 0.1);
-  border-radius: 9px;
+  border-radius: 50%;
   cursor: pointer;
 }
 
@@ -1994,7 +2108,7 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
   padding: 10px 12px;
   color: #96611b;
-  font-size: 10.5px;
+  font-size: 12.5px;
   line-height: 1.55;
   background: #fdf3e4;
   border: 1px solid rgba(211, 143, 44, 0.16);
@@ -2025,13 +2139,13 @@ onBeforeUnmount(() => {
 }
 
 .tip-drawer-master-copy strong {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .tip-drawer-master-copy span {
-  color: var(--ink-faint);
-  font-size: 10.5px;
+  color: #5f6368;
+  font-size: 12.5px;
   line-height: 1.5;
 }
 
@@ -2041,8 +2155,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   margin: 14px 0 4px;
-  color: var(--ink-faint);
-  font-size: 10.5px;
+  color: #5f6368;
+  font-size: 12.5px;
 }
 
 .tip-drawer-list {
@@ -2082,19 +2196,19 @@ onBeforeUnmount(() => {
 }
 
 .tip-detail-copy strong {
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
+  color: #1f1f1f;
+  font-size: 13.5px;
+  font-weight: 500;
 }
 
 .tip-detail-copy span {
-  color: var(--ink-soft);
-  font-size: 11px;
+  color: #444746;
+  font-size: 12.5px;
   line-height: 1.6;
 }
 
 .tip-detail-row.is-disabled .tip-detail-copy {
-  opacity: 0.55;
+  opacity: 0.7;
 }
 
 .tip-detail-delay {
@@ -2115,22 +2229,12 @@ onBeforeUnmount(() => {
 }
 
 .tip-drawer-footer span {
-  color: var(--ink-faint);
-  font-size: 10px;
+  color: #5f6368;
+  font-size: 12px;
   line-height: 1.5;
 }
 
-@keyframes settingsSectionIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
 
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
 
 @keyframes previewDrift {
   from {
@@ -2152,155 +2256,216 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 1050px) {
-  .settings-layout {
-    grid-template-columns: 220px minmax(0, 1fr);
-    gap: 18px;
-  }
-
-  .settings-page-grid {
+@media (max-width: 1100px) {
+  .settings-body {
     grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 860px) {
-  .settings-hero {
-    align-items: flex-start;
-    flex-direction: column;
+    gap: 14px;
+    padding-top: 6px;
   }
 
-  .settings-hero-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .settings-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-rail {
+  .settings-nav {
     position: static;
-  }
-
-  .settings-nav {
     flex-direction: row;
-    padding-bottom: 2px;
-    overflow-x: auto;
-  }
-
-  .settings-nav-item {
-    min-width: 170px;
-  }
-
-}
-
-@media (max-width: 640px) {
-  .settings-hero h1 {
-    font-size: 26px;
-  }
-
-  .settings-nav {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
-    overflow: visible;
+    padding: 4px 0 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-nav-caption,
+  .settings-nav-divider {
+    display: none;
   }
 
   .settings-nav-item {
-    position: relative;
-    min-width: 0;
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-    padding: 9px 8px;
+    width: auto;
+    min-height: 44px;
+    flex: 0 0 auto;
+    padding: 5px 15px 5px 6px;
   }
 
-  .settings-nav-icon {
-    width: 24px;
-    height: 24px;
-    flex-basis: 24px;
-    font-size: 13px;
-  }
-
-  .settings-nav-copy strong {
-    font-size: 11px;
+  .settings-nav-orb {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+    font-size: 16px;
   }
 
   .settings-nav-copy span {
     display: none;
   }
 
+  .settings-nav-copy strong {
+    font-size: 13.5px;
+  }
+
+  .settings-nav-item.is-return {
+    display: none;
+  }
+
+  .settings-main {
+    max-width: 760px;
+    padding-top: 4px;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-topbar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px 12px;
+  }
+
+  .settings-topbar-leading {
+    order: 1;
+  }
+
+  .settings-topbar-actions {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .settings-searchbox {
+    width: 100%;
+    max-width: none;
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .settings-brand,
+  .settings-brand-suffix {
+    font-size: 18px;
+  }
+
+  .settings-back-button,
+  .settings-round-button {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+    font-size: 18px;
+  }
+
+  .settings-avatar-button {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+
+  .settings-body {
+    padding: 8px 14px 32px;
+  }
+
+  .settings-page-head h1 {
+    font-size: 24px;
+  }
+
+  .settings-page-head p {
+    font-size: 13.5px;
+  }
+
   .settings-row {
-    align-items: flex-start;
-    padding: 13px 14px;
+    min-height: 66px;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 14px;
+    padding: 14px 16px;
   }
 
-  .settings-value {
-    max-width: 45%;
+  .settings-row-icon {
+    font-size: 20px;
   }
 
-  .settings-profile {
-    padding: 15px;
+  .settings-row-body strong {
+    font-size: 14.5px;
   }
 
-  .settings-profile-copy strong,
-  .settings-profile-copy span {
-    white-space: normal;
+  .settings-row-body span {
+    font-size: 13px;
   }
 
-  .settings-preview-stage {
-    height: 178px;
+  .settings-profile-avatar {
+    width: 48px;
+    height: 48px;
+    font-size: 19px;
   }
 
-  .settings-hero-actions {
-    justify-content: flex-start;
+  .settings-select {
+    width: 150px;
   }
 
-  .settings-savebar {
-    position: sticky;
-    bottom: calc(92px + env(safe-area-inset-bottom));
+  .settings-actions {
+    position: static;
     align-items: stretch;
     flex-direction: column;
+    gap: 12px;
+    padding: 14px 16px;
   }
 
-  .settings-savebar-actions {
+  .settings-actions-buttons {
     justify-content: flex-end;
   }
 
-  .tip-detail-row {
-    grid-template-columns: auto minmax(0, 1fr);
+  .settings-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding: 6px 14px 26px;
   }
 
-  .tip-detail-delay {
+  .settings-preview-stage {
+    height: 190px;
+  }
+
+  :global(.settings-tip-drawer) {
+    width: 100vw !important;
+    max-width: 100vw;
+  }
+}
+
+@media (max-width: 520px) {
+  .settings-row {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .settings-row-trailing,
+  .settings-profile-avatar,
+  .settings-chevron {
     grid-column: 2;
     justify-self: start;
+    margin-top: 4px;
   }
 
-  .tip-drawer-header {
-    padding: 18px 18px 14px;
+  .settings-row-trailing {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
-  .tip-drawer-scroll {
-    padding: 14px 18px 18px;
+  .settings-row-value {
+    grid-column: 2;
+    text-align: left;
   }
 
-  .tip-drawer-footer {
-    padding: 12px 18px 16px;
+  .settings-row-body .settings-row-meta {
+    font-size: 12px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-section,
   .settings-preview-orb,
   .tip-detail-row.is-highlighted {
     animation: none;
   }
 
   .settings-preview-sidebar,
-  .settings-preview-topbar,
+  .settings-preview-app,
   .settings-preview-card,
-  .settings-page-card {
+  .settings-preview-menu-item,
+  .settings-nav-item,
+  .settings-nav-orb {
     transition: none;
   }
-}
-</style>
+}</style>
