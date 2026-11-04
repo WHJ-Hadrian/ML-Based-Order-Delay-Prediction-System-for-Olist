@@ -5,6 +5,7 @@ import {
   Cpu,
   MagicStick,
   SetUp,
+  Share,
 } from '@element-plus/icons-vue'
 
 export const NAVIGATION_ITEMS = Object.freeze([
@@ -44,6 +45,15 @@ export const NAVIGATION_ITEMS = Object.freeze([
     emptyText: '选择已登记模型开始试炼',
     icon: MagicStick,
     component: () => import('@/views/ModelTrialView.vue'),
+  },
+  {
+    key: 'workflows',
+    path: '/workflows',
+    title: '工作流',
+    description: '组合数据、分析、规则与模型节点，保存可复用流程。',
+    emptyText: '从空白画布开始编排一个工作流',
+    icon: Share,
+    component: () => import('@/views/WorkflowWorkspaceView.vue'),
   },
   {
     key: 'fields',
