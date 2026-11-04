@@ -2,7 +2,7 @@
 
 ## 1. 文档范围
 
-本文描述当前仓库已经确定的系统边界、服务职责、基础设施和代码实现状态。仓库目前主要完成项目骨架与本地运行配置，业务接口和数据处理流程尚未实现；文中会区分架构职责与已落地代码。
+本文描述当前仓库已经确定的系统边界、服务职责、基础设施和代码实现状态。数据集、分析工作台、字段与规则资产、模型生命周期及可保存工作流定义已有业务实现；工作流 DAG 后台执行与部分跨服务节点尚未落地。文中会区分架构职责与已落地代码。
 
 ## 2. 总体架构
 
@@ -76,7 +76,7 @@ flowchart LR
 | `api-gateway` | Spring Cloud Gateway | 对外统一 API 入口，校验 JWT，并将 `/api/v1/...` 路由到对应 Java 服务。 |
 | `order-service` | Spring Boot | 管理订单及订单状态，拥有订单服务数据。 |
 | `dataset-service` | Spring Boot | 管理上传文件相关元数据、数据集版本及校验记录。文件内容存放于对象存储。 |
-| `job-service` | Spring Boot、Temporal Client | 管理长任务状态并连接 Temporal 工作流服务。 |
+| `job-service` | Spring Boot、Temporal Client | 持久化用户工作流定义并校验 DAG；长任务执行仍需接入持久化运行记录和 Worker。 |
 | `prediction-service` | Spring Boot | 提供在线预测业务入口、预测记录和审计，并调用模型服务。 |
 | `model-management-service` | Spring Boot | 管理模型审核、上线、回滚及版本元数据。 |
 | `analytics-query-service` | Spring Boot | 为前端分析看板提供查询 API。 |
@@ -88,7 +88,7 @@ flowchart LR
 
 | 服务 | Compose 内部端口 | 当前可用入口 |
 | --- | --- | --- |
-| `api-gateway` | `8080` | 宿主机映射为 `http://localhost:8080`；路由 `/api/v1/orders/**`、`/api/v1/datasets/**`、`/api/v1/fields/**`、`/api/v1/rules/**`、`/api/v1/jobs/**`、`/api/v1/predictions/**`、`/api/v1/models/**`、`/api/v1/analytics/**`。 |
+| `api-gateway` | `8080` | 宿主机映射为 `http://localhost:8080`；路由 `/api/v1/orders/**`、`/api/v1/datasets/**`、`/api/v1/fields/**`、`/api/v1/rules/**`、`/api/v1/jobs/**`、`/api/v1/workflows/**`、`/api/v1/predictions/**`、`/api/v1/models/**`、`/api/v1/analytics/**`。 |
 | `order-service` | `8081` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
 | `dataset-service` | `8082` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
 | `job-service` | `8083` | Java Actuator 健康检查 `/actuator/health`；Compose 内部服务，默认不映射宿主机端口。 |
@@ -249,7 +249,9 @@ docker compose --profile observability up -d
 
 - Java Maven 工程和各服务启动类、基础安全及健康检查配置已经建立；服务模块边界和 Gateway 路由已配置。
 - 前端使用邮箱先行的分步登录/注册界面：登录时输入邮箱后进入密码步骤，再通过 Keycloak 密码授权换取 access token（仅本地开发启用 password grant，生产应改用 Authorization Code + PKCE）；注册流程按姓名、生日与性别、密码分步完成。应用只保留这一个登录/注册入口，不再维护额外的 Keycloak 托管登录页；业务 API 使用 Keycloak 签发的 access token。数据集按 JWT `sub` 隔离。
-- Java 服务尚未实现订单、任务编排、预测、模型管理或分析查询等业务接口；数据集服务已实现文件上传、版本元数据查询、对象存储写入，以及字段库和清洗规则库的维护接口。
+- `job-service` 已提供 owner 隔离的工作流定义列表、创建、读取、更新、复制与删除接口，保存修订号并校验节点白名单、端口、循环、文档大小及脚本/SQL 字段。前端 `/workflows` 支持多画布编辑和自动保存；数据源节点可固定引用一个数据集版本及表，引用格式在服务端校验。该功能保存的是定义，不等于后台运行：工作流运行记录、Worker 执行、节点预览和结果血缘尚未实现。
+- 数据集服务已实现文件上传、版本元数据查询、对象存储写入，以及字段库和清洗规则库的维护接口；规则工作簿发布版本目前仍绑定创建时的数据集版本，尚不是跨数据集通用的规则组件。
+- 订单、通用工作流执行与分析查询的部分业务接口仍未实现；请以各服务代码和测试为准，不将架构图中的职责视为已上线能力。
 - Python FastAPI 已提供健康检查、指标、受保护的模型训练/试炼端点和规则 PREVIEW Worker；模型在线推理与 Temporal Worker 活动尚未实现。
 - `app/workers/rule_execution/` 已实现冻结计划校验、READY execution snapshot、稳定拓扑排序、受限只读 ClickHouse PREVIEW、运行上报，以及 claim/lease/fencing 自动消费；FULL 物化和 Temporal activity 尚未接入，`app/pipelines/` 仍只有职责说明。
 - Kafka 基础设施与订单状态事件契约已配置；契约不代表订单事件的生产者和消费者业务逻辑已实现。
