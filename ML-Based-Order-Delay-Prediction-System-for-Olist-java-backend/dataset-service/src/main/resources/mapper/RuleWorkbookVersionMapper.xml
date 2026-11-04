@@ -74,4 +74,24 @@
         FROM rule_workbook_versions
         WHERE workbook_id = #{workbookId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
     </select>
+
+    <select id="findPublishedCatalog" resultType="com.olist.datasets.vo.PublishedRuleVersionVO">
+        SELECT v.id,
+               v.workbook_id,
+               w.name AS workbook_name,
+               v.version_number,
+               v.dataset_version_id AS source_dataset_version_id,
+               v.status,
+               v.content_hash,
+               v.created_at
+        FROM rule_workbook_versions v
+        JOIN rule_workbooks w ON w.id = v.workbook_id
+        WHERE w.owner_id = #{ownerId}
+          AND v.status = 'PUBLISHED'
+        <if test="keywordPattern != null">
+            AND LOWER(w.name) LIKE #{keywordPattern}
+        </if>
+        ORDER BY v.created_at DESC, w.name ASC, v.version_number DESC
+        LIMIT #{limit}
+    </select>
 </mapper>

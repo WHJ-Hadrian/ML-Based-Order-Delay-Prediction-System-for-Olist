@@ -1,6 +1,7 @@
 package com.olist.datasets.mapper;
 
 import com.olist.datasets.entity.RuleWorkbookVersion;
+import com.olist.datasets.vo.PublishedRuleVersionVO;
 import java.util.List;
 import java.util.UUID;
 import org.apache.ibatis.annotations.Param;
@@ -27,4 +28,9 @@ public interface RuleWorkbookVersionMapper {
             @Param("ownerId") String ownerId);
 
     int findMaxVersionNumber(@Param("workbookId") UUID workbookId);
+
+    List<PublishedRuleVersionVO> findPublishedCatalog(
+            @Param("ownerId") String ownerId,
+            @Param("keywordPattern") String keywordPattern,
+            @Param("limit") int limit);
 }

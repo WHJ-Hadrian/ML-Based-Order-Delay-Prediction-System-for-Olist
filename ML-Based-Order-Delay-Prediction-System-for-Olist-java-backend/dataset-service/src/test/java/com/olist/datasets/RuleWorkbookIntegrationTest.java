@@ -173,6 +173,14 @@ class RuleWorkbookIntegrationTest {
                 .andExpect(jsonPath("$.versionNumber").value(1))
                 .andExpect(jsonPath("$.status").value("PUBLISHED"));
 
+        mockMvc.perform(get("/api/v1/rule-workbooks/published-versions")
+                        .param("keyword", "订单客户关联清洗"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].workbookId").value(workbookId))
+                .andExpect(jsonPath("$[0].workbookName").value("订单客户关联清洗"))
+                .andExpect(jsonPath("$[0].versionNumber").value(1))
+                .andExpect(jsonPath("$[0].sourceDatasetVersionId").value(datasetId.toString()));
+
         MvcResult runCreated = mockMvc.perform(post("/api/v1/rule-workbooks/{id}/runs", workbookId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

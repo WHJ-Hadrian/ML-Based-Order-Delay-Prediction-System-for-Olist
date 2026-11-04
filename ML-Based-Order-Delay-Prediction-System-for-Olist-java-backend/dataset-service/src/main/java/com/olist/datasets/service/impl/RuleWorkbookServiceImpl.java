@@ -57,6 +57,7 @@ import com.olist.datasets.vo.RuleValidationResultVO;
 import com.olist.datasets.vo.RuleWorkbookDetailVO;
 import com.olist.datasets.vo.RuleWorkbookVO;
 import com.olist.datasets.vo.RuleWorkbookVersionVO;
+import com.olist.datasets.vo.PublishedRuleVersionVO;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -323,6 +324,15 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
                 .stream()
                 .map(this::toVersionVO)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PublishedRuleVersionVO> publishedVersions(String keyword, int limit) {
+        int safeLimit = Math.min(Math.max(limit, 1), 100);
+        String keywordPattern = keywordPattern(keyword);
+        return ruleWorkbookVersionMapper.findPublishedCatalog(
+                datasetOwnerProvider.currentOwnerId(), keywordPattern, safeLimit);
     }
 
     @Override

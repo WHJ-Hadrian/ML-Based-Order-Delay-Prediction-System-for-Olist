@@ -12,6 +12,7 @@ import com.olist.datasets.vo.RuleValidationResultVO;
 import com.olist.datasets.vo.RuleWorkbookDetailVO;
 import com.olist.datasets.vo.RuleWorkbookVO;
 import com.olist.datasets.vo.RuleWorkbookVersionVO;
+import com.olist.datasets.vo.PublishedRuleVersionVO;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
@@ -98,6 +99,13 @@ public class RuleWorkbookController {
     @GetMapping("/{id}/versions")
     public List<RuleWorkbookVersionVO> versions(@PathVariable UUID id) {
         return ruleWorkbookService.versions(id);
+    }
+
+    @GetMapping("/published-versions")
+    public List<PublishedRuleVersionVO> publishedVersions(
+            @RequestParam(defaultValue = "") String keyword,
+            @RequestParam(defaultValue = "50") int limit) {
+        return ruleWorkbookService.publishedVersions(keyword, limit);
     }
 
     @GetMapping("/{id}/versions/{versionNumber}")

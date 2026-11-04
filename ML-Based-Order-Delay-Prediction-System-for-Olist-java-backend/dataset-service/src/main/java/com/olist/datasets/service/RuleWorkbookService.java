@@ -21,6 +21,7 @@ import com.olist.datasets.vo.ExecutionSnapshotVO;
 import com.olist.datasets.vo.RuleWorkbookDetailVO;
 import com.olist.datasets.vo.RuleWorkbookVO;
 import com.olist.datasets.vo.RuleWorkbookVersionVO;
+import com.olist.datasets.vo.PublishedRuleVersionVO;
 import java.util.List;
 import java.util.UUID;
 
@@ -41,6 +42,8 @@ public interface RuleWorkbookService {
     RuleWorkbookVersionVO publish(UUID id);
 
     List<RuleWorkbookVersionVO> versions(UUID id);
+
+    List<PublishedRuleVersionVO> publishedVersions(String keyword, int limit);
 
     RuleWorkbookVersionVO getVersion(UUID id, int versionNumber);
 
