@@ -4,6 +4,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.api.health import router as health_router
+from app.api.model_training import router as model_training_router
+from app.api.model_trial import router as model_trial_router
 from app.config import settings
 
 app = FastAPI(
@@ -13,6 +15,8 @@ app = FastAPI(
     redoc_url=None,
 )
 app.include_router(health_router, tags=["operations"])
+app.include_router(model_training_router, tags=["internal-model-training"])
+app.include_router(model_trial_router, tags=["internal-model-trial"])
 
 http_requests = Counter(
     "http_requests_total",
