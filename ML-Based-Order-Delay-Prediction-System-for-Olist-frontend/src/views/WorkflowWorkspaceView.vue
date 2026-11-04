@@ -10,6 +10,8 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { createWorkflow, deleteWorkflow, duplicateWorkflow, getWorkflow, listWorkflows, updateWorkflow } from '@/api/workflows'
+import { getDatasetVersionCatalog, getDatasetVersions, listDatasets } from '@/api/datasets'
+import { listPublishedRuleVersions } from '@/api/ruleLibrary'
 
 const nodeCatalog = [
   { type: 'DATA_SOURCE', label: '数据源', description: '从数据集版本或表引入数据', icon: Files, color: '#398a68' },
@@ -41,11 +43,21 @@ const error = ref('')
 const message = ref('')
 const canvasShell = ref(null)
 const nativeFullscreen = ref(false)
+const sourceDatasets = ref([])
+const sourceVersions = ref([])
+const sourceTables = ref([])
+const sourceLoading = ref(false)
+const sourceError = ref('')
+const publishedRules = ref([])
+const ruleLoading = ref(false)
+const ruleError = ref('')
 const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeId.value) || null)
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) || null)
 const { addEdges, fitView } = useVueFlow()
 let saveTimer
 let applyingDocument = false
+let sourceLoadSequence = 0
+let ruleLoadSequence = 0
 
 function nodeType(type) { return nodeCatalog.find((item) => item.type === type) || nodeCatalog[0] }
 
@@ -56,7 +68,11 @@ function workflowDocument() {
       id: node.id,
       type: node.data?.kind || node.type,
       position: { x: Math.round(node.position.x), y: Math.round(node.position.y) },
-      data: { label: node.data?.label || nodeType(node.type).label, description: node.data?.description || '' },
+      data: {
+        label: node.data?.label || nodeType(node.type).label,
+        description: node.data?.description || '',
+        config: node.data?.config || {},
+      },
     })),
     edges: edges.value.map((edge) => ({
       id: edge.id,
@@ -73,7 +89,12 @@ function applyDocument(document) {
   nodes.value = (document?.nodes || []).map((node) => ({
     ...node,
     type: 'default',
-    data: { label: node.data?.label || nodeType(node.type).label, description: node.data?.description || '', kind: node.type },
+    data: {
+      label: node.data?.label || nodeType(node.type).label,
+      description: node.data?.description || '',
+      config: node.data?.config || {},
+      kind: node.type,
+    },
     position: { x: Number(node.position?.x) || 0, y: Number(node.position?.y) || 0 },
   }))
   edges.value = (document?.edges || []).map((edge) => ({ ...edge, sourceHandle: edge.sourceHandle || 'output', targetHandle: edge.targetHandle || 'input' }))
@@ -173,7 +194,7 @@ function addNode(item) {
     id: nodeId,
     type: 'default',
     position: { x: 80 + (nextIndex % 3) * 290, y: 70 + Math.floor(nextIndex / 3) * 190 },
-    data: { kind: item.type, label: item.label, description: '' },
+    data: { kind: item.type, label: item.label, description: '', config: {} },
   }]
   selectedNodeId.value = nodeId
   selectedEdgeId.value = ''
@@ -187,6 +208,179 @@ function connectNodes(connection) {
 function handleNodeClick({ node }) {
   selectedNodeId.value = node.id
   selectedEdgeId.value = ''
+}
+
+async function loadSourceDatasets(nodeId) {
+  const sequence = ++sourceLoadSequence
+  sourceLoading.value = true
+  sourceError.value = ''
+  sourceDatasets.value = []
+  sourceVersions.value = []
+  sourceTables.value = []
+  try {
+    const page = await listDatasets({ page: 0, size: 100, hasData: true })
+    if (sequence !== sourceLoadSequence || selectedNodeId.value !== nodeId) return
+    sourceDatasets.value = page?.items || []
+    const config = nodes.value.find((node) => node.id === nodeId)?.data?.config || {}
+    if (config.datasetId) {
+      if (!sourceDatasets.value.some((dataset) => dataset.id === config.datasetId)) {
+        sourceDatasets.value.unshift({ id: config.datasetId, name: config.datasetName || config.datasetId })
+      }
+      await loadSourceVersions(nodeId, config.datasetId, config.datasetVersionId, config.tableId, sequence)
+    }
+  } catch (cause) {
+    if (sequence === sourceLoadSequence) sourceError.value = cause.message || '数据集载入失败'
+  } finally {
+    if (sequence === sourceLoadSequence) sourceLoading.value = false
+  }
+}
+
+async function loadSourceVersions(nodeId, datasetId, selectedVersionId = '', selectedTableId = '', sequence = ++sourceLoadSequence) {
+  const target = nodes.value.find((node) => node.id === nodeId)
+  if (!target) return
+  const datasetName = target.data.config?.datasetName
+    || sourceDatasets.value.find((dataset) => dataset.id === datasetId)?.name
+    || datasetId
+  target.data.config = { datasetId, datasetName }
+  sourceVersions.value = []
+  sourceTables.value = []
+  sourceError.value = ''
+  try {
+    const versions = await getDatasetVersions(datasetId)
+    if (sequence !== sourceLoadSequence || selectedNodeId.value !== nodeId) return
+    sourceVersions.value = (versions || []).filter((version) => version.status === 'READY')
+    const version = sourceVersions.value.find((item) => item.datasetVersionId === selectedVersionId)
+    if (version) await loadSourceTables(nodeId, version, selectedTableId, sequence)
+  } catch (cause) {
+    if (sequence === sourceLoadSequence) sourceError.value = cause.message || '数据集版本载入失败'
+  }
+}
+
+async function loadSourceTables(nodeId, version, selectedTableId = '', sequence = ++sourceLoadSequence) {
+  const target = nodes.value.find((node) => node.id === nodeId)
+  if (!target) return
+  const datasetName = target.data.config?.datasetName
+    || sourceDatasets.value.find((dataset) => dataset.id === version.datasetId)?.name
+    || version.datasetId
+  target.data.config = {
+    datasetId: version.datasetId,
+    datasetName,
+    datasetVersionId: version.datasetVersionId,
+    versionNo: version.versionNo,
+    schemaHash: version.schemaHash || '',
+  }
+  sourceTables.value = []
+  sourceError.value = ''
+  try {
+    const catalog = await getDatasetVersionCatalog(version.datasetVersionId)
+    if (sequence !== sourceLoadSequence || selectedNodeId.value !== nodeId) return
+    sourceTables.value = catalog?.tables || []
+    const table = sourceTables.value.find((item) => item.tableId === selectedTableId)
+    if (table) setSourceTable(target, version, table, catalog.schemaHash)
+  } catch (cause) {
+    if (sequence === sourceLoadSequence) sourceError.value = cause.message || '資料表結構載入失敗'
+  }
+}
+
+function setSourceTable(node, version, table, schemaHash = version.schemaHash || '') {
+  const datasetName = node.data.config?.datasetName
+    || sourceDatasets.value.find((dataset) => dataset.id === version.datasetId)?.name
+    || version.datasetId
+  node.data.config = {
+    datasetId: version.datasetId,
+    datasetName,
+    datasetVersionId: version.datasetVersionId,
+    versionNo: version.versionNo,
+    tableId: table.tableId,
+    tableName: table.tableName,
+    rowCount: table.rowCount,
+    schemaHash,
+  }
+}
+
+async function changeSourceDataset(datasetId) {
+  const nodeId = selectedNodeId.value
+  const sequence = ++sourceLoadSequence
+  sourceVersions.value = []
+  sourceTables.value = []
+  const target = nodes.value.find((node) => node.id === nodeId)
+  if (!target) return
+  const datasetName = sourceDatasets.value.find((dataset) => dataset.id === datasetId)?.name
+  target.data.config = datasetId ? { datasetId, datasetName } : {}
+  if (!datasetId) return
+  sourceLoading.value = true
+  try {
+    await loadSourceVersions(nodeId, datasetId, '', '', sequence)
+  } finally {
+    if (sequence === sourceLoadSequence) sourceLoading.value = false
+  }
+}
+
+async function loadPublishedRules(nodeId) {
+  const sequence = ++ruleLoadSequence
+  ruleLoading.value = true
+  ruleError.value = ''
+  try {
+    const rules = await listPublishedRuleVersions({ limit: 100 })
+    if (sequence !== ruleLoadSequence || selectedNodeId.value !== nodeId) return
+    publishedRules.value = rules || []
+  } catch (cause) {
+    if (sequence === ruleLoadSequence) ruleError.value = cause.message || '规则版本载入失败'
+  } finally {
+    if (sequence === ruleLoadSequence) ruleLoading.value = false
+  }
+}
+
+function changeRuleVersion(versionId) {
+  const node = selectedNode.value
+  if (!node) return
+  const version = publishedRules.value.find((item) => item.id === versionId)
+  if (!version) {
+    node.data.config = {}
+    return
+  }
+  node.data.config = {
+    ruleVersionId: version.id,
+    workbookId: version.workbookId,
+    workbookName: version.workbookName,
+    versionNumber: version.versionNumber,
+    sourceDatasetVersionId: version.sourceDatasetVersionId,
+    contentHash: version.contentHash,
+  }
+}
+
+async function changeSourceVersion(versionId) {
+  const nodeId = selectedNodeId.value
+  const sequence = ++sourceLoadSequence
+  sourceTables.value = []
+  const target = nodes.value.find((node) => node.id === nodeId)
+  const version = sourceVersions.value.find((item) => item.datasetVersionId === versionId)
+  if (!target) return
+  if (!version) {
+    target.data.config = { datasetId: target.data.config.datasetId }
+    return
+  }
+  sourceLoading.value = true
+  try {
+    await loadSourceTables(nodeId, version, '', sequence)
+  } finally {
+    if (sequence === sourceLoadSequence) sourceLoading.value = false
+  }
+}
+
+function changeSourceTable(tableId) {
+  const node = selectedNode.value
+  if (!node) return
+  const table = sourceTables.value.find((item) => item.tableId === tableId)
+  const version = sourceVersions.value.find((item) => item.datasetVersionId === node.data.config?.datasetVersionId)
+  if (table && version) setSourceTable(node, version, table)
+  else if (version) {
+    const versionConfig = { ...node.data.config }
+    delete versionConfig.tableId
+    delete versionConfig.tableName
+    delete versionConfig.rowCount
+    node.data.config = versionConfig
+  }
 }
 
 function handleEdgeClick({ edge }) {
@@ -259,6 +453,20 @@ watch(() => JSON.stringify([workflowDocument(), name.value]), () => {
   scheduleSave()
 })
 
+watch(selectedNodeId, (nodeId) => {
+  const node = nodes.value.find((item) => item.id === nodeId)
+  if (node?.data.kind === 'DATA_SOURCE') loadSourceDatasets(nodeId)
+  else {
+    sourceLoadSequence += 1
+    sourceLoading.value = false
+  }
+  if (node?.data.kind === 'RULE') loadPublishedRules(nodeId)
+  else {
+    ruleLoadSequence += 1
+    ruleLoading.value = false
+  }
+})
+
 onMounted(() => {
   document.addEventListener('fullscreenchange', syncFullscreen)
   loadList()
@@ -329,7 +537,7 @@ onBeforeUnmount(() => {
                 <div class="flow-node" :class="[{ 'is-selected': selected }, `node-${data.kind.toLowerCase()}`]">
                   <Handle v-if="data.kind !== 'DATA_SOURCE'" id="input" type="target" :position="Position.Left" />
                   <span class="flow-node-icon" :style="{ '--node-accent': nodeType(data.kind).color }"><el-icon><component :is="nodeType(data.kind).icon" /></el-icon></span>
-                  <span class="flow-node-copy"><small>{{ nodeType(data.kind).label }}</small><strong>{{ data.label }}</strong><em>{{ data.description || nodeType(data.kind).description }}</em></span>
+                  <span class="flow-node-copy"><small>{{ nodeType(data.kind).label }}</small><strong>{{ data.label }}</strong><em :title="data.kind === 'DATA_SOURCE' ? `${data.config?.datasetName || ''} · ${data.config?.tableName || ''} · v${data.config?.versionNo || ''}` : data.description || nodeType(data.kind).description">{{ data.kind === 'DATA_SOURCE' && data.config?.tableName ? `${data.config.datasetName || ''} · ${data.config.tableName} · v${data.config.versionNo}` : data.description || nodeType(data.kind).description }}</em></span>
                   <Handle v-if="data.kind !== 'OUTPUT'" id="output" type="source" :position="Position.Right" />
                   <span class="node-index">{{ id.slice(-4) }}</span>
                 </div>
@@ -347,6 +555,43 @@ onBeforeUnmount(() => {
             <div class="rail-heading"><strong>节点属性</strong><span>{{ nodeType(selectedNode.data.kind).label }}</span></div>
             <label class="field-label">显示名称<el-input v-model="selectedNode.data.label" maxlength="100" /></label>
             <label class="field-label">说明<el-input v-model="selectedNode.data.description" type="textarea" :rows="3" maxlength="240" show-word-limit /></label>
+            <template v-if="selectedNode.data.kind === 'DATA_SOURCE'">
+              <div class="node-contract source-contract"><strong>数据资产</strong><small>引用固定的数据集版本，画布会保存所选表的 schema 标识。</small></div>
+              <el-skeleton v-if="sourceLoading && !sourceDatasets.length" :rows="2" animated />
+              <template v-else>
+                <label class="field-label">数据集
+                  <el-select :model-value="selectedNode.data.config?.datasetId || ''" filterable clearable placeholder="选择数据集" :loading="sourceLoading" @change="changeSourceDataset">
+                    <el-option v-for="dataset in sourceDatasets" :key="dataset.id" :value="dataset.id" :label="dataset.name" />
+                  </el-select>
+                </label>
+                <label class="field-label">数据版本
+                  <el-select :model-value="selectedNode.data.config?.datasetVersionId || ''" :disabled="!selectedNode.data.config?.datasetId" filterable clearable placeholder="选择已就绪版本" @change="changeSourceVersion">
+                    <el-option v-for="version in sourceVersions" :key="version.datasetVersionId" :value="version.datasetVersionId" :label="`v${version.versionNo} · ${version.rowCount.toLocaleString('zh-CN')} 行 · ${version.tableCount} 表`" />
+                  </el-select>
+                </label>
+                <p v-if="selectedNode.data.config?.datasetId && !sourceLoading && !sourceVersions.length" class="source-empty">该数据集尚无已就绪版本</p>
+                <label class="field-label">输入表
+                  <el-select :model-value="selectedNode.data.config?.tableId || ''" :disabled="!selectedNode.data.config?.datasetVersionId" filterable clearable placeholder="选择版本中的表" @change="changeSourceTable">
+                    <el-option v-for="table in sourceTables" :key="table.tableId" :value="table.tableId" :label="table.tableName" />
+                  </el-select>
+                </label>
+                <p v-if="selectedNode.data.config?.datasetVersionId && !sourceLoading && !sourceTables.length" class="source-empty">此版本没有可用的数据表</p>
+                <p v-if="selectedNode.data.config?.tableId" class="source-schema">{{ selectedNode.data.config.rowCount?.toLocaleString('zh-CN') }} 行 · {{ sourceTables.find((table) => table.tableId === selectedNode.data.config.tableId)?.columnCount }} 个字段</p>
+              </template>
+              <p v-if="sourceError" class="source-error" role="alert">{{ sourceError }}</p>
+              <p v-else-if="!sourceLoading && !sourceDatasets.length" class="source-empty">没有可选择的数据集</p>
+            </template>
+            <template v-if="selectedNode.data.kind === 'RULE'">
+              <div class="node-contract rule-contract"><strong>已发布规则版本</strong><small>节点固定引用发布版本；运行到其他数据集前仍需完成字段绑定与兼容性校验。</small></div>
+              <label class="field-label">规则版本
+                <el-select :model-value="selectedNode.data.config?.ruleVersionId || ''" filterable clearable placeholder="选择已发布版本" :loading="ruleLoading" @change="changeRuleVersion">
+                  <el-option v-for="rule in publishedRules" :key="rule.id" :value="rule.id" :label="`${rule.workbookName} · v${rule.versionNumber}`" />
+                </el-select>
+              </label>
+              <p v-if="ruleError" class="source-error" role="alert">{{ ruleError }}</p>
+              <p v-else-if="!ruleLoading && !publishedRules.length" class="source-empty">暂无可引用的已发布规则版本</p>
+              <p v-else-if="selectedNode.data.config?.ruleVersionId" class="source-schema">来源版本 {{ selectedNode.data.config.sourceDatasetVersionId }} · 内容 {{ selectedNode.data.config.contentHash?.slice(0, 12) }}…</p>
+            </template>
             <div class="node-contract"><strong>节点类型</strong><span>{{ selectedNode.data.kind }}</span><small>{{ nodeType(selectedNode.data.kind).description }}</small></div>
             <el-button class="remove-node" plain type="danger" :icon="Delete" @click="removeSelectedNode">删除节点</el-button>
           </template>
@@ -421,6 +666,10 @@ onBeforeUnmount(() => {
 .inspector-empty { display: grid; min-height: 180px; align-content: center; justify-items: center; gap: 9px; color: #87938c; font-size: 10px; text-align: center; }
 .inspector-empty .el-icon { font-size: 22px; }
 .field-label { display: grid; gap: 6px; margin: 14px 0; color: #66756c; font-size: 10px; }
+.source-contract { margin-top: 10px; }
+.rule-contract { margin-top: 10px; }
+.source-schema, .source-empty, .source-error { margin: -5px 0 12px; color: #77867d; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.source-error { color: #a1463e; }
 .node-contract { display: grid; gap: 5px; margin: 14px 0; padding: 9px; background: #f5f8f6; border-radius: 5px; }
 .node-contract strong { color: #66756c; font-size: 10px; }
 .node-contract span { color: #375f4b; font: 10px ui-monospace, monospace; }

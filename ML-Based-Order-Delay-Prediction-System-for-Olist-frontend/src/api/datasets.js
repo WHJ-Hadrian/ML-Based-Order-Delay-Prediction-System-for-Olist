@@ -88,6 +88,10 @@ export function getDatasetCatalog(id) {
   return request(`${API_BASE}/${encodeURIComponent(id)}/catalog`)
 }
 
+export function getDatasetVersionCatalog(id) {
+  return request(`/api/v1/dataset-versions/${encodeURIComponent(id)}/catalog`)
+}
+
 export function getDatasetVersions(id) {
   return request(`${API_BASE}/${encodeURIComponent(id)}/versions`)
 }

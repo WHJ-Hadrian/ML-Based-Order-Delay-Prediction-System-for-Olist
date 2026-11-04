@@ -156,6 +156,12 @@ export function listRuleWorkbookVersions(id) {
   return request(`/rule-workbooks/${encodeURIComponent(id)}/versions`)
 }
 
+export function listPublishedRuleVersions({ keyword = '', limit = 50 } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (keyword.trim()) params.set('keyword', keyword.trim())
+  return request(`/rule-workbooks/published-versions?${params.toString()}`)
+}
+
 export function createRuleRun(id, payload = {}) {
   return request(`/rule-workbooks/${encodeURIComponent(id)}/runs`, {
     method: 'POST',
