@@ -101,6 +101,7 @@ services:
       CLICKHOUSE_DB: olist_analytics
       CLICKHOUSE_USER: olist
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local-clickhouse-only}
+      CLICKHOUSE_RULE_READER_PASSWORD: ${CLICKHOUSE_RULE_READER_PASSWORD:-local-rule-reader-only}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports:
       - "8123:8123"
@@ -314,6 +315,7 @@ services:
       CLICKHOUSE_DATABASE: olist_datasets
       CLICKHOUSE_USER: olist
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local-clickhouse-only}
+      RULE_WORKER_INTERNAL_TOKEN: ${RULE_WORKER_INTERNAL_TOKEN:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -367,9 +369,16 @@ services:
       <<: *java-service-environment
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_models?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8085
+      DATASET_SERVICE_URL: http://dataset-service:8082
+      MODEL_SERVING_URL: http://model-serving:8090
+      MODEL_TRAINING_INTERNAL_TOKEN: ${MODEL_TRAINING_INTERNAL_TOKEN:-}
     depends_on:
       mysql:
         condition: service_healthy
+      dataset-service:
+        condition: service_started
+      model-serving:
+        condition: service_started
 
   analytics-query-service:
     profiles: ["apps"]
@@ -395,9 +404,13 @@ services:
       OLIST_MLFLOW_TRACKING_URI: http://mlflow:5000
       OLIST_OBJECT_STORE_ENDPOINT: http://localstack:4566
       OLIST_OBJECT_STORE_BUCKET: olist-artifacts
+      OLIST_MODEL_TRAINING_INTERNAL_TOKEN: ${MODEL_TRAINING_INTERNAL_TOKEN:-}
+      OLIST_MODEL_ARTIFACT_DIRECTORY: /var/lib/olist/models
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
       AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - model-training-artifacts:/var/lib/olist/models
     ports:
       - "8090:8090"
     depends_on:
@@ -405,6 +418,43 @@ services:
         condition: service_completed_successfully
       mlflow:
         condition: service_started
+
+  rule-preview-worker:
+    profiles: ["rule-worker"]
+    build:
+      context: ./ML-Based-Order-Delay-Prediction-System-for-Olist-backend
+      dockerfile: Dockerfile
+    command:
+      - python
+      - -m
+      - app.workers.rule_execution
+      - --consume
+      - --worker-id
+      - rule-preview-worker-1
+      - --lease-seconds
+      - "60"
+      - --poll-seconds
+      - "2"
+    environment:
+      OLIST_RULE_RUN_API_BASE_URL: http://dataset-service:8082
+      OLIST_RULE_RUN_API_TOKEN: ${RULE_WORKER_INTERNAL_TOKEN:-}
+      OLIST_RULE_RUN_API_TIMEOUT_SECONDS: 30
+      OLIST_RULE_EXECUTION_ENABLED: "true"
+      OLIST_CLICKHOUSE_HOST: clickhouse
+      OLIST_CLICKHOUSE_PORT: 8123
+      OLIST_CLICKHOUSE_USERNAME: olist_rule_reader
+      OLIST_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_RULE_READER_PASSWORD:-local-rule-reader-only}
+      OLIST_CLICKHOUSE_SECURE: "false"
+      OLIST_RULE_PREVIEW_MAX_SAMPLE_ROWS: 5000
+      OLIST_RULE_QUERY_MAX_ROWS_TO_READ: 1000000
+      OLIST_RULE_QUERY_MAX_BYTES_TO_READ: 268435456
+      OLIST_RULE_QUERY_MAX_EXECUTION_TIME_SECONDS: 30
+    depends_on:
+      dataset-service:
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
 
   prometheus:
     profiles: ["observability"]
@@ -439,3 +489,4 @@ volumes:
   clickhouse-data:
   prometheus-data:
   grafana-data:
+  model-training-artifacts:
