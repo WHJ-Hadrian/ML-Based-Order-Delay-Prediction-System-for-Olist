@@ -62,4 +62,18 @@
         WHERE run_id = #{runId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
         ORDER BY node_id
     </select>
+
+    <delete id="deleteByRunId">
+        DELETE FROM rule_run_nodes
+        WHERE run_id = #{runId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+    </delete>
+
+    <update id="cancelActiveByRunId">
+        UPDATE rule_run_nodes
+        SET error_message = CASE WHEN status = 'RUNNING' THEN '运行已取消' ELSE error_message END,
+            status = CASE WHEN status = 'RUNNING' THEN 'CANCELLED' ELSE 'SKIPPED' END,
+            finished_at = #{finishedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE run_id = #{runId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND status IN ('PENDING', 'RUNNING')
+    </update>
 </mapper>

@@ -52,3 +52,7 @@ class RuleRunApiError(RuleExecutionError):
         self.status_code = status_code
         self.detail = detail
         super().__init__(message)
+
+
+class ClaimLostError(RuleRunApiError):
+    """The worker's claim was cancelled, expired, or superseded by a newer attempt."""

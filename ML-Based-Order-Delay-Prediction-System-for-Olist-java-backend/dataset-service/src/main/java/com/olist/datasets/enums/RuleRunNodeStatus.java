@@ -5,9 +5,10 @@ public enum RuleRunNodeStatus {
     RUNNING,
     SUCCEEDED,
     FAILED,
-    SKIPPED;
+    SKIPPED,
+    CANCELLED;
 
     public boolean isTerminal() {
-        return this == SUCCEEDED || this == FAILED || this == SKIPPED;
+        return this == SUCCEEDED || this == FAILED || this == SKIPPED || this == CANCELLED;
     }
 }

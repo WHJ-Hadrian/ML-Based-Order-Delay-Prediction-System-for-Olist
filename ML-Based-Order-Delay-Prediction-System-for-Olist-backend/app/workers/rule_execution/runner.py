@@ -6,6 +6,7 @@ import logging
 from typing import List, Optional
 
 from app.workers.rule_execution.errors import (
+    ClaimLostError,
     RuleExecutionError,
     RunNotExecutableError,
 )
@@ -17,6 +18,7 @@ from app.workers.rule_execution.models import (
     RUN_RUNNING,
     RUN_SUCCEEDED,
     NodeOutcome,
+    RuleOutputArtifact,
     RunExecution,
     RunOutcome,
 )
@@ -82,6 +84,14 @@ class RuleRunExecutor:
         )
 
     def execute(self, run_id: str) -> RunOutcome:
+        try:
+            return self._execute(run_id)
+        finally:
+            cleanup = getattr(self._backend, "cleanup_run", None)
+            if callable(cleanup):
+                cleanup(run_id)
+
+    def _execute(self, run_id: str) -> RunOutcome:
         plan = self.load_plan(run_id)
         execution = plan.execution
         if execution.status != RUN_QUEUED:
@@ -109,10 +119,13 @@ class RuleRunExecutor:
             )
 
         completed: List[str] = []
+        output_artifacts: List[RuleOutputArtifact] = []
         for node in plan.ordered_nodes:
             if not node.enabled:
                 try:
                     self._report_node(execution.run_id, node, NodeOutcome.skipped())
+                except ClaimLostError:
+                    raise
                 except RuleExecutionError as report_error:
                     return self._fail_run(
                         execution.run_id,
@@ -135,6 +148,8 @@ class RuleRunExecutor:
                     node.kind,
                     NODE_RUNNING,
                 )
+            except ClaimLostError:
+                raise
             except RuleExecutionError as report_error:
                 return self._fail_run(
                     execution.run_id,
@@ -155,6 +170,8 @@ class RuleRunExecutor:
                             type(outcome).__name__, node.node_id
                         )
                     )
+                if outcome.output_artifact is not None:
+                    output_artifacts.append(outcome.output_artifact)
             except Exception as exception:
                 message = _error_message(
                     "node {0} failed: {1}".format(node.node_id, exception)
@@ -169,6 +186,8 @@ class RuleRunExecutor:
 
             try:
                 self._report_node(execution.run_id, node, outcome)
+            except ClaimLostError:
+                raise
             except RuleExecutionError as report_error:
                 return self._fail_run(
                     execution.run_id,
@@ -197,7 +216,19 @@ class RuleRunExecutor:
                 )
 
         try:
-            finished = self._progress_sink.finish(execution.run_id, RUN_SUCCEEDED)
+            if output_artifacts:
+                finish_with_outputs = getattr(
+                    self._progress_sink, "finish_with_outputs", None
+                )
+                if not callable(finish_with_outputs):
+                    raise RuleExecutionError(
+                        "progress sink does not support materialized outputs"
+                    )
+                finished = finish_with_outputs(execution.run_id, output_artifacts)
+            else:
+                finished = self._progress_sink.finish(execution.run_id, RUN_SUCCEEDED)
+        except ClaimLostError:
+            raise
         except RuleExecutionError as finish_error:
             return self._abort_success_finish(
                 execution.run_id,
@@ -244,6 +275,8 @@ class RuleRunExecutor:
                     NODE_FAILED,
                     error_message=message,
                 )
+            except ClaimLostError:
+                raise
             except RuleExecutionError as report_error:
                 message = _error_message(
                     "{0}; additionally failed to report node failure: {1}".format(
@@ -253,6 +286,8 @@ class RuleRunExecutor:
 
         try:
             finished = self._progress_sink.finish(run_id, RUN_FAILED, message)
+        except ClaimLostError:
+            raise
         except RuleExecutionError as finish_error:
             raise RuleExecutionError(
                 "node {0} failed and the run could not be marked FAILED: {1}".format(
@@ -283,6 +318,8 @@ class RuleRunExecutor:
     ) -> RunOutcome:
         try:
             finished = self._progress_sink.finish(run_id, RUN_FAILED, message)
+        except ClaimLostError:
+            raise
         except RuleExecutionError as finish_error:
             raise RuleExecutionError(
                 "run {0} could not be marked FAILED after a success-finish failure: {1}".format(

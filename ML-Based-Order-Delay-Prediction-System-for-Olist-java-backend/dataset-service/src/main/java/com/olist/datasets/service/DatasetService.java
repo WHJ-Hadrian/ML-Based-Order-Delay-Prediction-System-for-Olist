@@ -38,6 +38,17 @@ public interface DatasetService {
 
     DatasetReadinessVO readiness(UUID id);
 
+    DatasetReadinessVO materializeRuleOutput(
+            String ownerId,
+            UUID runId,
+            UUID workbookVersionId,
+            String nodeId,
+            String name,
+            MultipartFile file,
+            String expectedSha256,
+            long expectedRowCount,
+            int expectedColumnCount);
+
     DatasetVO upload(DatasetUploadRequest request);
 
     DatasetDetailVO get(UUID id);
@@ -49,6 +60,8 @@ public interface DatasetService {
     DatasetCatalogVO catalog(UUID id);
 
     ExecutionSnapshotVO executionSnapshot(UUID id);
+
+    ExecutionSnapshotVO executionSnapshot(UUID id, String ownerId);
 
     List<DatasetColumnVO> columns(UUID id);
 

@@ -91,6 +91,8 @@ public class DatasetServiceImpl implements DatasetService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DatasetServiceImpl.class);
     private static final long MAX_FILE_SIZE_BYTES = 1024L * 1024L * 1024L;
+    private static final long MAX_RULE_OUTPUT_SIZE_BYTES = 256L * 1024L * 1024L;
+    private static final long MAX_RULE_OUTPUT_ROWS = 100_000L;
     private static final int MIN_PAGE_SIZE = 1;
     private static final int MAX_PAGE_SIZE = 100;
     private static final int MAX_NAME_LENGTH = 255;
@@ -350,6 +352,89 @@ public class DatasetServiceImpl implements DatasetService {
         if (entity == null) {
             throw new DatasetNotFoundException(id);
         }
+        return publishReadyVersion(entity, dataset, ownerId);
+    }
+
+    @Override
+    @Transactional
+    public DatasetReadinessVO materializeRuleOutput(
+            String ownerId,
+            UUID runId,
+            UUID workbookVersionId,
+            String nodeId,
+            String name,
+            MultipartFile file,
+            String expectedSha256,
+            long expectedRowCount,
+            int expectedColumnCount) {
+        if (ownerId == null || ownerId.isBlank() || ownerId.length() > 128
+                || runId == null || workbookVersionId == null
+                || nodeId == null || nodeId.isBlank() || nodeId.length() > 255) {
+            throw new InvalidDatasetException("规则输出的所有者或血缘信息无效");
+        }
+        String resolvedName = normalizeName(name);
+        if (file == null || file.isEmpty() || file.getSize() > MAX_RULE_OUTPUT_SIZE_BYTES
+                || file.getOriginalFilename() == null
+                || !file.getOriginalFilename().toLowerCase(Locale.ROOT).endsWith(".csv")) {
+            throw new InvalidDatasetException("规则输出必须是 256 MiB 以内的 CSV 文件");
+        }
+        if (expectedSha256 == null || !expectedSha256.matches("[0-9a-f]{64}")
+                || expectedRowCount < 0 || expectedRowCount > MAX_RULE_OUTPUT_ROWS
+                || expectedColumnCount < 1 || expectedColumnCount > 10_000) {
+            throw new InvalidDatasetException("规则输出的哈希、行数或列数无效");
+        }
+
+        Instant now = Instant.now();
+        UUID datasetId = UUID.randomUUID();
+        UUID versionId = UUID.randomUUID();
+        Dataset dataset = new Dataset(
+                datasetId, ownerId, resolvedName, null, null, now, now, null);
+        if (datasetMapper.insert(dataset) != 1) {
+            throw new StorageException("规则输出数据集保存失败");
+        }
+        DatasetVersion version = new DatasetVersion(
+                versionId,
+                resolvedName,
+                null,
+                "",
+                "",
+                0L,
+                "",
+                "text/csv",
+                DatasetStatus.EMPTY,
+                0,
+                0L,
+                0,
+                now,
+                now);
+        version.setOwnerId(ownerId);
+        version.setDatasetId(datasetId);
+        version.setVersionNo(1);
+        version.setSourceType("RULE_OUTPUT");
+        version.setSourceRunId(runId);
+        version.setSourceWorkbookVersionId(workbookVersionId);
+        version.setSourceNodeId(nodeId);
+        if (datasetVersionMapper.insert(version) != 1
+                || datasetMapper.updateCurrentVersion(datasetId, ownerId, versionId, now) != 1) {
+            throw new StorageException("规则输出版本保存失败");
+        }
+        appendFile(version, file, DatasetStatus.UPLOADED);
+        if (!expectedSha256.equals(version.getSha256()) || version.getSizeBytes() != file.getSize()) {
+            throw new InvalidDatasetException("规则输出文件大小或 SHA-256 与清单不一致");
+        }
+        List<DatasetTable> outputTables = datasetTableMapper.findByDatasetId(versionId);
+        List<DatasetColumn> outputColumns = datasetColumnMapper.findByDatasetVersionId(versionId);
+        if (outputTables.size() != 1
+                || outputTables.get(0).getRowCount() != expectedRowCount
+                || outputTables.get(0).getColumnCount() != expectedColumnCount
+                || outputColumns.size() != expectedColumnCount) {
+            throw new InvalidDatasetException("规则输出 CSV 的行列数与清单不一致");
+        }
+        return publishReadyVersion(version, dataset, ownerId);
+    }
+
+    private DatasetReadinessVO publishReadyVersion(
+            DatasetVersion entity, Dataset dataset, String ownerId) {
         if (entity.getStatus() == DatasetStatus.READY) {
             return toReadiness(entity);
         }
@@ -490,7 +575,13 @@ public class DatasetServiceImpl implements DatasetService {
     @Override
     @Transactional(readOnly = true)
     public ExecutionSnapshotVO executionSnapshot(UUID id) {
-        DatasetVersion version = requireReadyVersion(id);
+        return executionSnapshot(id, datasetOwnerProvider.currentOwnerId());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ExecutionSnapshotVO executionSnapshot(UUID id, String ownerId) {
+        DatasetVersion version = requireReadyVersion(id, ownerId);
         List<DatasetTable> tables = datasetTableMapper.findByDatasetId(version.getId());
         List<DatasetColumn> columns = datasetColumnMapper.findByDatasetVersionId(version.getId());
         Map<UUID, List<DatasetColumn>> columnsByTable = new LinkedHashMap<>();
@@ -1054,7 +1145,11 @@ public class DatasetServiceImpl implements DatasetService {
     }
 
     private DatasetVersion requireReadyVersion(UUID id) {
-        DatasetVersion version = resolveAnyVersion(id, datasetOwnerProvider.currentOwnerId());
+        return requireReadyVersion(id, datasetOwnerProvider.currentOwnerId());
+    }
+
+    private DatasetVersion requireReadyVersion(UUID id, String ownerId) {
+        DatasetVersion version = resolveAnyVersion(id, ownerId);
         if (version.getStatus() != DatasetStatus.READY) {
             throw new DatasetNotReadyException("数据集版本 " + version.getId() + " 尚未 READY");
         }

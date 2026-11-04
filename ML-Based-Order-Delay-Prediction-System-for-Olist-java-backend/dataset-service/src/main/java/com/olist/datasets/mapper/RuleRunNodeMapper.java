@@ -16,4 +16,10 @@ public interface RuleRunNodeMapper {
             @Param("nodeId") String nodeId);
 
     List<RuleRunNode> findByRunId(@Param("runId") UUID runId);
+
+    int deleteByRunId(@Param("runId") UUID runId);
+
+    int cancelActiveByRunId(
+            @Param("runId") UUID runId,
+            @Param("finishedAt") java.time.Instant finishedAt);
 }

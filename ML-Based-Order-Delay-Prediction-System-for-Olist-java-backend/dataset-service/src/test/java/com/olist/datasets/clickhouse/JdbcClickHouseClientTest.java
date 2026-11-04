@@ -7,28 +7,28 @@ import org.junit.jupiter.api.Test;
 class JdbcClickHouseClientTest {
 
     @Test
-    void disablesCompressionWhenUrlHasNoQuery() {
-        assertThat(JdbcClickHouseClient.normalizeUrl("jdbc:clickhouse://localhost:8123"))
-                .isEqualTo("jdbc:clickhouse://localhost:8123?compress=0");
+    void disablesCompressionAndDecompressionWhenUrlHasNoQuery() {
+        assertThat(JdbcClickHouseClient.withDisabledCompression("jdbc:clickhouse://localhost:8123"))
+                .isEqualTo("jdbc:clickhouse://localhost:8123?compress=0&decompress=0");
     }
 
     @Test
     void appendsCompressionFlagToExistingQuery() {
-        assertThat(JdbcClickHouseClient.normalizeUrl("jdbc:clickhouse://localhost:8123?database=olist"))
-                .isEqualTo("jdbc:clickhouse://localhost:8123?database=olist&compress=0");
+        assertThat(JdbcClickHouseClient.withDisabledCompression("jdbc:clickhouse://localhost:8123?database=olist"))
+                .isEqualTo("jdbc:clickhouse://localhost:8123?database=olist&compress=0&decompress=0");
     }
 
     @Test
     void preservesExplicitCompressionSetting() {
-        assertThat(JdbcClickHouseClient.normalizeUrl("jdbc:clickhouse://localhost:8123?compress=1"))
-                .isEqualTo("jdbc:clickhouse://localhost:8123?compress=1");
-        assertThat(JdbcClickHouseClient.normalizeUrl("jdbc:clickhouse://localhost:8123?COMPRESSION=lz4"))
-                .isEqualTo("jdbc:clickhouse://localhost:8123?COMPRESSION=lz4");
+        assertThat(JdbcClickHouseClient.withDisabledCompression("jdbc:clickhouse://localhost:8123?compress=1"))
+                .isEqualTo("jdbc:clickhouse://localhost:8123?compress=1&decompress=0");
+        assertThat(JdbcClickHouseClient.withDisabledCompression("jdbc:clickhouse://localhost:8123?COMPRESSION=lz4"))
+                .isEqualTo("jdbc:clickhouse://localhost:8123?COMPRESSION=lz4&compress=0&decompress=0");
     }
 
     @Test
     void keepsBlankUrlUnchanged() {
-        assertThat(JdbcClickHouseClient.normalizeUrl(null)).isNull();
-        assertThat(JdbcClickHouseClient.normalizeUrl("  ")).isEqualTo("  ");
+        assertThat(JdbcClickHouseClient.withDisabledCompression(null)).isNull();
+        assertThat(JdbcClickHouseClient.withDisabledCompression("  ")).isEqualTo("  ");
     }
 }

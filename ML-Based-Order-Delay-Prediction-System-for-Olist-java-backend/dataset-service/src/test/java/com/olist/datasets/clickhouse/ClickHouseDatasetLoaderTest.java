@@ -185,6 +185,11 @@ class ClickHouseDatasetLoaderTest {
         }
 
         @Override
+        public List<List<Object>> query(String sql) {
+            return List.of();
+        }
+
+        @Override
         public Inserter inserter(String table, List<String> columns) {
             return new Inserter() {
                 @Override

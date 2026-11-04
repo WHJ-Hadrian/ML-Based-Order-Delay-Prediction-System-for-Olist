@@ -72,6 +72,10 @@ public final class DatasetConverter {
                 entity.getRowCount(),
                 entity.getManifestHash(),
                 entity.getSchemaHash(),
+                entity.getSourceType(),
+                entity.getSourceRunId(),
+                entity.getSourceWorkbookVersionId(),
+                entity.getSourceNodeId(),
                 entity.getReadyAt(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt());

@@ -6,6 +6,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
@@ -31,7 +32,7 @@ final class JdbcClickHouseClient implements ClickHouseClient {
         }
     }
 
-    private static String withDisabledCompression(String url) {
+    static String withDisabledCompression(String url) {
         if (url == null || url.isBlank()) {
             return url;
         }
@@ -53,6 +54,25 @@ final class JdbcClickHouseClient implements ClickHouseClient {
             statement.execute(sql);
         } catch (SQLException exception) {
             throw new StorageException("ClickHouse 执行失败: " + sql, exception);
+        }
+    }
+
+    @Override
+    public List<List<Object>> query(String sql) {
+        try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
+            ResultSetMetaData metadata = result.getMetaData();
+            int columnCount = metadata.getColumnCount();
+            List<List<Object>> rows = new java.util.ArrayList<>();
+            while (result.next()) {
+                List<Object> row = new java.util.ArrayList<>(columnCount);
+                for (int index = 1; index <= columnCount; index++) {
+                    row.add(result.getObject(index));
+                }
+                rows.add(row);
+            }
+            return rows;
+        } catch (SQLException exception) {
+            throw new StorageException("ClickHouse 查询失败", exception);
         }
     }
 

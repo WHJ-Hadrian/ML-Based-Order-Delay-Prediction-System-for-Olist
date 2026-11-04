@@ -13,6 +13,11 @@
         <result column="sample_size" property="sampleSize"/>
         <result column="seed" property="seed"/>
         <result column="error_message" property="errorMessage"/>
+        <result column="retry_of_run_id" property="retryOfRunId" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="claim_token" property="claimToken" typeHandler="com.olist.datasets.typehandler.UuidTypeHandler"/>
+        <result column="claimed_by" property="claimedBy"/>
+        <result column="lease_expires_at" property="leaseExpiresAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
+        <result column="execution_attempt" property="executionAttempt"/>
         <result column="created_at" property="createdAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
         <result column="started_at" property="startedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
         <result column="finished_at" property="finishedAt" typeHandler="org.apache.ibatis.type.InstantTypeHandler"/>
@@ -20,13 +25,15 @@
 
     <sql id="runColumns">
         id, owner_id, workbook_id, workbook_version_id, dataset_version_id, mode, status,
-        sample_size, seed, error_message, created_at, started_at, finished_at
+        sample_size, seed, error_message, claim_token, claimed_by, lease_expires_at,
+        execution_attempt, retry_of_run_id, created_at, started_at, finished_at
     </sql>
 
     <insert id="insert">
         INSERT INTO rule_runs (
             id, owner_id, workbook_id, workbook_version_id, dataset_version_id,
-            mode, status, sample_size, seed, error_message, created_at, started_at, finished_at
+            mode, status, sample_size, seed, error_message, retry_of_run_id,
+            created_at, started_at, finished_at
         ) VALUES (
             #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
             #{ownerId},
@@ -35,11 +42,58 @@
             #{datasetVersionId,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
             #{mode}, #{status}, #{sampleSize,jdbcType=INTEGER}, #{seed,jdbcType=BIGINT},
             #{errorMessage,jdbcType=VARCHAR},
+            #{retryOfRunId,jdbcType=VARCHAR,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
             #{createdAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
             #{startedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
             #{finishedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
         )
     </insert>
+
+    <select id="findClaimCandidate" resultMap="RuleRunResultMap">
+        SELECT <include refid="runColumns"/>
+        FROM rule_runs
+        WHERE (#{mode,jdbcType=VARCHAR} IS NULL OR mode = #{mode,jdbcType=VARCHAR})
+          AND (
+            (status = 'QUEUED' AND (claim_token IS NULL OR lease_expires_at &lt;= #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler}))
+            OR
+            (status = 'RUNNING' AND claim_token IS NOT NULL AND lease_expires_at &lt;= #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler})
+          )
+        ORDER BY CASE WHEN status = 'QUEUED' THEN 0 ELSE 1 END, created_at
+        LIMIT 1
+    </select>
+
+    <select id="findByIdAndClaim" resultMap="RuleRunResultMap">
+        SELECT <include refid="runColumns"/>
+        FROM rule_runs
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND claim_token = #{claimToken,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND execution_attempt = #{executionAttempt}
+          AND lease_expires_at &gt; #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+    </select>
+
+    <update id="failExpiredFullRuns">
+        UPDATE rule_runs
+        SET status = 'FAILED',
+            finished_at = #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            error_message = 'FULL run lease expired; outputs were not replayed automatically',
+            claim_token = NULL,
+            claimed_by = NULL,
+            lease_expires_at = NULL
+        WHERE mode = 'FULL'
+          AND status = 'RUNNING'
+          AND claim_token IS NOT NULL
+          AND lease_expires_at &lt;= #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+    </update>
+
+    <select id="findByIdAndClaimForUpdate" resultMap="RuleRunResultMap">
+        SELECT <include refid="runColumns"/>
+        FROM rule_runs
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND claim_token = #{claimToken,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND execution_attempt = #{executionAttempt}
+          AND lease_expires_at &gt; #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        FOR UPDATE
+    </select>
 
     <select id="findByIdAndOwner" resultMap="RuleRunResultMap">
         SELECT <include refid="runColumns"/>
@@ -74,5 +128,60 @@
         WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
           AND owner_id = #{ownerId}
           AND status = #{expectedStatus}
+    </update>
+
+    <update id="cancelIfActive">
+        UPDATE rule_runs
+        SET status = 'CANCELLED',
+            finished_at = #{finishedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            error_message = NULL,
+            claim_token = NULL,
+            claimed_by = NULL,
+            lease_expires_at = NULL
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+          AND status IN ('QUEUED', 'RUNNING')
+    </update>
+
+    <update id="claimIfAvailable">
+        UPDATE rule_runs
+        SET claim_token = #{claimToken,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler},
+            claimed_by = #{claimedBy},
+            lease_expires_at = #{leaseExpiresAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            execution_attempt = execution_attempt + 1,
+            started_at = CASE WHEN status = 'RUNNING' THEN NULL ELSE started_at END,
+            status = 'QUEUED',
+            finished_at = NULL,
+            error_message = NULL
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND status = #{expectedStatus}
+          AND execution_attempt = #{expectedAttempt}
+          AND (claim_token IS NULL OR lease_expires_at &lt;= #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler})
+    </update>
+
+    <update id="renewLease">
+        UPDATE rule_runs
+        SET lease_expires_at = #{leaseExpiresAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND claim_token = #{claimToken,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND execution_attempt = #{executionAttempt}
+          AND status IN ('QUEUED', 'RUNNING')
+          AND lease_expires_at &gt; #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+    </update>
+
+    <update id="updateClaimedStatus">
+        UPDATE rule_runs
+        SET status = #{newStatus},
+            started_at = COALESCE(started_at, #{startedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler}),
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP,typeHandler=org.apache.ibatis.type.InstantTypeHandler},
+            error_message = #{errorMessage,jdbcType=VARCHAR},
+            lease_expires_at = CASE WHEN #{newStatus} IN ('SUCCEEDED', 'FAILED', 'CANCELLED') THEN NULL ELSE lease_expires_at END,
+            claim_token = CASE WHEN #{newStatus} IN ('SUCCEEDED', 'FAILED', 'CANCELLED') THEN NULL ELSE claim_token END,
+            claimed_by = CASE WHEN #{newStatus} IN ('SUCCEEDED', 'FAILED', 'CANCELLED') THEN NULL ELSE claimed_by END
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND claim_token = #{claimToken,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND execution_attempt = #{executionAttempt}
+          AND status = #{expectedStatus}
+          AND lease_expires_at &gt; #{now,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
     </update>
 </mapper>

@@ -6,6 +6,8 @@ public interface ClickHouseClient extends AutoCloseable {
 
     void execute(String sql);
 
+    List<List<Object>> query(String sql);
+
     Inserter inserter(String table, List<String> columns);
 
     long countRows(String table);

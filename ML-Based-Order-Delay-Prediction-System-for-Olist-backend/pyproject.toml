@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 workers = [
     "boto3>=1.35,<2.0",
+    "clickhouse-connect>=0.8,<1.0",
     "httpx>=0.28,<1.0",
     "temporalio>=1.9,<2.0",
 ]
@@ -24,6 +25,11 @@ analytics = [
     "pandas>=2.2,<3.0",
     "pyarrow>=18,<25",
     "pyspark>=3.5,<5.0",
+]
+training = [
+    "joblib>=1.4,<2.0",
+    "pandas>=2.2,<3.0",
+    "scikit-learn>=1.6,<2.0",
 ]
 features = [
     "feast[redis]>=0.50,<1.0",
@@ -35,7 +41,10 @@ ml = [
 ]
 test = [
     "httpx>=0.28,<1.0",
+    "joblib>=1.4,<2.0",
+    "pandas>=2.2,<3.0",
     "pytest>=8.3,<10.0",
+    "scikit-learn>=1.6,<2.0",
 ]
 
 [tool.setuptools.packages.find]

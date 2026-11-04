@@ -65,9 +65,23 @@ public class RuleWorkbookCompiler {
             "SPLIT_COLUMN", "MERGE_COLUMNS");
     private static final Set<String> JOIN_TYPES = Set.of("INNER", "LEFT", "RIGHT", "FULL");
     private static final Set<String> CARDINALITIES = Set.of("1:1", "1:N", "N:1", "N:N");
+    private static final Set<String> JOIN_GUARD_FIELDS = Set.of(
+            "rightKeyUnique", "maxFanout", "minMatchRate", "onViolation");
+    private static final Set<String> JOIN_GUARD_EFFECTS = Set.of("WARN", "FAIL_RUN");
     private static final Set<String> AGGREGATE_OPS = Set.of(
             "COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX", "MEDIAN");
+    private static final Set<String> DERIVE_OPS = Set.of(
+            "FIELD", "LITERAL", "DATE_DIFF_DAYS", "DATE_PART", "CONCAT", "COALESCE",
+            "CASE_WHEN", "ARITHMETIC", "DISTANCE_HAVERSINE");
+    private static final Set<String> DERIVE_DATE_PARTS = Set.of(
+            "YEAR", "QUARTER", "MONTH", "WEEK", "DAY", "DAY_OF_WEEK", "DAY_OF_YEAR",
+            "HOUR", "MINUTE", "SECOND");
+    private static final Set<String> DERIVE_ARITHMETIC_OPS = Set.of(
+            "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "MODULO", "POWER");
+    private static final Set<String> DERIVE_DATA_TYPES = Set.of(
+            "STRING", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME");
     private static final Set<String> COMPARATORS = Set.of("GT", "GTE", "LT", "LTE", "EQ", "NE");
+    private static final Set<String> VALUE_COMPARATORS = Set.of("EQ", "NE", "GT", "GTE", "LT", "LTE");
     private static final Set<String> CELL_TYPES = Set.of(
             "DATASET_REF", "INPUT_REF", "TABLE_REF", "FIELD_REF", "FIELD_LIST_REF", "NODE_OUTPUT_REF",
             "RELATION_REF", "NODE_KIND", "PREDICATE", "EFFECT", "OPERATION", "PARAM_OBJECT",
@@ -82,6 +96,9 @@ public class RuleWorkbookCompiler {
             "FK_EXISTS", "JOIN_MATCH_RATE_LT", "JOIN_FANOUT_GT", "MISSING_RATE_GT",
             "ROW_COUNT_LT", "CATEGORY_RATIO_LT", "DISTINCT_COUNT_LT", "AND", "OR", "NOT");
     private static final int MAX_PREDICATE_DEPTH = 24;
+    private static final int MAX_DERIVE_DEPTH = 20;
+    private static final int MAX_DERIVE_NODES = 200;
+    private static final int MAX_DERIVE_ARGUMENTS = 50;
 
     private final DatasetTableMapper datasetTableMapper;
     private final DatasetColumnMapper datasetColumnMapper;
@@ -580,10 +597,6 @@ public class RuleWorkbookCompiler {
         }
 
         for (ObjectNode node : context.nodes) {
-            validateNode(node, context);
-        }
-
-        for (ObjectNode node : context.nodes) {
             String nodeId = text(node, "id");
             RowContext rowContext = context.contextByNodeId.get(nodeId);
             Set<String> dependencies = new LinkedHashSet<>();
@@ -645,6 +658,212 @@ public class RuleWorkbookCompiler {
         for (String nodeId : context.nodesById.keySet()) {
             detectCycle(nodeId, context, marks);
         }
+
+        for (ObjectNode node : topologicalNodes(context)) {
+            resolveInputColumns(node, context);
+            validateNode(node, context);
+            resolveOutputColumns(node, context);
+        }
+    }
+
+    private List<ObjectNode> topologicalNodes(CompilationContext context) {
+        List<ObjectNode> ordered = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+        Set<String> visiting = new HashSet<>();
+        for (ObjectNode node : context.nodes) {
+            addTopologicalNode(text(node, "id"), context, visiting, visited, ordered);
+        }
+        return ordered;
+    }
+
+    private void addTopologicalNode(
+            String nodeId,
+            CompilationContext context,
+            Set<String> visiting,
+            Set<String> visited,
+            List<ObjectNode> ordered) {
+        if (nodeId == null || visited.contains(nodeId) || !visiting.add(nodeId)) {
+            return;
+        }
+        for (String dependency : context.dependencies.getOrDefault(nodeId, Set.of())) {
+            addTopologicalNode(dependency, context, visiting, visited, ordered);
+        }
+        visiting.remove(nodeId);
+        if (visited.add(nodeId)) {
+            ObjectNode node = context.nodesById.get(nodeId);
+            if (node != null) {
+                ordered.add(node);
+            }
+        }
+    }
+
+    private void resolveInputColumns(ObjectNode node, CompilationContext context) {
+        String nodeId = text(node, "id");
+        Map<String, LinkedHashMap<UUID, DatasetColumn>> inputs = new LinkedHashMap<>();
+        Map<String, Map<String, String>> derivedInputs = new LinkedHashMap<>();
+        JsonNode rawInputs = node.path("inputs");
+        if (rawInputs.isArray()) {
+            for (JsonNode input : rawInputs) {
+                String alias = text(input, "alias");
+                if (alias == null) {
+                    continue;
+                }
+                LinkedHashMap<UUID, DatasetColumn> columns = new LinkedHashMap<>();
+                Map<String, String> derivedColumns = new LinkedHashMap<>();
+                if ("TABLE".equals(upper(text(input, "type")))) {
+                    UUID tableId = uuid(input, "tableId");
+                    for (DatasetColumn column : context.columnsByTable.getOrDefault(tableId, List.of())) {
+                        columns.put(column.getId(), column);
+                    }
+                } else if ("NODE_OUTPUT".equals(upper(text(input, "type")))) {
+                    String upstreamNodeId = text(input, "nodeId");
+                    columns.putAll(context.outputColumnsByNodeId.getOrDefault(
+                            upstreamNodeId, new LinkedHashMap<>()));
+                    derivedColumns.putAll(context.outputDerivedFieldsByNodeId.getOrDefault(
+                            upstreamNodeId, Map.of()));
+                }
+                inputs.put(alias, columns);
+                derivedInputs.put(alias, derivedColumns);
+            }
+        }
+        context.inputColumnsByNodeId.put(nodeId, inputs);
+        context.inputDerivedFieldsByNodeId.put(nodeId, derivedInputs);
+    }
+
+    private void resolveOutputColumns(ObjectNode node, CompilationContext context) {
+        String nodeId = text(node, "id");
+        String kind = upper(text(node, "kind"));
+        Map<String, LinkedHashMap<UUID, DatasetColumn>> inputs =
+                context.inputColumnsByNodeId.getOrDefault(nodeId, Map.of());
+        Map<String, Map<String, String>> derivedInputs =
+                context.inputDerivedFieldsByNodeId.getOrDefault(nodeId, Map.of());
+        LinkedHashMap<UUID, DatasetColumn> output = new LinkedHashMap<>();
+        Map<String, String> derivedOutput = new LinkedHashMap<>();
+        for (LinkedHashMap<UUID, DatasetColumn> columns : inputs.values()) {
+            output.putAll(columns);
+        }
+        for (Map<String, String> fields : derivedInputs.values()) {
+            derivedOutput.putAll(fields);
+        }
+        if ("PROJECT".equals(kind) && inputs.size() == 1) {
+            JsonNode config = node.path("config");
+            Set<UUID> selected = referencedColumnIds(config.path("select"), context);
+            Set<UUID> dropped = referencedColumnIds(config.path("drop"), context);
+            boolean hasSelection = config.path("select").isArray()
+                    && !config.path("select").isEmpty();
+            if (hasSelection) {
+                output.entrySet().removeIf(entry -> !selected.contains(entry.getKey()));
+                Set<String> selectedDerived = normalizedFieldNames(config.path("select"));
+                derivedOutput.entrySet().removeIf(
+                        entry -> !selectedDerived.contains(entry.getKey().toLowerCase(Locale.ROOT)));
+            }
+            if (!dropped.isEmpty()) {
+                output.entrySet().removeIf(entry -> dropped.contains(entry.getKey()));
+            }
+            Set<String> droppedDerived = normalizedFieldNames(config.path("drop"));
+            derivedOutput.keySet().removeIf(name -> droppedDerived.contains(name.toLowerCase(Locale.ROOT)));
+        }
+        if ("AGGREGATE".equals(kind) && inputs.size() == 1) {
+            JsonNode config = node.path("config");
+            JsonNode groupBy = config.path("groupBy");
+            Set<UUID> groupedColumns = referencedColumnIds(groupBy, context);
+            Set<String> groupedDerived = normalizedFieldNames(groupBy);
+            output.entrySet().removeIf(entry -> !groupedColumns.contains(entry.getKey()));
+            derivedOutput.entrySet().removeIf(
+                    entry -> !groupedDerived.contains(entry.getKey().toLowerCase(Locale.ROOT)));
+            JsonNode metrics = config.path("metrics");
+            if (metrics.isArray()) {
+                for (JsonNode metric : metrics) {
+                    String name = text(metric, "name");
+                    String operation = upper(text(metric, "op"));
+                    if (name != null && operation != null && AGGREGATE_OPS.contains(operation)) {
+                        derivedOutput.put(name, aggregateMetricType(metric, inputs, derivedInputs, context));
+                    }
+                }
+            }
+        }
+        if ("DERIVE".equals(kind)) {
+            String outputField = text(node.path("config"), "outputField");
+            String dataType = upper(text(node.path("config"), "dataType"));
+            if (outputField != null && !outputField.isBlank() && dataType != null
+                    && DERIVE_DATA_TYPES.contains(dataType)) {
+                boolean replaceExisting = node.path("config").path("replaceExisting").asBoolean(false);
+                if (replaceExisting) {
+                    output.entrySet().removeIf(
+                            entry -> entry.getValue().getColumnName().equalsIgnoreCase(outputField));
+                    derivedOutput.keySet().removeIf(name -> name.equalsIgnoreCase(outputField));
+                }
+                derivedOutput.put(outputField, dataType);
+            }
+        }
+        context.outputColumnsByNodeId.put(nodeId, output);
+        context.outputDerivedFieldsByNodeId.put(nodeId, derivedOutput);
+    }
+
+    private String aggregateMetricType(
+            JsonNode metric,
+            Map<String, LinkedHashMap<UUID, DatasetColumn>> inputs,
+            Map<String, Map<String, String>> derivedInputs,
+            CompilationContext context) {
+        String operation = upper(text(metric, "op"));
+        if (Set.of("COUNT", "COUNT_DISTINCT").contains(operation)) return "INTEGER";
+        if (Set.of("AVG", "MEDIAN").contains(operation)) return "DECIMAL";
+        JsonNode field = metric.path("field");
+        UUID columnId = uuid(field, "columnId");
+        if (columnId == null) columnId = uuid(field, "fieldId");
+        DatasetColumn column = columnId == null ? null : context.columnsById.get(columnId);
+        if (column != null) {
+            String logicalType = upper(column.getLogicalType());
+            if (logicalType != null) return logicalType;
+        }
+        String name = field.isTextual()
+                ? field.asText(null)
+                : firstText(field, "nameSnapshot", "name", "field", "columnName");
+        if (name != null) {
+            for (LinkedHashMap<UUID, DatasetColumn> columns : inputs.values()) {
+                for (DatasetColumn candidate : columns.values()) {
+                    if (candidate.getColumnName().equalsIgnoreCase(name)) {
+                        String logicalType = upper(candidate.getLogicalType());
+                        if (logicalType != null) return logicalType;
+                    }
+                }
+            }
+            for (Map<String, String> fields : derivedInputs.values()) {
+                for (Map.Entry<String, String> entry : fields.entrySet()) {
+                    if (entry.getKey().equalsIgnoreCase(name)) return entry.getValue();
+                }
+            }
+        }
+        return "DECIMAL";
+    }
+
+    private Set<String> normalizedFieldNames(JsonNode references) {
+        Set<String> names = new LinkedHashSet<>();
+        if (!references.isArray()) return names;
+        for (JsonNode reference : references) {
+            String name = firstText(reference, "nameSnapshot", "name", "field", "columnName");
+            if (name != null) names.add(name.toLowerCase(Locale.ROOT));
+        }
+        return names;
+    }
+
+    private Set<UUID> referencedColumnIds(JsonNode references, CompilationContext context) {
+        Set<UUID> ids = new LinkedHashSet<>();
+        if (!references.isArray()) {
+            return ids;
+        }
+        for (JsonNode reference : references) {
+            UUID columnId = uuid(reference, "columnId");
+            if (columnId != null && context.columnsById.containsKey(columnId)) {
+                ids.add(columnId);
+                continue;
+            }
+            UUID fieldId = uuid(reference, "fieldId");
+            if (fieldId != null && context.columnsById.containsKey(fieldId)) {
+                ids.add(fieldId);
+            }
+        }
+        return ids;
     }
 
     private void addGateMetricDependencies(CompilationContext context) {
@@ -814,6 +1033,34 @@ public class RuleWorkbookCompiler {
             validateFieldRef(target, primaryAlias(inputTables), inputTables, context, rowContext,
                     "TRANSFORM_TARGET_INVALID");
         }
+        JsonNode params = config.path("params");
+        if ("FILL_VALUE".equals(operation) && !hasConfiguredValue(params.path("value"))) {
+            error(context, rowContext, "TRANSFORM_FILL_VALUE_REQUIRED",
+                    "FILL_VALUE 必须设置要填充的值", null);
+        }
+        if ("REPLACE".equals(operation)
+                && (!hasConfiguredValue(params.path("find"))
+                        || !hasConfiguredValue(params.path("replacement")))) {
+            error(context, rowContext, "TRANSFORM_REPLACE_VALUES_REQUIRED",
+                    "REPLACE 必须设置查找文本和替换文本", null);
+        }
+        if ("CAST".equals(operation)) {
+            String dataType = upper(firstText(config, "dataType"));
+            if (dataType == null) {
+                dataType = upper(text(params, "dataType"));
+            }
+            if (dataType == null
+                    || !Set.of("STRING", "INT64", "FLOAT64", "DATE", "BOOLEAN").contains(dataType)) {
+                error(context, rowContext, "TRANSFORM_DATA_TYPE_INVALID",
+                        "CAST 必须选择受支持的目标类型", null);
+            }
+        }
+        requireOutputAlias(context, rowContext, text(config, "outputAlias"), "TRANSFORM");
+    }
+
+    private static boolean hasConfiguredValue(JsonNode value) {
+        return value != null && !value.isMissingNode() && !value.isNull()
+                && (!value.isTextual() || !value.asText().isBlank());
     }
 
     private void validateProjectFieldList(
@@ -848,6 +1095,9 @@ public class RuleWorkbookCompiler {
         if (rightAlias == null || !inputTables.containsKey(rightAlias)) {
             error(context, rowContext, "JOIN_RIGHT_ALIAS_INVALID", "JOIN 右输入别名不存在", null);
         }
+        if (leftAlias != null && leftAlias.equals(rightAlias)) {
+            error(context, rowContext, "JOIN_INPUTS_NOT_DISTINCT", "JOIN 左右输入必须是两个不同端口", null);
+        }
         JsonNode leftKeys = config.path("leftKeys");
         JsonNode rightKeys = config.path("rightKeys");
         if (!leftKeys.isArray() || leftKeys.isEmpty() || !rightKeys.isArray() || rightKeys.isEmpty()) {
@@ -860,11 +1110,9 @@ public class RuleWorkbookCompiler {
                 validateJoinKey(rightKeys.get(index), rightAlias, inputTables, context, rowContext, "RIGHT");
             }
         }
-        String joinType = upper(text(config, "joinType"));
-        if (joinType == null) {
-            joinType = "INNER";
-        }
-        if (!JOIN_TYPES.contains(joinType)) {
+        JsonNode joinTypeNode = config.path("joinType");
+        String joinType = joinTypeNode.isMissingNode() ? "INNER" : upper(text(config, "joinType"));
+        if (joinType == null || !JOIN_TYPES.contains(joinType)) {
             error(context, rowContext, "JOIN_TYPE_INVALID", "未知的关联类型「" + joinType + "」", null);
         }
         String cardinality = text(config, "cardinality");
@@ -874,10 +1122,58 @@ public class RuleWorkbookCompiler {
         } else if (!CARDINALITIES.contains(cardinality)) {
             error(context, rowContext, "JOIN_CARDINALITY_INVALID", "未知的关联基数「" + cardinality + "」", null);
         }
+        JsonNode duplicatePolicyNode = config.path("duplicatePolicy");
+        String duplicatePolicy = duplicatePolicyNode.isMissingNode()
+                ? "FAIL"
+                : upper(text(config, "duplicatePolicy"));
+        if (!"FAIL".equals(duplicatePolicy)) {
+            error(context, rowContext, "JOIN_DUPLICATE_POLICY_UNSUPPORTED",
+                    "当前预览执行器仅支持 duplicatePolicy=FAIL", "将重复处理改为失败，或先在上游显式去重");
+        }
         requireOutputAlias(context, rowContext, text(config, "outputAlias"), "JOIN");
         JsonNode guards = config.path("guards");
         if (!guards.isMissingNode() && !guards.isObject()) {
             error(context, rowContext, "JOIN_GUARDS_INVALID", "JOIN guards 必须是对象", null);
+        } else if (guards.isObject()) {
+            guards.fieldNames().forEachRemaining(field -> {
+                if (!JOIN_GUARD_FIELDS.contains(field)) {
+                    error(context, rowContext, "JOIN_GUARD_FIELD_UNSUPPORTED",
+                            "JOIN guards 包含未知字段「" + field + "」", null);
+                }
+            });
+            JsonNode rightKeyUnique = guards.path("rightKeyUnique");
+            if (!rightKeyUnique.isMissingNode() && !rightKeyUnique.isBoolean()) {
+                error(context, rowContext, "JOIN_RIGHT_KEY_UNIQUE_INVALID",
+                        "JOIN rightKeyUnique 必须是布尔值", null);
+            }
+            validateJoinGuardNumber(guards.path("maxFanout"), 0, 1000,
+                    "JOIN_MAX_FANOUT_INVALID", "JOIN maxFanout 必须是 0 到 1000 的数值",
+                    context, rowContext);
+            validateJoinGuardNumber(guards.path("minMatchRate"), 0, 1,
+                    "JOIN_MIN_MATCH_RATE_INVALID", "JOIN minMatchRate 必须是 0 到 1 的数值",
+                    context, rowContext);
+            JsonNode onViolationNode = guards.path("onViolation");
+            String onViolation = onViolationNode.isMissingNode() ? null : upper(text(guards, "onViolation"));
+            if ((onViolation != null && !JOIN_GUARD_EFFECTS.contains(onViolation))
+                    || (!onViolationNode.isMissingNode() && onViolation == null)) {
+                error(context, rowContext, "JOIN_GUARD_EFFECT_INVALID",
+                        "JOIN onViolation 必须是 WARN 或 FAIL_RUN", null);
+            }
+        }
+    }
+
+    private void validateJoinGuardNumber(
+            JsonNode value,
+            double minimum,
+            double maximum,
+            String code,
+            String message,
+            CompilationContext context,
+            RowContext rowContext) {
+        if (value.isMissingNode()) return;
+        double number = value.isNumber() ? value.asDouble() : Double.NaN;
+        if (!Double.isFinite(number) || number < minimum || number > maximum) {
+            error(context, rowContext, code, message, null);
         }
     }
 
@@ -899,18 +1195,32 @@ public class RuleWorkbookCompiler {
             RowContext rowContext) {
         String alias = primaryAlias(inputTables);
         JsonNode groupBy = config.path("groupBy");
+        Set<String> groupReferences = new HashSet<>();
+        Set<String> groupFieldNames = new HashSet<>();
         if (!groupBy.isMissingNode()) {
             if (!groupBy.isArray()) {
                 error(context, rowContext, "AGGREGATE_GROUP_BY_INVALID", "AGGREGATE groupBy 必须是数组", null);
+            } else if (groupBy.size() > 100) {
+                error(context, rowContext, "AGGREGATE_GROUP_BY_LIMIT", "AGGREGATE 分组字段不能超过 100 个", null);
             } else {
                 for (JsonNode group : groupBy) {
                     validateFieldRef(group, alias, inputTables, context, rowContext, "AGGREGATE_GROUP_BY_INVALID");
+                    String key = fieldReferenceKey(group);
+                    if (key != null && !groupReferences.add(key)) {
+                        error(context, rowContext, "AGGREGATE_GROUP_BY_DUPLICATE", "AGGREGATE 分组字段不能重复", null);
+                    }
+                    String name = group.isTextual()
+                            ? group.asText(null)
+                            : firstText(group, "nameSnapshot", "name", "field", "columnName");
+                    if (name != null) groupFieldNames.add(name.toLowerCase(Locale.ROOT));
                 }
             }
         }
         JsonNode metrics = config.path("metrics");
         if (!metrics.isArray() || metrics.isEmpty()) {
             error(context, rowContext, "AGGREGATE_METRICS_REQUIRED", "AGGREGATE 至少需要一个指标", null);
+        } else if (metrics.size() > 100) {
+            error(context, rowContext, "AGGREGATE_METRICS_LIMIT", "AGGREGATE 指标不能超过 100 个", null);
         } else {
             Set<String> metricNames = new HashSet<>();
             for (JsonNode metric : metrics) {
@@ -918,9 +1228,14 @@ public class RuleWorkbookCompiler {
                 String operation = upper(text(metric, "op"));
                 if (name == null) {
                     error(context, rowContext, "AGGREGATE_METRIC_NAME_REQUIRED", "聚合指标缺少名称", null);
-                } else if (!metricNames.add(name)) {
+                } else if (name.length() > 255) {
+                    error(context, rowContext, "AGGREGATE_METRIC_NAME_INVALID", "聚合指标名称不能超过 255 个字符", null);
+                } else if (!metricNames.add(name.toLowerCase(Locale.ROOT))) {
                     error(context, rowContext, "AGGREGATE_METRIC_NAME_DUPLICATE",
                             "聚合指标「" + name + "」重复", null);
+                } else if (groupFieldNames.contains(name.toLowerCase(Locale.ROOT))) {
+                    error(context, rowContext, "AGGREGATE_METRIC_NAME_CONFLICT",
+                            "聚合指标「" + name + "」与分组字段重名", null);
                 }
                 if (operation == null || !AGGREGATE_OPS.contains(operation)) {
                     error(context, rowContext, "AGGREGATE_OPERATION_INVALID",
@@ -941,25 +1256,245 @@ public class RuleWorkbookCompiler {
         requireOutputAlias(context, rowContext, text(config, "outputAlias"), "AGGREGATE");
     }
 
+    private static String fieldReferenceKey(JsonNode field) {
+        if (field == null || field.isMissingNode() || field.isNull()) return null;
+        String columnId = text(field, "columnId");
+        if (columnId == null) columnId = text(field, "fieldId");
+        if (columnId != null) return "id:" + columnId.toLowerCase(Locale.ROOT);
+        String name = field.isTextual()
+                ? field.asText(null)
+                : firstText(field, "nameSnapshot", "name", "field", "columnName");
+        return name == null ? null : "name:" + name.toLowerCase(Locale.ROOT);
+    }
+
     private void validateDerive(
             String nodeId,
             JsonNode config,
             Map<String, UUID> inputTables,
             CompilationContext context,
             RowContext rowContext) {
-        if (text(config, "outputField") == null) {
+        String outputField = text(config, "outputField");
+        if (outputField == null) {
             error(context, rowContext, "DERIVE_OUTPUT_FIELD_REQUIRED", "DERIVE 缺少新字段名", null);
+        } else if (outputField.length() > 255) {
+            error(context, rowContext, "DERIVE_OUTPUT_FIELD_INVALID", "DERIVE 新字段名不能超过 255 个字符", null);
         }
         String dataType = upper(text(config, "dataType"));
-        if (dataType == null || !Set.of("STRING", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "DATETIME")
-                .contains(dataType)) {
+        if (dataType == null || !DERIVE_DATA_TYPES.contains(dataType)) {
             error(context, rowContext, "DERIVE_DATA_TYPE_INVALID", "DERIVE 缺少合法字段类型", null);
+        }
+        JsonNode replaceExisting = config.path("replaceExisting");
+        if (!replaceExisting.isMissingNode() && !replaceExisting.isBoolean()) {
+            error(context, rowContext, "DERIVE_REPLACE_EXISTING_INVALID",
+                    "DERIVE replaceExisting 必须是布尔值", null);
+        }
+        if (outputField != null && !outputField.isBlank() && !replaceExisting.asBoolean(false)) {
+            Map<String, LinkedHashMap<UUID, DatasetColumn>> availableInputs =
+                    context.inputColumnsByNodeId.getOrDefault(nodeId, Map.of());
+            boolean physicalCollision = availableInputs.values().stream()
+                    .flatMap(columns -> columns.values().stream())
+                    .anyMatch(column -> column.getColumnName().equalsIgnoreCase(outputField));
+            boolean derivedCollision = context.inputDerivedFieldsByNodeId
+                    .getOrDefault(nodeId, Map.of()).values().stream()
+                    .flatMap(fields -> fields.keySet().stream())
+                    .anyMatch(name -> name.equalsIgnoreCase(outputField));
+            if (physicalCollision || derivedCollision) {
+                error(context, rowContext, "DERIVE_OUTPUT_FIELD_EXISTS",
+                        "派生字段「" + outputField + "」已存在；如需替换请明确允许覆盖", null);
+            }
         }
         JsonNode expression = config.path("expression");
         if (!expression.isObject() && !expression.isTextual()) {
             error(context, rowContext, "DERIVE_EXPRESSION_REQUIRED", "DERIVE 缺少表达式", null);
-        } else if (expression.isObject() && text(expression, "op") == null) {
-            error(context, rowContext, "DERIVE_EXPRESSION_OP_REQUIRED", "DERIVE 表达式缺少 op", null);
+        } else {
+            validateDeriveExpression(expression, primaryAlias(inputTables), inputTables,
+                    context, rowContext, 0, new int[]{0});
+        }
+    }
+
+    private void validateDeriveExpression(
+            JsonNode expression,
+            String alias,
+            Map<String, UUID> inputTables,
+            CompilationContext context,
+            RowContext rowContext,
+            int depth,
+            int[] nodeCount) {
+        if (depth > MAX_DERIVE_DEPTH) {
+            error(context, rowContext, "DERIVE_EXPRESSION_TOO_DEEP",
+                    "DERIVE 表达式不能超过 " + MAX_DERIVE_DEPTH + " 层", null);
+            return;
+        }
+        nodeCount[0]++;
+        if (nodeCount[0] > MAX_DERIVE_NODES) {
+            error(context, rowContext, "DERIVE_EXPRESSION_TOO_LARGE",
+                    "DERIVE 表达式不能超过 " + MAX_DERIVE_NODES + " 个节点", null);
+            return;
+        }
+        if (expression == null || expression.isMissingNode() || expression.isNull()) {
+            error(context, rowContext, "DERIVE_EXPRESSION_REQUIRED", "DERIVE 缺少表达式", null);
+            return;
+        }
+        if (expression.isTextual()) {
+            validateFieldRef(expression, alias, inputTables, context, rowContext,
+                    "DERIVE_FIELD_INVALID");
+            return;
+        }
+        if (!expression.isObject()) {
+            error(context, rowContext, "DERIVE_EXPRESSION_INVALID",
+                    "DERIVE 表达式必须是结构化对象，不能是 SQL 或脚本", null);
+            return;
+        }
+        String operation = upper(firstText(expression, "op", "type"));
+        if (operation == null || !DERIVE_OPS.contains(operation)) {
+            error(context, rowContext, "DERIVE_EXPRESSION_OP_INVALID",
+                    "未知的 DERIVE 表达式操作「" + operation + "」", null);
+            return;
+        }
+        if ("FIELD".equals(operation)) {
+            JsonNode field = expression.has("field") ? expression.path("field") : expression;
+            if (!hasFieldReference(field)) {
+                error(context, rowContext, "DERIVE_FIELD_REQUIRED", "DERIVE FIELD 缺少字段引用", null);
+            } else {
+                validateFieldRef(field, alias, inputTables, context, rowContext,
+                        "DERIVE_FIELD_INVALID");
+            }
+            return;
+        }
+        if ("LITERAL".equals(operation)) {
+            if (!expression.has("value") || expression.path("value").isNull()
+                    || expression.path("value").isContainerNode()) {
+                error(context, rowContext, "DERIVE_LITERAL_INVALID",
+                        "DERIVE LITERAL 必须包含标量 value", null);
+            }
+            String literalType = upper(text(expression, "dataType"));
+            if (literalType != null && !DERIVE_DATA_TYPES.contains(literalType)
+                    && !Set.of("FLOAT", "FLOAT64", "DOUBLE").contains(literalType)) {
+                error(context, rowContext, "DERIVE_LITERAL_TYPE_INVALID",
+                        "DERIVE LITERAL 使用了未知 dataType", null);
+            }
+            return;
+        }
+        if ("DATE_DIFF_DAYS".equals(operation)) {
+            validateDeriveExpression(expression.path("left"), alias, inputTables,
+                    context, rowContext, depth + 1, nodeCount);
+            validateDeriveExpression(expression.path("right"), alias, inputTables,
+                    context, rowContext, depth + 1, nodeCount);
+            return;
+        }
+        if ("DATE_PART".equals(operation)) {
+            String part = upper(text(expression, "part"));
+            if (part == null || !DERIVE_DATE_PARTS.contains(part)) {
+                error(context, rowContext, "DERIVE_DATE_PART_INVALID",
+                        "DERIVE DATE_PART 使用了未知日期部分", null);
+            }
+            JsonNode value = expression.has("value")
+                    ? expression.path("value")
+                    : expression.path("field");
+            if ((value.isMissingNode() || value.isNull()) && expression.path("args").isArray()
+                    && !expression.path("args").isEmpty()) {
+                value = expression.path("args").get(0);
+            }
+            validateDeriveExpression(value, alias, inputTables, context, rowContext,
+                    depth + 1, nodeCount);
+            return;
+        }
+        if ("CONCAT".equals(operation) || "COALESCE".equals(operation)) {
+            validateDeriveArguments(expression.path("args"), operation, 2, alias,
+                    inputTables, context, rowContext, depth, nodeCount);
+            return;
+        }
+        if ("CASE_WHEN".equals(operation)) {
+            JsonNode branches = expression.has("branches")
+                    ? expression.path("branches")
+                    : expression.path("cases");
+            if (!branches.isArray() || branches.isEmpty()
+                    || branches.size() > MAX_DERIVE_ARGUMENTS) {
+                error(context, rowContext, "DERIVE_CASE_BRANCHES_INVALID",
+                        "DERIVE CASE_WHEN 需要 1 到 " + MAX_DERIVE_ARGUMENTS + " 个分支", null);
+            } else {
+                for (JsonNode branch : branches) {
+                    if (!branch.isObject()) {
+                        error(context, rowContext, "DERIVE_CASE_BRANCH_INVALID",
+                                "DERIVE CASE_WHEN 分支必须是对象", null);
+                        continue;
+                    }
+                    validatePredicate(branch.path("when"), alias, inputTables,
+                            context, rowContext, 0);
+                    validateDeriveExpression(branch.path("then"), alias, inputTables,
+                            context, rowContext, depth + 1, nodeCount);
+                }
+            }
+            JsonNode fallback = expression.has("else")
+                    ? expression.path("else")
+                    : expression.path("otherwise");
+            validateDeriveExpression(fallback, alias, inputTables, context, rowContext,
+                    depth + 1, nodeCount);
+            return;
+        }
+        if ("ARITHMETIC".equals(operation)) {
+            String arithmetic = upper(firstText(expression, "operator", "operation"));
+            if (arithmetic == null || !DERIVE_ARITHMETIC_OPS.contains(arithmetic)) {
+                error(context, rowContext, "DERIVE_ARITHMETIC_OP_INVALID",
+                        "DERIVE ARITHMETIC 使用了未知运算符", null);
+            }
+            JsonNode args = expression.path("args");
+            if (args.isArray()) {
+                validateDeriveArguments(args, operation, 2, 2, alias, inputTables,
+                        context, rowContext, depth, nodeCount);
+            } else {
+                validateDeriveExpression(expression.path("left"), alias, inputTables,
+                        context, rowContext, depth + 1, nodeCount);
+                validateDeriveExpression(expression.path("right"), alias, inputTables,
+                        context, rowContext, depth + 1, nodeCount);
+            }
+            return;
+        }
+        JsonNode distanceArgs = expression.path("args");
+        if (distanceArgs.isArray()) {
+            validateDeriveArguments(distanceArgs, operation, 4, 4, alias, inputTables,
+                    context, rowContext, depth, nodeCount);
+        } else {
+            for (String name : List.of("longitude1", "latitude1", "longitude2", "latitude2")) {
+                validateDeriveExpression(expression.path(name), alias, inputTables,
+                        context, rowContext, depth + 1, nodeCount);
+            }
+        }
+    }
+
+    private void validateDeriveArguments(
+            JsonNode arguments,
+            String operation,
+            int minimum,
+            String alias,
+            Map<String, UUID> inputTables,
+            CompilationContext context,
+            RowContext rowContext,
+            int depth,
+            int[] nodeCount) {
+        validateDeriveArguments(arguments, operation, minimum, MAX_DERIVE_ARGUMENTS,
+                alias, inputTables, context, rowContext, depth, nodeCount);
+    }
+
+    private void validateDeriveArguments(
+            JsonNode arguments,
+            String operation,
+            int minimum,
+            int maximum,
+            String alias,
+            Map<String, UUID> inputTables,
+            CompilationContext context,
+            RowContext rowContext,
+            int depth,
+            int[] nodeCount) {
+        if (!arguments.isArray() || arguments.size() < minimum || arguments.size() > maximum) {
+            error(context, rowContext, "DERIVE_ARGUMENTS_INVALID",
+                    "DERIVE " + operation + " 需要 " + minimum + " 到 " + maximum + " 个参数", null);
+            return;
+        }
+        for (JsonNode argument : arguments) {
+            validateDeriveExpression(argument, alias, inputTables, context, rowContext,
+                    depth + 1, nodeCount);
         }
     }
 
@@ -1092,6 +1627,9 @@ public class RuleWorkbookCompiler {
             }
         }
         UUID expectedTableId = null;
+        Map<String, LinkedHashMap<UUID, DatasetColumn>> availableInputs =
+                context.inputColumnsByNodeId.getOrDefault(findNodeId(context, rowContext), Map.of());
+        LinkedHashMap<UUID, DatasetColumn> availableColumns = null;
         if (resolvedAlias != null) {
             if (!inputTables.containsKey(resolvedAlias)) {
                 error(context, rowContext, code,
@@ -1099,6 +1637,7 @@ public class RuleWorkbookCompiler {
                 return;
             }
             expectedTableId = inputTables.get(resolvedAlias);
+            availableColumns = availableInputs.get(resolvedAlias);
         }
 
         JsonNode explicitTableId = ref.isObject() ? ref.path("tableId") : null;
@@ -1127,6 +1666,21 @@ public class RuleWorkbookCompiler {
         if (tableId == null) {
             if (resolvedAlias != null && inputTables.containsKey(resolvedAlias)
                     && inputTables.get(resolvedAlias) == null) {
+                if (availableColumns != null && fieldName != null) {
+                    boolean found = availableColumns.values().stream()
+                            .anyMatch(column -> column.getColumnName().equalsIgnoreCase(fieldName));
+                    String currentNodeId = findNodeId(context, rowContext);
+                    Map<String, String> availableDerivedFields = context.inputDerivedFieldsByNodeId
+                            .getOrDefault(currentNodeId, Map.of())
+                            .getOrDefault(resolvedAlias, Map.of());
+                    found = found || availableDerivedFields.keySet().stream()
+                            .anyMatch(name -> name.equalsIgnoreCase(fieldName));
+                    if (!found) {
+                        error(context, rowContext, code,
+                                "字段「" + fieldName + "」不在当前输入的可用字段中",
+                                "检查上游字段选择节点，或重新选择当前输入仍保留的字段");
+                    }
+                }
                 return;
             }
             error(context, rowContext, code,
@@ -1140,7 +1694,11 @@ public class RuleWorkbookCompiler {
         }
 
         if (referencedColumn != null) {
-            if (!tableId.equals(referencedColumn.getTableId())) {
+            if (availableColumns != null && !availableColumns.containsKey(referencedColumn.getId())) {
+                error(context, rowContext, code,
+                        "字段「" + referencedColumn.getColumnName() + "」不在当前输入的可用字段中",
+                        "检查上游字段选择节点，或重新选择当前输入仍保留的字段");
+            } else if (!tableId.equals(referencedColumn.getTableId())) {
                 error(context, rowContext, code,
                         "字段「" + referencedColumn.getColumnName() + "」不属于所选的表", "重新选择字段");
             } else if (ref.isObject()) {
@@ -1157,12 +1715,27 @@ public class RuleWorkbookCompiler {
         }
 
         List<DatasetColumn> columns = context.columnsByTable.getOrDefault(tableId, List.of());
+        if (availableColumns != null) {
+            columns = new ArrayList<>(availableColumns.values());
+        }
         boolean found = columns.stream().anyMatch(column -> column.getColumnName().equalsIgnoreCase(fieldName));
         if (!found) {
             error(context, rowContext, code,
                     "表「" + table.getTableName() + "」中不存在字段「" + fieldName + "」",
                     "从当前表的字段列表中重新选择");
         }
+    }
+
+    private String findNodeId(CompilationContext context, RowContext rowContext) {
+        if (rowContext == null) {
+            return null;
+        }
+        for (Map.Entry<String, RowContext> entry : context.contextByNodeId.entrySet()) {
+            if (rowContext.equals(entry.getValue())) {
+                return entry.getKey();
+            }
+        }
+        return null;
     }
 
     private DatasetColumn resolveReferencedColumn(
@@ -1265,16 +1838,27 @@ public class RuleWorkbookCompiler {
                 validateFieldRef(value, alias, inputTables, context, rowContext, "PREDICATE_FIELD_INVALID");
             }
         }
-        if (Set.of("IS_NULL", "IS_EMPTY", "IS_BLANK").contains(op)
-                && (!args.isArray() || args.isEmpty())) {
+        boolean fieldConfigured = hasFieldReference(predicate.path("field"))
+                || (args.isArray() && args.size() > 0 && hasFieldReference(args.get(0)));
+        if (Set.of("IS_NULL", "IS_EMPTY", "IS_BLANK", "EQ", "NE", "GT", "GTE", "LT", "LTE",
+                "BETWEEN", "IN", "NOT_IN", "REGEX_MATCH", "DATE_PARSEABLE").contains(op)
+                && !fieldConfigured) {
             error(context, rowContext, "PREDICATE_FIELD_REQUIRED", op + " 条件缺少字段参数", null);
         }
         if (Set.of("DUPLICATE", "UNIQUE", "DUPLICATE_RATE_GT").contains(op)
                 && (!fields.isArray() || fields.isEmpty())) {
             error(context, rowContext, "PREDICATE_FIELDS_REQUIRED", op + " 条件缺少字段列表", null);
         }
-        if ("BETWEEN".equals(op) && !predicate.has("field")) {
-            error(context, rowContext, "PREDICATE_FIELD_REQUIRED", "BETWEEN 条件缺少 field", null);
+        if (VALUE_COMPARATORS.contains(op)
+                && !predicate.hasNonNull("value")
+                && (!args.isArray() || args.size() < 2)) {
+            error(context, rowContext, "PREDICATE_VALUE_REQUIRED", op + " 条件缺少比较值", null);
+        }
+        if ("BETWEEN".equals(op)
+                && (!predicate.hasNonNull("value") || !predicate.hasNonNull("upperValue"))
+                && (!args.isArray() || args.size() < 3)) {
+            error(context, rowContext, "PREDICATE_RANGE_REQUIRED",
+                    "BETWEEN 条件必须包含下限和上限", null);
         }
         if ("DATE_ORDER_INVALID".equals(op)
                 && (!predicate.has("earlier") || !predicate.has("later"))) {
@@ -1286,6 +1870,20 @@ public class RuleWorkbookCompiler {
                 "DISTINCT_COUNT_LT").contains(op) && !predicate.has("threshold")) {
             error(context, rowContext, "PREDICATE_THRESHOLD_REQUIRED", op + " 条件缺少 threshold", null);
         }
+    }
+
+    private static boolean hasFieldReference(JsonNode reference) {
+        if (reference == null || reference.isMissingNode() || reference.isNull()) {
+            return false;
+        }
+        if (reference.isTextual()) {
+            return !reference.asText().isBlank();
+        }
+        return reference.isObject()
+                && List.of("fieldId", "columnId", "nameSnapshot", "name", "field", "columnName")
+                        .stream()
+                        .map(name -> text(reference, name))
+                        .anyMatch(value -> value != null && !value.isBlank());
     }
 
     private static boolean looksLikeFieldRef(JsonNode value) {
@@ -1366,6 +1964,14 @@ public class RuleWorkbookCompiler {
         private final Map<String, RowContext> contextByNodeId = new LinkedHashMap<>();
         private final Map<String, String> aliasToNodeId = new LinkedHashMap<>();
         private final Map<String, Set<String>> dependencies = new LinkedHashMap<>();
+        private final Map<String, Map<String, LinkedHashMap<UUID, DatasetColumn>>> inputColumnsByNodeId =
+                new LinkedHashMap<>();
+        private final Map<String, Map<String, Map<String, String>>> inputDerivedFieldsByNodeId =
+                new LinkedHashMap<>();
+        private final Map<String, LinkedHashMap<UUID, DatasetColumn>> outputColumnsByNodeId =
+                new LinkedHashMap<>();
+        private final Map<String, Map<String, String>> outputDerivedFieldsByNodeId =
+                new LinkedHashMap<>();
         private boolean cycleReported;
 
         private CompilationContext(UUID datasetVersionId) {

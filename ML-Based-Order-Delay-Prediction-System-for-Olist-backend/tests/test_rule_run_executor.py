@@ -4,6 +4,7 @@ import pytest
 
 from app.workers.rule_execution.adapters import UnavailableExecutionPreflight
 from app.workers.rule_execution.errors import (
+    ClaimLostError,
     ExecutionContractUnavailableError,
     PlanValidationError,
     RuleExecutionError,
@@ -127,6 +128,26 @@ def test_node_result_failed_stops_remaining_nodes() -> None:
     assert sink.events[-1] == ("finish", "FAILED", "join fanout exceeded")
     assert "gates:gate" not in sink.statuses
     assert "outputs:output" not in sink.statuses
+
+
+def test_lost_claim_propagates_without_failure_report_or_finish() -> None:
+    nodes, _ = make_nodes_and_edges()
+
+    class CancelledSink(FakeProgressSink):
+        def report_node(self, run_id, node_id, node_kind, status, **kwargs):
+            if status == "RUNNING":
+                raise ClaimLostError("rule run was cancelled", status_code=409)
+            return super().report_node(run_id, node_id, node_kind, status, **kwargs)
+
+    sink = CancelledSink({node["id"]: node.get("enabled", True) for node in nodes})
+    backend = ScriptedBackend()
+    executor, _ = _executor(make_execution_payload(), sink, backend)
+
+    with pytest.raises(ClaimLostError):
+        executor.execute(RUN_ID)
+
+    assert backend.calls == []
+    assert sink.events == [("start", RUN_ID)]
 
 
 def test_missing_snapshot_preflight_does_not_start_the_run() -> None:

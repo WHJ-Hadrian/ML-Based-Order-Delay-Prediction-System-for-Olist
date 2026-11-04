@@ -1,6 +1,7 @@
 """Validated control-plane support for executing frozen rule-workbook plans."""
 
 from app.workers.rule_execution.errors import (
+    ClaimLostError,
     ExecutionContractUnavailableError,
     ExecutionSnapshotError,
     PlanValidationError,
@@ -14,6 +15,7 @@ from app.workers.rule_execution.runner import RuleRunExecutor
 from app.workers.rule_execution.snapshot import ExecutionSnapshot, SnapshotColumn, SnapshotTable
 
 __all__ = [
+    "ClaimLostError",
     "ExecutionContractUnavailableError",
     "ExecutionPlan",
     "ExecutionSnapshot",

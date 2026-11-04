@@ -38,6 +38,13 @@ public interface RuleWorkbookMapper {
             @Param("ownerId") String ownerId,
             @Param("updatedAt") Instant updatedAt);
 
+    int updateNameAndDescription(
+            @Param("id") UUID id,
+            @Param("ownerId") String ownerId,
+            @Param("name") String name,
+            @Param("description") String description,
+            @Param("updatedAt") Instant updatedAt);
+
     int deleteById(
             @Param("id") UUID id,
             @Param("ownerId") String ownerId);

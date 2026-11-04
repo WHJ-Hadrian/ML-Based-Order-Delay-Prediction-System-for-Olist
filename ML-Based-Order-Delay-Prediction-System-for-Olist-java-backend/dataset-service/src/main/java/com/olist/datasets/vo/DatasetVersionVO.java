@@ -16,6 +16,10 @@ public record DatasetVersionVO(
         long rowCount,
         String manifestHash,
         String schemaHash,
+        String sourceType,
+        UUID sourceRunId,
+        UUID sourceWorkbookVersionId,
+        String sourceNodeId,
         Instant readyAt,
         Instant createdAt,
         Instant updatedAt) {

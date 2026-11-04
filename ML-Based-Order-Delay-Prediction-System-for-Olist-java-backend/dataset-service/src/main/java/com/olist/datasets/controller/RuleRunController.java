@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 @RestController
 @RequestMapping("/api/v1/rule-runs")
@@ -29,6 +32,21 @@ public class RuleRunController {
     @GetMapping("/{runId}")
     public RuleRunVO get(@PathVariable UUID runId) {
         return ruleWorkbookService.getRun(runId);
+    }
+
+    @PostMapping("/{runId}/cancel")
+    public RuleRunVO cancel(@PathVariable UUID runId) {
+        return ruleWorkbookService.cancelRun(runId);
+    }
+
+    @PostMapping("/{runId}/retry")
+    public ResponseEntity<RuleRunVO> retry(@PathVariable UUID runId) {
+        RuleRunVO run = ruleWorkbookService.retryRun(runId);
+        var location = ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/api/v1/rule-runs/{runId}")
+                .buildAndExpand(run.id())
+                .toUri();
+        return ResponseEntity.status(HttpStatus.CREATED).location(location).body(run);
     }
 
     @GetMapping("/{runId}/execution")

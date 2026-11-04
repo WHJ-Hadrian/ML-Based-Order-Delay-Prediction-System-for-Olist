@@ -15,6 +15,10 @@ public record RuleRunVO(
         Integer sampleSize,
         Long seed,
         String errorMessage,
+        UUID retryOfRunId,
+        String claimedBy,
+        Instant leaseExpiresAt,
+        int executionAttempt,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt) {

@@ -232,13 +232,16 @@ JOIN.config = {
 
 校验：
 
-- `leftAlias` 和 `rightAlias` 必须能在通用 `inputs` 中找到。
+- JOIN 必须恰好连接两个不同输入；输入可来自数据表或上游节点输出。
+- `leftAlias` 和 `rightAlias` 必须能在通用 `inputs` 中找到，且必须指向不同输入。
 - 左右键数量一致。
 - 左右键类型兼容。
 - `1:1` 和 `N:1` 应要求右表键唯一，除非选择了去重策略。
 - `maxFanout` 默认建议 `1`。
 - `minMatchRate` 范围 `0..1`。
 - 输出别名唯一。
+
+JOIN 输出字段为左右输入字段的并集。后续节点可引用任一侧保留的字段。当前预览执行器仅实现 `duplicatePolicy=FAIL`；选择其他去重策略会明确失败，不会静默丢行。
 
 ## 9. AGGREGATE
 
@@ -259,10 +262,13 @@ AGGREGATE.config = {
 
 校验：
 
-- 指标名称唯一。
+- 最多配置 100 个分组字段和 100 个指标，分组字段不能重复。
+- 指标名称最长 255 个字符、大小写不敏感唯一，并且不能与分组字段同名。
 - `COUNT` 可以使用 `*`，其他指标必须指定字段。
 - 指标类型与字段类型兼容。
 - `having` 只能引用聚合结果。
+
+输出字段严格为 `groupBy + metrics`。没有参与分组的输入字段会从节点输出中移除，后续节点只能引用仍保留的分组字段或指标名称。`COUNT` / `COUNT_DISTINCT` 输出 `INTEGER`，`AVG` / `MEDIAN` 输出 `DECIMAL`，`SUM` / `MIN` / `MAX` 尽量沿用源字段逻辑类型。
 
 ## 10. DERIVE
 
@@ -278,23 +284,47 @@ DERIVE.config = {
 
 `Expression` 第一版支持：
 
-```text
-"FIELD"
-"LITERAL"
-"DATE_DIFF_DAYS"
-"DATE_PART"
-"CONCAT"
-"COALESCE"
-"CASE_WHEN"
-"ARITHMETIC"
-"DISTANCE_HAVERSINE"
+```json
+{ "type": "FIELD", "columnId": "uuid" }
+{ "type": "LITERAL", "value": 1, "dataType": "INTEGER" }
+
+{ "op": "DATE_DIFF_DAYS", "left": Expression, "right": Expression }
+{ "op": "DATE_PART", "part": "YEAR|QUARTER|MONTH|WEEK|DAY|DAY_OF_WEEK|DAY_OF_YEAR|HOUR|MINUTE|SECOND", "value": Expression }
+{ "op": "CONCAT", "args": [Expression, Expression] }
+{ "op": "COALESCE", "args": [Expression, Expression] }
+{
+  "op": "CASE_WHEN",
+  "branches": [{ "when": Predicate, "then": Expression }],
+  "else": Expression
+}
+{
+  "op": "ARITHMETIC",
+  "operator": "ADD|SUBTRACT|MULTIPLY|DIVIDE|MODULO|POWER",
+  "left": Expression,
+  "right": Expression
+}
+{
+  "op": "DISTANCE_HAVERSINE",
+  "longitude1": Expression,
+  "latitude1": Expression,
+  "longitude2": Expression,
+  "latitude2": Expression
+}
 ```
+
+兼容输入：字段表达式也可以使用稳定的 `fieldId` 或 `nameSnapshot`；算术表达式可以使用长度为 2 的 `args`；距离表达式可以使用按 `[longitude1, latitude1, longitude2, latitude2]` 排列的 `args`。这些只是同一结构化契约的等价写法，不接受 SQL、函数名、脚本或自由文本公式。
 
 校验：
 
 - 输出字段名不能与已有字段冲突，除非 `replaceExisting=true`。
 - 引用的字段必须在上游可见。
 - 表达式结果类型必须与 `dataType` 兼容。
+- `DATE_DIFF_DAYS` 计算 `left - right`；字符串日期按可空日期时间解析，解析失败产生空值。
+- `DISTANCE_HAVERSINE` 使用经纬度并输出米；四个输入必须是数值表达式。
+- 除法和取模的除数为 0 时产生空值，不产生无限值或中断整个预览。
+- `DECIMAL` 派生结果在当前预览执行器中统一为 `Decimal(38, 12)`；后续如开放精度/小数位配置，必须继续采用有界结构化参数。
+- 表达式最多 20 层、200 个节点；可变参数操作最多 50 项。
+- 所有常量使用查询参数，输出字段名只映射到 Worker 生成的内部标识符。
 - 不允许任意代码或外部函数。
 
 ## 11. UNION

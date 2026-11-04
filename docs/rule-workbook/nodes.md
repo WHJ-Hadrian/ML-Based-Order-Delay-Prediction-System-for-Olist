@@ -301,6 +301,8 @@ PREPARE -> CHECK -> CLEAN -> RELATE -> ENRICH -> FEATURE -> VALIDATE -> OUTPUT
 - 隔离行同时产生隔离区分支，但不占用 `outputAlias`。
 - 检查指标包括命中行数、命中率、样例和运行状态。
 
+当前 ClickHouse PREVIEW 后端会执行行级 `CHECK`。对于 `QUARANTINE_ROWS`，预览只报告隔离计数并从主输出移除命中行；隔离分支和 FULL 持久化尚未实现。
+
 ### 5.2 TRANSFORM（v1）
 
 字段级清洗节点。
@@ -410,6 +412,8 @@ PREPARE -> CHECK -> CLEAN -> RELATE -> ENRICH -> FEATURE -> VALIDATE -> OUTPUT
 
 按单键或复合键去重。
 
+当前 ClickHouse PREVIEW 仅支持 `FIRST`/`LAST`，并按冻结 seed 的确定性 hash 顺序选择记录。由于导入表当前不保留源行序，这不等同于原始文件的第一/最后一行；`LATEST`、`orderBy` 和 FULL 输出尚未实现。
+
 ```json
 {
   "kind": "DEDUPE",
@@ -489,6 +493,10 @@ PREPARE -> CHECK -> CLEAN -> RELATE -> ENRICH -> FEATURE -> VALIDATE -> OUTPUT
 }
 ```
 
+JOIN 配置两个输入端口，分别从数据表或上游节点结果中选择左、右数据源。关联键用成对字段选择器配置，可添加复合键；每一对按列表顺序匹配。用户还需声明 INNER、LEFT、RIGHT 或 FULL 关联方式，以及 `1:1 / 1:N / N:1 / N:N` 基数。关联后的字段选择器会标注字段来源侧，避免左右表存在同名字段时误选。
+
+运行护栏允许设置右侧键唯一约束、最小匹配率、最大展开倍数，以及护栏失败时阻断或记录警告。当前执行器仅实现 `duplicatePolicy=FAIL`，重复策略 `KEEP_FIRST / KEEP_LAST / AGGREGATE` 暂不提供界面选项，也不会被伪装成已执行功能。
+
 输出：新的逻辑表，后续节点通过 `NODE_OUTPUT` 引用。
 
 ### 5.7 AGGREGATE（v1）
@@ -526,6 +534,10 @@ PREPARE -> CHECK -> CLEAN -> RELATE -> ENRICH -> FEATURE -> VALIDATE -> OUTPUT
   }
 }
 ```
+
+AGGREGATE 输出的字段集合是分组字段与聚合指标的并集，不会继续透传其他明细字段。指标名称在输出中视为新的可复用字段，下游 FILTER、PROJECT、DERIVE 等节点可以通过该名称引用。指标名称必须唯一，且不能与分组字段同名。
+
+规则库页面提供结构化分组字段多选和指标编辑器，不允许输入 SQL 或函数表达式。点击“预览运行”会先保存并执行服务端校验，再为当前内容创建或复用不可变版本并发起真实 `PREVIEW` run。运行抽屉展示节点状态、输入/输出行数、匹配率以及 Worker 回传的最多 25 行样例；Worker 尚未启动时保持“排队中”，不会生成模拟结果。
 
 ### 5.8 DERIVE（v1）
 

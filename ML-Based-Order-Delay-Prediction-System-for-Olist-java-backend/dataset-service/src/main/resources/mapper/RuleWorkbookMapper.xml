@@ -69,6 +69,15 @@
           AND owner_id = #{ownerId}
     </update>
 
+    <update id="updateNameAndDescription">
+        UPDATE rule_workbooks
+        SET name = #{name},
+            description = #{description,jdbcType=VARCHAR},
+            updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}
+        WHERE id = #{id,typeHandler=com.olist.datasets.typehandler.UuidTypeHandler}
+          AND owner_id = #{ownerId}
+    </update>
+
     <update id="touch">
         UPDATE rule_workbooks
         SET updated_at = #{updatedAt,typeHandler=org.apache.ibatis.type.InstantTypeHandler}

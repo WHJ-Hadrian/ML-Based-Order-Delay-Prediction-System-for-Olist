@@ -10,12 +10,13 @@ public class RuleRunCreateRequest {
     private UUID workbookVersionId;
 
     @Pattern(regexp = "PREVIEW|FULL", message = "运行模式只能是 PREVIEW 或 FULL")
-    private String mode = "FULL";
+    private String mode = "PREVIEW";
 
     @Min(value = 1, message = "预览行数必须大于 0")
-    @Max(value = 100000, message = "预览行数不能超过 100000")
+    @Max(value = 5000, message = "预览行数不能超过 5000")
     private Integer sampleSize;
 
+    @Min(value = 0, message = "随机种子不能小于 0")
     private Long seed;
 
     public UUID getWorkbookVersionId() { return workbookVersionId; }

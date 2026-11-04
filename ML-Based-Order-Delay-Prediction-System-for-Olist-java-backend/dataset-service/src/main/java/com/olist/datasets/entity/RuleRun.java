@@ -17,6 +17,11 @@ public class RuleRun {
     private Integer sampleSize;
     private Long seed;
     private String errorMessage;
+    private UUID retryOfRunId;
+    private UUID claimToken;
+    private String claimedBy;
+    private Instant leaseExpiresAt;
+    private int executionAttempt;
     private Instant createdAt;
     private Instant startedAt;
     private Instant finishedAt;
@@ -41,6 +46,16 @@ public class RuleRun {
     public void setSeed(Long seed) { this.seed = seed; }
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public UUID getRetryOfRunId() { return retryOfRunId; }
+    public void setRetryOfRunId(UUID retryOfRunId) { this.retryOfRunId = retryOfRunId; }
+    public UUID getClaimToken() { return claimToken; }
+    public void setClaimToken(UUID claimToken) { this.claimToken = claimToken; }
+    public String getClaimedBy() { return claimedBy; }
+    public void setClaimedBy(String claimedBy) { this.claimedBy = claimedBy; }
+    public Instant getLeaseExpiresAt() { return leaseExpiresAt; }
+    public void setLeaseExpiresAt(Instant leaseExpiresAt) { this.leaseExpiresAt = leaseExpiresAt; }
+    public int getExecutionAttempt() { return executionAttempt; }
+    public void setExecutionAttempt(int executionAttempt) { this.executionAttempt = executionAttempt; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getStartedAt() { return startedAt; }

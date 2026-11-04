@@ -19,6 +19,24 @@ public interface RuleRunMapper {
             @Param("id") UUID id,
             @Param("ownerId") String ownerId);
 
+    RuleRun findClaimCandidate(
+            @Param("mode") String mode,
+            @Param("now") Instant now);
+
+    int failExpiredFullRuns(@Param("now") Instant now);
+
+    RuleRun findByIdAndClaim(
+            @Param("id") UUID id,
+            @Param("claimToken") UUID claimToken,
+            @Param("executionAttempt") int executionAttempt,
+            @Param("now") Instant now);
+
+    RuleRun findByIdAndClaimForUpdate(
+            @Param("id") UUID id,
+            @Param("claimToken") UUID claimToken,
+            @Param("executionAttempt") int executionAttempt,
+            @Param("now") Instant now);
+
     List<RuleRun> findByWorkbookId(
             @Param("workbookId") UUID workbookId,
             @Param("ownerId") String ownerId,
@@ -33,4 +51,36 @@ public interface RuleRunMapper {
             @Param("startedAt") Instant startedAt,
             @Param("finishedAt") Instant finishedAt,
             @Param("errorMessage") String errorMessage);
+
+    int cancelIfActive(
+            @Param("id") UUID id,
+            @Param("ownerId") String ownerId,
+            @Param("finishedAt") Instant finishedAt);
+
+    int claimIfAvailable(
+            @Param("id") UUID id,
+            @Param("expectedStatus") RuleRunStatus expectedStatus,
+            @Param("expectedAttempt") int expectedAttempt,
+            @Param("claimToken") UUID claimToken,
+            @Param("claimedBy") String claimedBy,
+            @Param("leaseExpiresAt") Instant leaseExpiresAt,
+            @Param("now") Instant now);
+
+    int renewLease(
+            @Param("id") UUID id,
+            @Param("claimToken") UUID claimToken,
+            @Param("executionAttempt") int executionAttempt,
+            @Param("leaseExpiresAt") Instant leaseExpiresAt,
+            @Param("now") Instant now);
+
+    int updateClaimedStatus(
+            @Param("id") UUID id,
+            @Param("claimToken") UUID claimToken,
+            @Param("executionAttempt") int executionAttempt,
+            @Param("expectedStatus") RuleRunStatus expectedStatus,
+            @Param("newStatus") RuleRunStatus newStatus,
+            @Param("startedAt") Instant startedAt,
+            @Param("finishedAt") Instant finishedAt,
+            @Param("errorMessage") String errorMessage,
+            @Param("now") Instant now);
 }

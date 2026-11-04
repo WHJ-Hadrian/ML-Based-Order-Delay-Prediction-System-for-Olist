@@ -61,6 +61,17 @@ class RunExecution:
 
 
 @dataclass(frozen=True)
+class RuleOutputArtifact:
+    node_id: str
+    name: str
+    file_path: str
+    sha256: str
+    size_bytes: int
+    row_count: int
+    column_count: int
+
+
+@dataclass(frozen=True)
 class NodeOutcome:
     """A terminal node result produced by an execution backend."""
 
@@ -68,6 +79,7 @@ class NodeOutcome:
     metrics: Optional[Mapping[str, Any]] = None
     sample_uri: Optional[str] = None
     error_message: Optional[str] = None
+    output_artifact: Optional[RuleOutputArtifact] = None
 
     def __post_init__(self) -> None:
         normalized = self.status.strip().upper()
@@ -84,8 +96,14 @@ class NodeOutcome:
         cls,
         metrics: Optional[Mapping[str, Any]] = None,
         sample_uri: Optional[str] = None,
+        output_artifact: Optional[RuleOutputArtifact] = None,
     ) -> "NodeOutcome":
-        return cls(NODE_SUCCEEDED, metrics=metrics, sample_uri=sample_uri)
+        return cls(
+            NODE_SUCCEEDED,
+            metrics=metrics,
+            sample_uri=sample_uri,
+            output_artifact=output_artifact,
+        )
 
     @classmethod
     def failed(cls, message: str) -> "NodeOutcome":
@@ -107,7 +125,7 @@ class RunOutcome:
 
     def __post_init__(self) -> None:
         normalized = self.status.strip().upper()
-        if normalized not in {"VALIDATED", RUN_SUCCEEDED, RUN_FAILED}:
+        if normalized not in {"VALIDATED", RUN_SUCCEEDED, RUN_FAILED, RUN_CANCELLED}:
             raise ValueError("unsupported local run outcome: {0}".format(self.status))
         object.__setattr__(self, "status", normalized)
 

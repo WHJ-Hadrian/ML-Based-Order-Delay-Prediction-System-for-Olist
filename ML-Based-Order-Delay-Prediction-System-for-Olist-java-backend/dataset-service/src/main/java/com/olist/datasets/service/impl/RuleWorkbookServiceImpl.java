@@ -5,11 +5,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.olist.datasets.dto.RuleRunCreateRequest;
+import com.olist.datasets.dto.RuleRunClaimRequest;
 import com.olist.datasets.dto.RuleRunFinishRequest;
+import com.olist.datasets.dto.RuleRunLeaseRequest;
 import com.olist.datasets.dto.RuleRunNodeRequest;
+import com.olist.datasets.dto.RuleOutputUpload;
 import com.olist.datasets.dto.RuleWorkbookCreateRequest;
 import com.olist.datasets.dto.RuleWorkbookDraftRequest;
 import com.olist.datasets.dto.RuleWorkbookQuery;
+import com.olist.datasets.dto.RuleWorkbookUpdateRequest;
 import com.olist.datasets.entity.DatasetVersion;
 import com.olist.datasets.entity.RuleRun;
 import com.olist.datasets.entity.RuleRunNode;
@@ -40,8 +44,12 @@ import com.olist.datasets.rule.RuleWorkbookCompiler;
 import com.olist.datasets.rule.RuleWorkbookDocumentFactory;
 import com.olist.datasets.security.DatasetOwnerProvider;
 import com.olist.datasets.service.RuleWorkbookService;
+import com.olist.datasets.service.DatasetService;
+import com.olist.datasets.vo.ExecutionSnapshotVO;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.RuleRunExecutionVO;
+import com.olist.datasets.vo.RuleRunClaimVO;
+import com.olist.datasets.vo.RuleRunLeaseVO;
 import com.olist.datasets.vo.RuleRunNodeVO;
 import com.olist.datasets.vo.RuleRunVO;
 import com.olist.datasets.vo.RuleValidationIssueVO;
@@ -58,6 +66,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -71,6 +80,11 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
     private static final int MAX_NAME_LENGTH = 255;
     private static final int MAX_DESCRIPTION_LENGTH = 1000;
     private static final int DEFAULT_PREVIEW_ROWS = 1000;
+    private static final int MAX_PREVIEW_ROWS = 5000;
+    private static final int DEFAULT_LEASE_SECONDS = 60;
+    private static final int MIN_LEASE_SECONDS = 15;
+    private static final int MAX_LEASE_SECONDS = 300;
+    private static final int MAX_CLAIM_RACE_RETRIES = 10;
 
     private final RuleWorkbookMapper ruleWorkbookMapper;
     private final RuleWorkbookDraftMapper ruleWorkbookDraftMapper;
@@ -78,6 +92,7 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
     private final RuleRunMapper ruleRunMapper;
     private final RuleRunNodeMapper ruleRunNodeMapper;
     private final DatasetVersionMapper datasetVersionMapper;
+    private final DatasetService datasetService;
     private final RuleWorkbookCompiler compiler;
     private final RuleWorkbookDocumentFactory documentFactory;
     private final ObjectMapper objectMapper;
@@ -90,6 +105,7 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
             RuleRunMapper ruleRunMapper,
             RuleRunNodeMapper ruleRunNodeMapper,
             DatasetVersionMapper datasetVersionMapper,
+            DatasetService datasetService,
             RuleWorkbookCompiler compiler,
             RuleWorkbookDocumentFactory documentFactory,
             ObjectMapper objectMapper,
@@ -100,6 +116,7 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         this.ruleRunMapper = ruleRunMapper;
         this.ruleRunNodeMapper = ruleRunNodeMapper;
         this.datasetVersionMapper = datasetVersionMapper;
+        this.datasetService = datasetService;
         this.compiler = compiler;
         this.documentFactory = documentFactory;
         this.objectMapper = objectMapper;
@@ -170,6 +187,47 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         draft.setDocumentJson(writeJson(document));
         draft.setUpdatedAt(now);
         ruleWorkbookDraftMapper.insert(draft);
+        return toDetail(workbook, draft);
+    }
+
+    @Override
+    @Transactional
+    public RuleWorkbookDetailVO update(UUID id, RuleWorkbookUpdateRequest request) {
+        if (request == null || request.getName() == null) {
+            throw new InvalidLibraryRequestException("规则库名称不能为空");
+        }
+        RuleWorkbook workbook = requireWorkbook(id);
+        String ownerId = datasetOwnerProvider.currentOwnerId();
+        String name = normalizeName(request.getName());
+        if (ruleWorkbookMapper.countByName(name, ownerId, id) > 0) {
+            throw new RuleWorkbookConflictException("规则库名称「" + name + "」已存在");
+        }
+        String description = normalizeDescription(request.getDescription());
+        Instant now = Instant.now();
+        if (ruleWorkbookMapper.updateNameAndDescription(
+                id, ownerId, name, description, now) != 1) {
+            throw new RuleWorkbookNotFoundException(id.toString());
+        }
+        workbook.setName(name);
+        workbook.setDescription(description);
+        workbook.setUpdatedAt(now);
+
+        RuleWorkbookDraft draft = ruleWorkbookDraftMapper.findByWorkbookId(id);
+        if (draft != null) {
+            ObjectNode document = documentFactory.normalize(
+                    parseJson(draft.getDocumentJson()),
+                    id,
+                    name,
+                    workbook.getDatasetVersionId());
+            RuleWorkbookDraft renamed = new RuleWorkbookDraft();
+            renamed.setWorkbookId(id);
+            renamed.setRevision(draft.getRevision());
+            renamed.setDocumentJson(writeJson(document));
+            renamed.setUpdatedAt(now);
+            if (ruleWorkbookDraftMapper.update(renamed, draft.getRevision()) == 1) {
+                draft = renamed;
+            }
+        }
         return toDetail(workbook, draft);
     }
 
@@ -311,13 +369,23 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         requireReadyDatasetVersion(version.getDatasetVersionId(), ownerId);
 
         RuleRunMode mode = parseMode(request == null ? null : request.getMode());
+        JsonNode compiledPlan = parseJson(version.getCompiledPlanJson());
+        validateRunPlan(compiledPlan, mode);
         Integer sampleSize = request == null ? null : request.getSampleSize();
         if (mode == RuleRunMode.PREVIEW && sampleSize == null) {
             sampleSize = DEFAULT_PREVIEW_ROWS;
         }
+        if (mode == RuleRunMode.PREVIEW
+                && (sampleSize < 1 || sampleSize > MAX_PREVIEW_ROWS)) {
+            throw new InvalidLibraryRequestException(
+                    "预览行数必须在 1 到 " + MAX_PREVIEW_ROWS + " 之间");
+        }
         Long seed = request == null ? null : request.getSeed();
         if (mode == RuleRunMode.PREVIEW && seed == null) {
             seed = 42L;
+        }
+        if (mode == RuleRunMode.PREVIEW && seed < 0) {
+            throw new InvalidLibraryRequestException("随机种子不能小于 0");
         }
         Instant now = Instant.now();
         RuleRun run = new RuleRun();
@@ -333,6 +401,39 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         run.setCreatedAt(now);
         ruleRunMapper.insert(run);
         return toRunVO(run);
+    }
+
+    private void validateRunPlan(JsonNode plan, RuleRunMode mode) {
+        int enabledOutputs = 0;
+        for (JsonNode node : plan.path("nodes")) {
+            if (!node.path("enabled").asBoolean(true)) {
+                continue;
+            }
+            String kind = node.path("kind").asText("").toUpperCase(Locale.ROOT);
+            if ("OUTPUT".equals(kind)) {
+                enabledOutputs++;
+                String outputMode = node.path("config").path("mode").asText("");
+                String format = node.path("config").path("format").asText("");
+                if (!"MATERIALIZE_VERSION".equalsIgnoreCase(outputMode)
+                        || !"CSV".equalsIgnoreCase(format)) {
+                    throw new InvalidLibraryRequestException(
+                            "当前 FULL Worker 仅支持 OUTPUT: MATERIALIZE_VERSION + CSV");
+                }
+            } else if (!Set.of(
+                    "CHECK", "TRANSFORM", "FILTER", "PROJECT", "DEDUPE", "JOIN",
+                    "AGGREGATE", "DERIVE").contains(kind)) {
+                throw new InvalidLibraryRequestException(
+                        "当前 Worker 不支持运行节点 " + kind);
+            }
+        }
+        if (mode == RuleRunMode.FULL && (enabledOutputs == 0 || enabledOutputs > 20)) {
+            throw new InvalidLibraryRequestException(
+                    "FULL 运行必须包含 1 到 20 个启用的 CSV 输出节点");
+        }
+        if (mode == RuleRunMode.PREVIEW && enabledOutputs > 0) {
+            throw new InvalidLibraryRequestException(
+                    "PREVIEW 不能包含启用的 OUTPUT 节点，请使用 FULL");
+        }
     }
 
     @Override
@@ -354,10 +455,76 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
     }
 
     @Override
+    @Transactional
+    public RuleRunVO retryRun(UUID runId) {
+        String ownerId = datasetOwnerProvider.currentOwnerId();
+        RuleRun source = ruleRunMapper.findByIdAndOwnerForUpdate(runId, ownerId);
+        if (source == null) {
+            throw new RuleRunNotFoundException("规则运行 " + runId + " 不存在");
+        }
+        if (source.getMode() != RuleRunMode.PREVIEW) {
+            throw new RuleRunConflictException("只有 PREVIEW 运行支持安全重试；FULL 输出需要幂等物化后才能重试");
+        }
+        if (source.getStatus() != RuleRunStatus.FAILED
+                && source.getStatus() != RuleRunStatus.CANCELLED) {
+            throw new RuleRunConflictException("只有失败或已取消的 PREVIEW 运行可以重试");
+        }
+        requireReadyDatasetVersion(source.getDatasetVersionId(), ownerId);
+
+        Instant now = Instant.now();
+        RuleRun retry = new RuleRun();
+        retry.setId(UUID.randomUUID());
+        retry.setOwnerId(ownerId);
+        retry.setWorkbookId(source.getWorkbookId());
+        retry.setWorkbookVersionId(source.getWorkbookVersionId());
+        retry.setDatasetVersionId(source.getDatasetVersionId());
+        retry.setMode(source.getMode());
+        retry.setStatus(RuleRunStatus.QUEUED);
+        retry.setSampleSize(source.getSampleSize());
+        retry.setSeed(source.getSeed());
+        retry.setRetryOfRunId(source.getId());
+        retry.setCreatedAt(now);
+        ruleRunMapper.insert(retry);
+        return toRunVO(retry);
+    }
+
+    @Override
+    @Transactional
+    public RuleRunVO cancelRun(UUID runId) {
+        String ownerId = datasetOwnerProvider.currentOwnerId();
+        RuleRun run = ruleRunMapper.findByIdAndOwnerForUpdate(runId, ownerId);
+        if (run == null) {
+            throw new RuleRunNotFoundException("规则运行 " + runId + " 不存在");
+        }
+        if (run.getStatus() == RuleRunStatus.CANCELLED) {
+            return toRunVO(run);
+        }
+        if (run.getStatus() != RuleRunStatus.QUEUED && run.getStatus() != RuleRunStatus.RUNNING) {
+            throw new RuleRunConflictException(
+                    "规则运行状态为「" + run.getStatus() + "」，不能取消");
+        }
+        Instant now = Instant.now();
+        if (ruleRunMapper.cancelIfActive(runId, ownerId, now) != 1) {
+            RuleRun current = requireRun(runId);
+            if (current.getStatus() == RuleRunStatus.CANCELLED) {
+                return toRunVO(current);
+            }
+            throw new RuleRunConflictException(
+                    "规则运行状态已变为「" + current.getStatus() + "」，不能取消");
+        }
+        ruleRunNodeMapper.cancelActiveByRunId(runId, now);
+        return toRunVO(requireRun(runId));
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public RuleRunExecutionVO getRunExecution(UUID runId) {
         RuleRun run = requireRun(runId);
-        RuleWorkbookVersion version = requireRunVersion(run);
+        return toRunExecution(run, run.getOwnerId());
+    }
+
+    private RuleRunExecutionVO toRunExecution(RuleRun run, String ownerId) {
+        RuleWorkbookVersion version = requireRunVersion(run, ownerId);
         JsonNode plan = parseJson(version.getCompiledPlanJson());
         String planDatasetVersionId = plan.path("datasetVersionId").asText(null);
         if (planDatasetVersionId != null
@@ -384,6 +551,10 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         RuleRun run = ruleRunMapper.findByIdAndOwnerForUpdate(runId, ownerId);
         if (run == null) {
             throw new RuleRunNotFoundException("规则运行 " + runId + " 不存在");
+        }
+        ensureNotClaimed(run);
+        if (run.getMode() == RuleRunMode.FULL) {
+            throw new RuleRunConflictException("FULL 运行必须由队列 Worker 领取后启动");
         }
         if (run.getStatus() == RuleRunStatus.RUNNING) {
             return toRunVO(run);
@@ -421,6 +592,7 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         if (run == null) {
             throw new RuleRunNotFoundException("规则运行 " + runId + " 不存在");
         }
+        ensureNotClaimed(run);
         if (run.getStatus() == target) {
             return toRunVO(run);
         }
@@ -461,22 +633,249 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         if (request == null) {
             throw new InvalidLibraryRequestException("节点上报请求不能为空");
         }
-        String nodeId = normalizeNodeId(request.nodeId());
         String ownerId = datasetOwnerProvider.currentOwnerId();
         RuleRun run = ruleRunMapper.findByIdAndOwnerForUpdate(runId, ownerId);
         if (run == null) {
             throw new RuleRunNotFoundException("规则运行 " + runId + " 不存在");
         }
+        ensureNotClaimed(run);
+        return upsertRunNodeForRun(run, request, ownerId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<RuleRunNodeVO> runNodes(UUID runId) {
+        requireRun(runId);
+        return ruleRunNodeMapper.findByRunId(runId).stream()
+                .map(this::toNodeVO)
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public RuleRunClaimVO claimRun(RuleRunClaimRequest request) {
+        String workerId = request == null || request.workerId() == null
+                ? "" : request.workerId().trim();
+        if (workerId.isEmpty() || workerId.length() > 128) {
+            throw new InvalidLibraryRequestException("Worker ID 必须为 1 到 128 个字符");
+        }
+        int leaseSeconds = normalizeLeaseSeconds(
+                request == null ? null : request.leaseSeconds());
+        String mode = normalizeClaimMode(request == null ? null : request.mode());
+        Instant now = Instant.now();
+        ruleRunMapper.failExpiredFullRuns(now);
+        for (int attempt = 0; attempt < MAX_CLAIM_RACE_RETRIES; attempt++) {
+            RuleRun candidate = ruleRunMapper.findClaimCandidate(mode, now);
+            if (candidate == null) {
+                return RuleRunClaimVO.empty();
+            }
+            UUID claimToken = UUID.randomUUID();
+            Instant expiresAt = now.plusSeconds(leaseSeconds);
+            RuleRunStatus expectedStatus = candidate.getStatus();
+            if (ruleRunMapper.claimIfAvailable(
+                    candidate.getId(), expectedStatus, candidate.getExecutionAttempt(),
+                    claimToken, workerId, expiresAt, now) != 1) {
+                continue;
+            }
+            if (expectedStatus == RuleRunStatus.RUNNING) {
+                ruleRunNodeMapper.deleteByRunId(candidate.getId());
+            }
+            return new RuleRunClaimVO(
+                    true,
+                    candidate.getId(),
+                    candidate.getOwnerId(),
+                    claimToken,
+                    candidate.getExecutionAttempt() + 1,
+                    expiresAt);
+        }
+        return RuleRunClaimVO.empty();
+    }
+
+    @Override
+    @Transactional
+    public RuleRunLeaseVO renewRunLease(
+            UUID runId, UUID claimToken, int executionAttempt, RuleRunLeaseRequest request) {
+        Instant now = Instant.now();
+        RuleRun run = requireClaimedRunForUpdate(runId, claimToken, executionAttempt, now);
+        int leaseSeconds = normalizeLeaseSeconds(request == null ? null : request.leaseSeconds());
+        Instant expiresAt = now.plusSeconds(leaseSeconds);
+        if (ruleRunMapper.renewLease(runId, claimToken, executionAttempt, expiresAt, now) != 1) {
+            throw lostClaim(runId);
+        }
+        return new RuleRunLeaseVO(run.getId(), executionAttempt, expiresAt);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public RuleRunExecutionVO getClaimedRunExecution(
+            UUID runId, UUID claimToken, int executionAttempt) {
+        RuleRun run = requireClaimedRun(runId, claimToken, executionAttempt, Instant.now());
+        return toRunExecution(run, run.getOwnerId());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ExecutionSnapshotVO getClaimedExecutionSnapshot(
+            UUID runId, UUID claimToken, int executionAttempt) {
+        RuleRun run = requireClaimedRun(runId, claimToken, executionAttempt, Instant.now());
+        if (run.getStatus() != RuleRunStatus.QUEUED && run.getStatus() != RuleRunStatus.RUNNING) {
+            throw lostClaim(runId);
+        }
+        return datasetService.executionSnapshot(run.getDatasetVersionId(), run.getOwnerId());
+    }
+
+    @Override
+    @Transactional
+    public RuleRunVO startClaimedRun(UUID runId, UUID claimToken, int executionAttempt) {
+        Instant now = Instant.now();
+        RuleRun run = requireClaimedRunForUpdate(runId, claimToken, executionAttempt, now);
+        if (run.getStatus() == RuleRunStatus.RUNNING) {
+            return toRunVO(run);
+        }
+        if (run.getStatus() != RuleRunStatus.QUEUED) {
+            throw new RuleRunConflictException(
+                    "规则运行状态为「" + run.getStatus() + "」，不能开始执行");
+        }
+        if (ruleRunMapper.updateClaimedStatus(
+                runId, claimToken, executionAttempt, RuleRunStatus.QUEUED,
+                RuleRunStatus.RUNNING, now, null, null, now) != 1) {
+            throw lostClaim(runId);
+        }
+        return toRunVO(ruleRunMapper.findByIdAndClaim(
+                runId, claimToken, executionAttempt, Instant.now()));
+    }
+
+    @Override
+    @Transactional
+    public RuleRunVO finishClaimedRun(
+            UUID runId, UUID claimToken, int executionAttempt, RuleRunFinishRequest request) {
+        RuleRunStatus target = parseFinishStatus(request);
+        Instant now = Instant.now();
+        RuleRun run = requireClaimedRunForUpdate(runId, claimToken, executionAttempt, now);
+        if (run.getMode() == RuleRunMode.FULL && target == RuleRunStatus.SUCCEEDED) {
+            throw new RuleRunConflictException("FULL 运行必须通过 finish-with-outputs 登记输出后结束");
+        }
+        if (run.getStatus() == target) {
+            return toRunVO(run);
+        }
+        if (run.getStatus() != RuleRunStatus.RUNNING
+                && !(run.getStatus() == RuleRunStatus.QUEUED
+                        && target == RuleRunStatus.FAILED)) {
+            throw new RuleRunConflictException(
+                    "规则运行状态为「" + run.getStatus() + "」，不能结束执行");
+        }
+        if (target == RuleRunStatus.SUCCEEDED) {
+            requireSuccessfulNodes(run, run.getOwnerId());
+        }
+        String errorMessage = normalizeErrorMessage(request == null ? null : request.errorMessage());
+        if (target == RuleRunStatus.SUCCEEDED) {
+            errorMessage = null;
+        }
+        if (ruleRunMapper.updateClaimedStatus(
+                runId, claimToken, executionAttempt, run.getStatus(),
+                target, null, now, errorMessage, now) != 1) {
+            throw lostClaim(runId);
+        }
+        return toRunVO(ruleRunMapper.findByIdAndOwner(runId, run.getOwnerId()));
+    }
+
+    @Override
+    @Transactional
+    public RuleRunVO finishClaimedRunWithOutputs(
+            UUID runId,
+            UUID claimToken,
+            int executionAttempt,
+            List<RuleOutputUpload> outputs) {
+        Instant now = Instant.now();
+        RuleRun run = requireClaimedRunForUpdate(runId, claimToken, executionAttempt, now);
+        if (run.getMode() != RuleRunMode.FULL || run.getStatus() != RuleRunStatus.RUNNING) {
+            throw new RuleRunConflictException("仅 RUNNING 的 FULL 运行可以登记物化输出");
+        }
+        if (outputs == null || outputs.isEmpty() || outputs.size() > 20) {
+            throw new InvalidLibraryRequestException("规则输出数量必须在 1 到 20 之间");
+        }
+        requireSuccessfulNodes(run, run.getOwnerId());
+        RuleWorkbookVersion version = requireRunVersion(run, run.getOwnerId());
+        JsonNode plan = parseJson(version.getCompiledPlanJson());
+        Map<String, JsonNode> expected = new HashMap<>();
+        for (JsonNode node : plan.path("nodes")) {
+            if (node.path("enabled").asBoolean(true)
+                    && "OUTPUT".equalsIgnoreCase(node.path("kind").asText())) {
+                expected.put(node.path("id").asText(), node);
+            }
+        }
+        if (expected.size() != outputs.size()) {
+            throw new InvalidLibraryRequestException("输出文件清单必须与工作簿启用的 OUTPUT 节点完全一致");
+        }
+        Set<String> received = new java.util.HashSet<>();
+        for (RuleOutputUpload output : outputs) {
+            if (output == null || output.nodeId() == null || !received.add(output.nodeId())) {
+                throw new InvalidLibraryRequestException("输出节点标识缺失或重复");
+            }
+            JsonNode node = expected.get(output.nodeId());
+            if (node == null || !node.path("config").path("name").asText().equals(output.name())) {
+                throw new InvalidLibraryRequestException("输出清单与冻结工作簿配置不匹配");
+            }
+            if (output.file() == null || output.file().getSize() != output.sizeBytes()) {
+                throw new InvalidLibraryRequestException("输出文件缺失或大小与清单不符");
+            }
+            RuleRunNode outputNode = ruleRunNodeMapper.findByRunIdAndNodeId(runId, output.nodeId());
+            validateOutputMetrics(outputNode, output);
+            datasetService.materializeRuleOutput(
+                    run.getOwnerId(), run.getId(), version.getId(), output.nodeId(), output.name(),
+                    output.file(), output.sha256(), output.rowCount(), output.columnCount());
+        }
+        if (!received.equals(expected.keySet())) {
+            throw new InvalidLibraryRequestException("输出文件清单缺少启用的 OUTPUT 节点");
+        }
+        if (ruleRunMapper.updateClaimedStatus(
+                runId, claimToken, executionAttempt, RuleRunStatus.RUNNING,
+                RuleRunStatus.SUCCEEDED, null, now, null, now) != 1) {
+            throw lostClaim(runId);
+        }
+        return toRunVO(ruleRunMapper.findByIdAndOwner(runId, run.getOwnerId()));
+    }
+
+    private void validateOutputMetrics(RuleRunNode node, RuleOutputUpload output) {
+        if (node == null || node.getStatus() != RuleRunNodeStatus.SUCCEEDED
+                || !"OUTPUT".equalsIgnoreCase(node.getNodeKind())
+                || node.getMetricsJson() == null) {
+            throw new RuleRunConflictException("输出节点尚未以 OUTPUT/SUCCEEDED 上报完整指标");
+        }
+        JsonNode metrics = parseJson(node.getMetricsJson());
+        if (!metrics.path("sha256").asText().equals(output.sha256())
+                || metrics.path("sizeBytes").asLong(-1) != output.sizeBytes()
+                || metrics.path("rowCount").asLong(-1) != output.rowCount()
+                || metrics.path("columnCount").asInt(-1) != output.columnCount()) {
+            throw new InvalidLibraryRequestException("输出文件清单与节点执行指标不一致");
+        }
+    }
+
+    @Override
+    @Transactional
+    public RuleRunNodeVO upsertClaimedRunNode(
+            UUID runId, UUID claimToken, int executionAttempt, RuleRunNodeRequest request) {
+        if (request == null) {
+            throw new InvalidLibraryRequestException("节点上报请求不能为空");
+        }
+        Instant now = Instant.now();
+        RuleRun run = requireClaimedRunForUpdate(runId, claimToken, executionAttempt, now);
+        return upsertRunNodeForRun(run, request, run.getOwnerId());
+    }
+
+    private RuleRunNodeVO upsertRunNodeForRun(
+            RuleRun run, RuleRunNodeRequest request, String ownerId) {
+        UUID runId = run.getId();
         if (run.getStatus() != RuleRunStatus.RUNNING) {
             throw new RuleRunConflictException(
                     "规则运行状态为「" + run.getStatus() + "」，只有 RUNNING 可以上报节点");
         }
-        RuleWorkbookVersion version = requireRunVersion(run);
+        String nodeId = normalizeNodeId(request.nodeId());
+        RuleWorkbookVersion version = requireRunVersion(run, ownerId);
         JsonNode plan = parseJson(version.getCompiledPlanJson());
         JsonNode planNode = findPlanNode(plan, nodeId);
         if (planNode == null) {
-            throw new InvalidLibraryRequestException(
-                    "节点「" + nodeId + "」不属于当前规则版本");
+            throw new InvalidLibraryRequestException("节点「" + nodeId + "」不属于当前规则版本");
         }
         String planKind = normalizeNodeKind(planNode.path("kind").asText(null));
         String requestedKind = normalizeNodeKind(request.nodeKind());
@@ -488,7 +887,6 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         RuleRunNodeStatus target = parseNodeStatus(request.status());
         RuleRunNode existing = ruleRunNodeMapper.findByRunIdAndNodeId(runId, nodeId);
         validateNodeTransition(existing == null ? null : existing.getStatus(), target);
-
         RuleRunNode node = existing == null ? new RuleRunNode() : existing;
         if (existing == null) {
             node.setId(UUID.randomUUID());
@@ -506,12 +904,11 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
         if (request.errorMessage() != null) {
             node.setErrorMessage(normalizeErrorMessage(request.errorMessage()));
         }
-        Instant now = Instant.now();
         if (node.getStartedAt() == null && target != RuleRunNodeStatus.PENDING) {
-            node.setStartedAt(now);
+            node.setStartedAt(Instant.now());
         }
         if (target.isTerminal() && node.getFinishedAt() == null) {
-            node.setFinishedAt(now);
+            node.setFinishedAt(Instant.now());
         }
         if (existing == null) {
             ruleRunNodeMapper.insert(node);
@@ -519,15 +916,6 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
             ruleRunNodeMapper.update(node);
         }
         return toNodeVO(node);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<RuleRunNodeVO> runNodes(UUID runId) {
-        requireRun(runId);
-        return ruleRunNodeMapper.findByRunId(runId).stream()
-                .map(this::toNodeVO)
-                .toList();
     }
 
     private RuleRun requireRun(UUID runId) {
@@ -539,8 +927,12 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
     }
 
     private RuleWorkbookVersion requireRunVersion(RuleRun run) {
+        return requireRunVersion(run, datasetOwnerProvider.currentOwnerId());
+    }
+
+    private RuleWorkbookVersion requireRunVersion(RuleRun run, String ownerId) {
         RuleWorkbookVersion version = ruleWorkbookVersionMapper.findByIdAndOwner(
-                run.getWorkbookVersionId(), datasetOwnerProvider.currentOwnerId());
+                run.getWorkbookVersionId(), ownerId);
         if (version == null) {
             throw new RuleRunConflictException("规则运行对应的已发布版本不存在");
         }
@@ -558,7 +950,11 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
     }
 
     private void requireSuccessfulNodes(RuleRun run) {
-        RuleWorkbookVersion version = requireRunVersion(run);
+        requireSuccessfulNodes(run, datasetOwnerProvider.currentOwnerId());
+    }
+
+    private void requireSuccessfulNodes(RuleRun run, String ownerId) {
+        RuleWorkbookVersion version = requireRunVersion(run, ownerId);
         JsonNode plan = parseJson(version.getCompiledPlanJson());
         Map<String, RuleRunNodeStatus> statuses = new HashMap<>();
         for (RuleRunNode node : ruleRunNodeMapper.findByRunId(run.getId())) {
@@ -578,6 +974,63 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
                         "节点「" + nodeId + "」状态为「" + status + "」，不能将运行标记为 SUCCEEDED");
             }
         }
+    }
+
+    private RuleRun requireClaimedRun(
+            UUID runId, UUID claimToken, int executionAttempt, Instant now) {
+        if (claimToken == null || executionAttempt < 1) {
+            throw lostClaim(runId);
+        }
+        RuleRun run = ruleRunMapper.findByIdAndClaim(
+                runId, claimToken, executionAttempt, now);
+        if (run == null) {
+            throw lostClaim(runId);
+        }
+        return run;
+    }
+
+    private RuleRun requireClaimedRunForUpdate(
+            UUID runId, UUID claimToken, int executionAttempt, Instant now) {
+        if (claimToken == null || executionAttempt < 1) {
+            throw lostClaim(runId);
+        }
+        RuleRun run = ruleRunMapper.findByIdAndClaimForUpdate(
+                runId, claimToken, executionAttempt, now);
+        if (run == null) {
+            throw lostClaim(runId);
+        }
+        return run;
+    }
+
+    private static RuleRunConflictException lostClaim(UUID runId) {
+        return new RuleRunConflictException(
+                "规则运行 " + runId + " 的领取已失效、租约已过期或已被新的执行接管");
+    }
+
+    private static void ensureNotClaimed(RuleRun run) {
+        if (run.getClaimToken() != null) {
+            throw new RuleRunConflictException(
+                    "规则运行已由 Worker 领取，必须通过带 fencing 信息的内部接口更新");
+        }
+    }
+
+    private static int normalizeLeaseSeconds(Integer value) {
+        int leaseSeconds = value == null ? DEFAULT_LEASE_SECONDS : value;
+        if (leaseSeconds < MIN_LEASE_SECONDS || leaseSeconds > MAX_LEASE_SECONDS) {
+            throw new InvalidLibraryRequestException(
+                    "租约秒数必须在 " + MIN_LEASE_SECONDS + " 到 " + MAX_LEASE_SECONDS + " 之间");
+        }
+        return leaseSeconds;
+    }
+
+    private static String normalizeClaimMode(String value) {
+        String mode = value == null || value.isBlank()
+                ? "ALL"
+                : value.trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("ALL", "PREVIEW", "FULL").contains(mode)) {
+            throw new InvalidLibraryRequestException("自动 Worker 仅支持领取 PREVIEW 或 FULL 运行");
+        }
+        return "ALL".equals(mode) ? null : mode;
     }
 
     private static JsonNode findPlanNode(JsonNode plan, String nodeId) {
@@ -665,7 +1118,7 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
             return RuleRunNodeStatus.valueOf(value.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException exception) {
             throw new InvalidLibraryRequestException(
-                    "节点状态只能是 PENDING、RUNNING、SUCCEEDED、FAILED 或 SKIPPED");
+                    "节点状态只能是 PENDING、RUNNING、SUCCEEDED、FAILED、SKIPPED 或 CANCELLED");
         }
     }
 
@@ -788,6 +1241,10 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
                 run.getSampleSize(),
                 run.getSeed(),
                 run.getErrorMessage(),
+                run.getRetryOfRunId(),
+                run.getClaimedBy(),
+                run.getLeaseExpiresAt(),
+                run.getExecutionAttempt(),
                 run.getCreatedAt(),
                 run.getStartedAt(),
                 run.getFinishedAt());
@@ -828,7 +1285,7 @@ public class RuleWorkbookServiceImpl implements RuleWorkbookService {
 
     private static RuleRunMode parseMode(String mode) {
         if (mode == null || mode.isBlank()) {
-            return RuleRunMode.FULL;
+            return RuleRunMode.PREVIEW;
         }
         try {
             return RuleRunMode.valueOf(mode.trim().toUpperCase(Locale.ROOT));

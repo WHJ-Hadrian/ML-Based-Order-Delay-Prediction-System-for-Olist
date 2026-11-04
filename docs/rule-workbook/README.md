@@ -197,16 +197,18 @@ QUEUED -> RUNNING -> SUCCEEDED / FAILED / CANCELLED
 - 节点状态为 `PENDING -> RUNNING -> SUCCEEDED / FAILED / SKIPPED`，进入终态后不可改写。
 - 只有当冻结计划中的全部启用节点都处于 `SUCCEEDED` 或 `SKIPPED` 时，运行才能结束为 `SUCCEEDED`。
 - `finish` 只接受 `SUCCEEDED / FAILED / CANCELLED`，相同终态重复上报是幂等的。
+- 用户可取消 `QUEUED / RUNNING` 运行；取消会 fencing 当前 Worker。ClickHouse 在途只读查询不会即时 kill，返回或超时后 Worker 停止上报并跳过后续节点。
+- FAILED/CANCELLED 的 PREVIEW 运行可以创建新运行安全重试，沿用冻结版本、样本量和 seed 并记录来源；FULL 运行禁止重试。
 - 服务端不会自动把运行标记为成功；`SUCCEEDED` 只能由 Worker 显式上报。
 - 前端只读展示运行历史、计划节点进度和上报结果，不向普通用户暴露 `start / finish` 特权操作。
 
-Python Worker 已实现独立的计划二次校验、强类型 READY execution snapshot（HTTP 接口与 `HttpExecutionPreflight` 已接通）、拓扑排序、运行控制和节点上报编排；真实 ClickHouse 执行仍待落地。Worker 会先校验 snapshot，再在后端缺失时于 `start` 前 fail-closed，不会调用 `start` 伪造成功。详见 `worker-execution.md`。
+Python Worker 已实现独立的计划二次校验、强类型 READY execution snapshot、拓扑排序、受限的只读 ClickHouse PREVIEW 执行、节点上报，以及带 claim/lease/fencing 的自动消费。FULL 输出物化仍会失败关闭。详见 `worker-execution.md`。
 
 ## 10. 与现有服务的职责
 
 - `dataset-service`：工作簿、字段库、表关系、草稿、版本、校验和编译。
-- `job-service`：通过 Temporal 启动预览和全量运行，管理运行状态。
-- Python Worker：执行编译后的计划；当前已落地计划校验、READY snapshot 校验和运行编排，ClickHouse 执行后端仍待落地。
+- `job-service`：规划通过 Temporal 编排需要持久重试、取消和输出物化的长任务；当前规则 PREVIEW 尚未接入。
+- Python Worker：执行编译后的计划；当前已落地计划校验、READY snapshot、只读 ClickHouse PREVIEW、claim/lease/fencing 和自动消费。
 - 对象存储：清洗结果、隔离区样例、质量报告。
 - MySQL：工作簿、版本、运行和汇总指标。
 - ClickHouse：后续的质量趋势和跨运行分析。
@@ -220,7 +222,7 @@ Python Worker 已实现独立的计划二次校验、强类型 READY execution s
 3. 实现工作簿草稿、校验、编译和版本发布。
 4. 已实现单表 CHECK、TRANSFORM、FILTER、PROJECT、DEDUPE 的编译和校验。
 5. 已实现 JOIN、AGGREGATE、DERIVE、GATE、OUTPUT 的编译和校验。
-6. 已实现运行控制面（start / 节点上报 / finish）和 Python Worker 的校验/编排骨架；待 execution snapshot、ClickHouse 后端和 Temporal activity 接入。
+6. 已实现运行控制面、execution snapshot、只读 ClickHouse PREVIEW 和带租约的自动 Worker 消费；待 FULL 幂等物化和 Temporal activity 接入。
 7. 待输出质量报告、隔离区、血缘和运行历史。
 8. 后续增加 DAG 可视化、定时监控、受控自定义节点和跨数据集版本复用。
 
@@ -241,14 +243,14 @@ Python Worker 已实现独立的计划二次校验、强类型 READY execution s
 - 输入可以是原始表或上游节点输出；字段引用保存 `fieldId` / `columnId` / `nameSnapshot` / `tableId`。
 - 10 类节点的编译、引用校验、别名检查、依赖边生成和环检测。
 - 发布不可变版本；运行记录冻结工作簿版本和数据集版本。
-- 运行控制面：冻结计划读取、`QUEUED -> RUNNING -> 终态` 状态机、节点级状态/指标/样例上报、终态防改写和幂等结束。
-- Python Worker 核心：冻结计划二次校验、数据集版本一致性、依赖环检测、稳定拓扑排序、节点状态上报、失败即结束和 `--validate-only` CLI。
+- 运行控制面：冻结计划读取、`QUEUED -> RUNNING -> 终态` 状态机、节点级状态/指标/样例上报、原子 claim、lease、attempt fencing 和过期 PREVIEW 重领。
+- Python Worker 核心：冻结计划二次校验、数据集版本一致性、稳定拓扑排序、受限 ClickHouse PREVIEW、节点状态上报、失败即结束，以及 `--validate-only / --consume-once / --consume` CLI。
 - 前端提供字段库、规则库、规则工作表、条件编辑、参数 JSON 编辑、字段级联、校验、发布和预览运行入口。
 - 前端提供运行历史、运行详情、冻结计划节点进度、节点指标/样例/错误查看，并在运行未结束时每 3 秒自动刷新。
 
 尚未完成：
 
-- 尚未接入 Temporal；Python Worker 已有控制面骨架，但 execution snapshot、ClickHouse 执行后端和输出登记尚未落地，因此真实运行不会自动执行。
+- 尚未接入 Temporal；PREVIEW 已可由独立 Worker 自动领取并真实查询 ClickHouse，但 FULL 输出登记、隔离区物化和幂等恢复尚未落地。
 - 逻辑表关系库尚未独立成表，JOIN 仍在规则行内直接选择左右输入和键。
 - 字段定义跨数据集版本的业务身份复用尚未启用；当前按数据集版本导入会创建新的字段绑定。
 - GATE 的 `metricRef` 目前是文本输入；后续应改为上游指标下拉，并在发布前校验指标确实存在。

@@ -5,7 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml requirements.txt ./
 COPY app ./app
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir '.[training,workers]' \
+    && mkdir -p /var/lib/olist/models \
+    && chown -R 10001:10001 /var/lib/olist/models
 USER 10001
 EXPOSE 8090
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8090"]

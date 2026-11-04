@@ -4,6 +4,7 @@ import com.olist.datasets.dto.RuleRunCreateRequest;
 import com.olist.datasets.dto.RuleWorkbookCreateRequest;
 import com.olist.datasets.dto.RuleWorkbookDraftRequest;
 import com.olist.datasets.dto.RuleWorkbookQuery;
+import com.olist.datasets.dto.RuleWorkbookUpdateRequest;
 import com.olist.datasets.service.RuleWorkbookService;
 import com.olist.datasets.vo.PageVO;
 import com.olist.datasets.vo.RuleRunVO;
@@ -57,6 +58,13 @@ public class RuleWorkbookController {
     @GetMapping("/{id}")
     public RuleWorkbookDetailVO get(@PathVariable UUID id) {
         return ruleWorkbookService.get(id);
+    }
+
+    @PutMapping("/{id}")
+    public RuleWorkbookDetailVO update(
+            @PathVariable UUID id,
+            @Valid @RequestBody RuleWorkbookUpdateRequest request) {
+        return ruleWorkbookService.update(id, request);
     }
 
     @DeleteMapping("/{id}")
