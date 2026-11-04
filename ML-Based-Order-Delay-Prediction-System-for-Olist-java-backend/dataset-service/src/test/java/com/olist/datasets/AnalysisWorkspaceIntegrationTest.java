@@ -197,6 +197,45 @@ class AnalysisWorkspaceIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void persistsRelationCardsAndRejectsInvalidSecondFieldReferences() throws Exception {
+        UUID datasetVersionId = createReadyDataset();
+        var catalogResult = mockMvc.perform(get("/api/v1/datasets/{id}/catalog", datasetVersionId)
+                        .with(jwt().jwt(token -> token.subject("owner-a"))))
+                .andExpect(status().isOk())
+                .andReturn();
+        var table = objectMapper.readTree(catalogResult.getResponse().getContentAsString())
+                .path("tables").get(0);
+        UUID tableId = UUID.fromString(table.path("tableId").asText());
+        UUID xColumnId = UUID.fromString(table.path("columns").get(0).path("columnId").asText());
+        UUID yColumnId = UUID.fromString(table.path("columns").get(1).path("columnId").asText());
+
+        var created = mockMvc.perform(post("/api/v1/analysis-workspaces")
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(relationRequest("字段关系", datasetVersionId, tableId, xColumnId, yColumnId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.cards[0].columnId").value(xColumnId.toString()))
+                .andExpect(jsonPath("$.cards[0].relationColumnId").value(yColumnId.toString()))
+                .andReturn();
+        String id = objectMapper.readTree(created.getResponse().getContentAsString()).path("id").asText();
+        mockMvc.perform(get("/api/v1/analysis-workspaces/{id}", id)
+                        .with(jwt().jwt(token -> token.subject("owner-a"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cards[0].relationColumnId").value(yColumnId.toString()));
+
+        mockMvc.perform(post("/api/v1/analysis-workspaces")
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(relationRequest("重复字段", datasetVersionId, tableId, xColumnId, xColumnId)))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/analysis-workspaces")
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(relationRequest("越界关系字段", datasetVersionId, tableId, xColumnId, UUID.randomUUID())))
+                .andExpect(status().isBadRequest());
+    }
+
     private String request(
             String name, Integer revision, boolean includeCard,
             UUID datasetVersionId, UUID tableId, UUID columnId)
@@ -224,6 +263,19 @@ class AnalysisWorkspaceIntegrationTest {
             card.put("tableId", UUID.randomUUID().toString());
             card.put("columnId", UUID.randomUUID().toString());
         }
+        return objectMapper.writeValueAsString(body);
+    }
+
+    private String relationRequest(String name, UUID datasetVersionId, UUID tableId, UUID xColumnId, UUID yColumnId)
+            throws Exception {
+        var body = objectMapper.createObjectNode();
+        body.put("name", name);
+        var cards = body.putArray("cards");
+        var card = cards.addObject();
+        card.put("datasetVersionId", datasetVersionId.toString());
+        card.put("tableId", tableId.toString());
+        card.put("columnId", xColumnId.toString());
+        card.put("relationColumnId", yColumnId.toString());
         return objectMapper.writeValueAsString(body);
     }
 

@@ -15,6 +15,7 @@ public record AnalysisWorkspaceRequest(
     public record CardRef(
             @NotNull UUID datasetVersionId,
             @NotNull UUID tableId,
-            @NotNull UUID columnId) {
+            @NotNull UUID columnId,
+            UUID relationColumnId) {
     }
 }

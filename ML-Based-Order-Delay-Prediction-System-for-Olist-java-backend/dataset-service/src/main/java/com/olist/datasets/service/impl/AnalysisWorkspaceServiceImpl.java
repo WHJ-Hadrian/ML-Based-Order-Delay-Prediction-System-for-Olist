@@ -182,6 +182,16 @@ public class AnalysisWorkspaceServiceImpl implements AnalysisWorkspaceService {
             if (!columnExists) {
                 throw new InvalidDatasetException("分析卡片中的字段不属于所选数据表");
             }
+            if (card.relationColumnId() != null) {
+                if (card.relationColumnId().equals(card.columnId())) {
+                    throw new InvalidDatasetException("关系分析需要选择两个不同的字段");
+                }
+                boolean relationColumnExists = table.columns().stream()
+                        .anyMatch(candidate -> candidate.columnId().equals(card.relationColumnId()));
+                if (!relationColumnExists) {
+                    throw new InvalidDatasetException("关系分析字段不属于所选数据表");
+                }
+            }
         }
     }
 

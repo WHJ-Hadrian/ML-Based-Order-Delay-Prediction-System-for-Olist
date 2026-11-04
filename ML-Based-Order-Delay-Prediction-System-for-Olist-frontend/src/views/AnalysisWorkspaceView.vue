@@ -135,20 +135,19 @@ function markWorkspaceDirty() {
 
 async function addCurrentAnalysis() {
   if (!analysis.value || !selectedDataset.value || !selectedTable.value || !selectedColumn.value) return
-  const exists = boardCards.value.some((card) =>
-    card.datasetVersionId === analysis.value.datasetVersionId
-      && card.tableId === selectedTableId.value
-      && card.columnId === selectedColumnId.value,
-  )
+  const reference = {
+    datasetVersionId: analysis.value.datasetVersionId,
+    tableId: selectedTableId.value,
+    columnId: selectedColumnId.value,
+  }
+  const exists = boardCards.value.some((card) => card.id === cardReferenceId(reference))
   if (exists) return
 
   addingToBoard.value = true
   try {
     boardCards.value = [...boardCards.value, {
-      id: `${analysis.value.datasetVersionId}:${selectedTableId.value}:${selectedColumnId.value}`,
-      datasetVersionId: analysis.value.datasetVersionId,
-      tableId: selectedTableId.value,
-      columnId: selectedColumnId.value,
+      id: cardReferenceId(reference),
+      ...reference,
       datasetName: datasetLabel(selectedDataset.value),
       tableName: selectedTable.value.tableName,
       columnName: selectedColumn.value.name,
@@ -167,38 +166,81 @@ async function addCurrentAnalysis() {
   }
 }
 
+function addCurrentRelation() {
+  if (!relation.value || !selectedDataset.value || !selectedTable.value) return
+  const reference = {
+    datasetVersionId: relation.value.datasetVersionId,
+    tableId: relation.value.tableId,
+    columnId: relation.value.xColumnId,
+    relationColumnId: relation.value.yColumnId,
+  }
+  if (boardCards.value.some((card) => card.id === cardReferenceId(reference))) return
+  if (boardCards.value.length >= 20) {
+    workspaceError.value = '一个分析方案最多保存 20 张卡片'
+    return
+  }
+  boardCards.value = [...boardCards.value, {
+    id: cardReferenceId(reference),
+    ...reference,
+    datasetName: datasetLabel(selectedDataset.value),
+    tableName: selectedTable.value.tableName,
+    columnName: `${relation.value.xColumnName} · ${relation.value.yColumnName}`,
+    relationColumnName: relation.value.yColumnName,
+    logicalType: relation.value.chartType,
+    chartType: relation.value.chartType,
+    points: relation.value.points || [],
+  }]
+  markWorkspaceDirty()
+}
+
 function removeBoardCard(cardId) {
   boardCards.value = boardCards.value.filter((card) => card.id !== cardId)
   markWorkspaceDirty()
 }
 
 function savedCardReference(card) {
-  return {
+  const reference = {
     datasetVersionId: card.datasetVersionId,
     tableId: card.tableId,
     columnId: card.columnId,
   }
+  if (card.relationColumnId) reference.relationColumnId = card.relationColumnId
+  return reference
+}
+
+function cardReferenceId(reference) {
+  const base = `${reference.datasetVersionId}:${reference.tableId}:${reference.columnId}`
+  return reference.relationColumnId ? `${base}:${reference.relationColumnId}` : base
 }
 
 async function loadAnalysisCard(reference) {
   try {
     const [dataCatalog, result] = await Promise.all([
       getDatasetCatalog(reference.datasetVersionId),
-      analyzeDatasetColumn(reference.datasetVersionId, reference.tableId, reference.columnId),
+      reference.relationColumnId
+        ? analyzeDatasetRelation(reference.datasetVersionId, reference.tableId, reference.columnId, reference.relationColumnId)
+        : analyzeDatasetColumn(reference.datasetVersionId, reference.tableId, reference.columnId),
     ])
     const table = dataCatalog.tables?.find((item) => item.tableId === reference.tableId)
     const column = table?.columns?.find((item) => item.columnId === reference.columnId)
-    if (!table || !column) throw new Error('数据版本中的表或字段已不存在')
+    const relationColumn = reference.relationColumnId
+      ? table?.columns?.find((item) => item.columnId === reference.relationColumnId)
+      : null
+    if (!table || !column || (reference.relationColumnId && !relationColumn)) {
+      throw new Error('数据版本中的表或字段已不存在')
+    }
     const dataset = datasets.value.find((item) => item.id === reference.datasetVersionId)
     return {
-      id: `${reference.datasetVersionId}:${reference.tableId}:${reference.columnId}`,
+      id: cardReferenceId(reference),
       datasetVersionId: reference.datasetVersionId,
       tableId: reference.tableId,
       columnId: reference.columnId,
+      relationColumnId: reference.relationColumnId || '',
       datasetName: dataset ? datasetLabel(dataset) : `数据版本 ${reference.datasetVersionId}`,
       tableName: table.tableName,
-      columnName: column.name,
-      logicalType: result.logicalType,
+      columnName: relationColumn ? `${column.name} · ${relationColumn.name}` : column.name,
+      relationColumnName: relationColumn?.name || '',
+      logicalType: reference.relationColumnId ? result.chartType : result.logicalType,
       chartType: result.chartType,
       points: result.points || [],
       rowCount: result.rowCount,
@@ -209,8 +251,9 @@ async function loadAnalysisCard(reference) {
     }
   } catch (error) {
     return {
-      id: `${reference.datasetVersionId}:${reference.tableId}:${reference.columnId}`,
+      id: cardReferenceId(reference),
       ...reference,
+      relationColumnId: reference.relationColumnId || '',
       datasetName: `数据版本 ${reference.datasetVersionId}`,
       tableName: '无法读取数据表',
       columnName: '分析卡片不可用',
@@ -944,16 +987,31 @@ onBeforeUnmount(() => {
             <el-button circle text aria-label="移除分析卡片" title="移除分析卡片" :icon="Close" @click="removeBoardCard(card.id)" />
           </header>
           <div class="board-card-stats">
-            <span :title="`记录数 ${formatNumber(card.rowCount)}`">{{ formatNumber(card.rowCount) }} 行</span>
-            <span :title="`缺失记录 ${formatNumber(card.missingCount)}`">缺失 {{ formatNumber(card.missingCount) }}</span>
-            <span>{{ card.logicalType || '字段' }}</span>
+            <template v-if="card.relationColumnId">
+              <span>{{ card.chartType === 'scatter' ? `${card.points.length} 个样本点` : `${card.points.length} 个分组` }}</span>
+              <span>{{ card.chartType === 'scatter' ? '确定性抽样' : '分组均值' }}</span>
+            </template>
+            <template v-else>
+              <span :title="`记录数 ${formatNumber(card.rowCount)}`">{{ formatNumber(card.rowCount) }} 行</span>
+              <span :title="`缺失记录 ${formatNumber(card.missingCount)}`">缺失 {{ formatNumber(card.missingCount) }}</span>
+              <span>{{ card.logicalType || '字段' }}</span>
+            </template>
           </div>
-          <div v-if="card.points.length" class="board-bars">
+          <div v-if="!card.relationColumnId && card.points.length" class="board-bars">
             <div v-for="point in card.points.slice(0, 8)" :key="point.label" class="board-bar-row" :title="`${point.label}: ${formatNumber(point.value)}`">
               <span>{{ point.label }}</span>
               <div class="board-bar-track"><i :style="{ width: pointWidth(card.points, point.value) }"></i></div>
               <b>{{ formatNumber(point.value) }}</b>
             </div>
+          </div>
+          <div v-else-if="card.relationColumnId && card.points.length" class="board-relation-points">
+            <div class="board-relation-head"><span>{{ card.chartType === 'scatter' ? card.columnName.split(' · ')[0] : '分组' }}</span><span>{{ card.chartType === 'scatter' ? card.relationColumnName : '数值' }}</span></div>
+            <div v-for="(point, index) in card.points.slice(0, 8)" :key="`${point.label || 'sample'}:${index}`" class="board-relation-row">
+              <span :title="point.label || formatNumber(point.x)">{{ point.label || formatNumber(point.x) }}</span>
+              <strong>{{ formatNumber(point.y) }}</strong>
+            </div>
+            <small v-if="card.chartType === 'scatter'">显示 {{ Math.min(card.points.length, 8) }} / {{ card.points.length }} 个确定性样本点</small>
+            <small v-else>显示前 {{ Math.min(card.points.length, 8) }} 个类别的均值</small>
           </div>
           <el-empty v-else :description="card.error || '没有可绘制的数据'" :image-size="56" />
         </article>
@@ -974,6 +1032,9 @@ onBeforeUnmount(() => {
       <el-skeleton v-else-if="loadingRelation" :rows="5" animated />
       <el-empty v-else-if="relation && !relation.points?.length" description="所选字段没有可用于关系分析的记录" :image-size="76" />
       <div v-else-if="relation" ref="relationChartElement" class="relation-chart"></div>
+      <div v-if="relation" class="relation-board-action">
+        <el-button size="small" plain :icon="Plus" :disabled="boardCards.length >= 20 || boardCards.some((card) => card.id === `${relation.datasetVersionId}:${relation.tableId}:${relation.xColumnId}:${relation.yColumnId}`)" @click="addCurrentRelation">加入分析画布</el-button>
+      </div>
       <p class="relation-note">数值字段显示最多 250 个确定性样本点；类别与数值字段显示前 12 组的数值均值。两个类别字段暂不支持关系分析。</p>
     </section>
 
@@ -1315,6 +1376,13 @@ onBeforeUnmount(() => {
   font-size: 10px;
 }
 
+.board-relation-points { display: grid; gap: 5px; padding: 4px 1px 0; }
+.board-relation-head, .board-relation-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); align-items: center; gap: 10px; }
+.board-relation-head { padding-bottom: 5px; color: #83918a; font-size: 9px; border-bottom: 1px solid #e8eeeb; }
+.board-relation-row > span { min-width: 0; overflow: hidden; color: #566a60; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.board-relation-row > strong { color: #345d4c; font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+.board-relation-points > small { margin-top: 2px; color: #8b9891; font-size: 9px; }
+
 .board-card-stats > span {
   max-width: 100%;
   overflow: hidden;
@@ -1393,6 +1461,7 @@ onBeforeUnmount(() => {
 .relation-heading h2 { margin: 0; color: #20372f; font-size: 14px; font-weight: 650; }
 .relation-heading span { max-width: 100%; overflow: hidden; color: #829089; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .relation-chart { width: 100%; height: 330px; }
+.relation-board-action { display: flex; justify-content: flex-end; padding: 0 16px 10px; }
 .relation-note { margin: 0; color: #829089; font-size: 10px; line-height: 1.5; }
 
 .chart-heading {
