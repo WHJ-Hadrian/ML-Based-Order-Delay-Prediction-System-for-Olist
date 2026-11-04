@@ -77,6 +77,49 @@ class WorkflowDefinitionServiceTest {
         verify(repository, never()).save(any(WorkflowDefinition.class));
     }
 
+    @Test
+    void acceptsCompleteDatasetTableReferenceAndRejectsPartialReference() throws Exception {
+        when(repository.save(any(WorkflowDefinition.class))).thenAnswer(call -> call.getArgument(0));
+        String validConfig = "{\"datasetId\":\"550e8400-e29b-41d4-a716-446655440000\","
+                + "\"datasetVersionId\":\"550e8400-e29b-41d4-a716-446655440001\","
+                + "\"versionNo\":2,\"tableId\":\"550e8400-e29b-41d4-a716-446655440002\","
+                + "\"tableName\":\"customers\",\"rowCount\":100,\"schemaHash\":\"abc123\"}";
+        var valid = request("source", "[{\"id\":\"source\",\"type\":\"DATA_SOURCE\","
+                + "\"position\":{\"x\":0,\"y\":0},\"data\":{\"config\":" + validConfig + "}}]", "[]");
+        var partial = request("source", "[{\"id\":\"source\",\"type\":\"DATA_SOURCE\","
+                + "\"position\":{\"x\":0,\"y\":0},\"data\":{\"config\":{\"datasetVersionId\":\"not-a-uuid\"}}}]", "[]");
+        var childWithoutParent = request("source", "[{\"id\":\"source\",\"type\":\"DATA_SOURCE\","
+                + "\"position\":{\"x\":0,\"y\":0},\"data\":{\"config\":{\"tableId\":\"550e8400-e29b-41d4-a716-446655440002\"}}}]", "[]");
+        var datasetDraft = request("source", "[{\"id\":\"source\",\"type\":\"DATA_SOURCE\","
+                + "\"position\":{\"x\":0,\"y\":0},\"data\":{\"config\":{\"datasetId\":\"550e8400-e29b-41d4-a716-446655440000\"}}}]", "[]");
+
+        var response = service.create("owner-a", valid);
+        var draftResponse = service.create("owner-a", datasetDraft);
+
+        assertEquals("customers", response.document().path("nodes").get(0).path("data")
+                .path("config").path("tableName").asText());
+        assertEquals("550e8400-e29b-41d4-a716-446655440000", draftResponse.document()
+                .path("nodes").get(0).path("data").path("config").path("datasetId").asText());
+        assertThrows(ResponseStatusException.class, () -> service.create("owner-a", partial));
+        assertThrows(ResponseStatusException.class, () -> service.create("owner-a", childWithoutParent));
+    }
+
+    @Test
+    void validatesRuleVersionReferenceWithoutAllowingExecutableConfiguration() throws Exception {
+        when(repository.save(any(WorkflowDefinition.class))).thenAnswer(call -> call.getArgument(0));
+        var valid = request("rules", "[{\"id\":\"rule\",\"type\":\"RULE\","
+                + "\"position\":{\"x\":0,\"y\":0},\"data\":{\"config\":{"
+                + "\"ruleVersionId\":\"550e8400-e29b-41d4-a716-446655440000\","
+                + "\"workbookId\":\"550e8400-e29b-41d4-a716-446655440001\","
+                + "\"versionNumber\":1,\"workbookName\":\"清洗规则\",\"contentHash\":\"abc\"}}}]", "[]");
+        var invalid = request("rules", "[{\"id\":\"rule\",\"type\":\"RULE\","
+                + "\"position\":{\"x\":0,\"y\":0},\"data\":{\"config\":{"
+                + "\"ruleVersionId\":\"not-a-uuid\",\"versionNumber\":0}}}]", "[]");
+
+        assertEquals(1, service.create("owner-a", valid).document().path("nodes").size());
+        assertThrows(ResponseStatusException.class, () -> service.create("owner-a", invalid));
+    }
+
     private WorkflowRequest request(String name, String nodes, String edges) throws Exception {
         return new WorkflowRequest(name, mapper.readTree("{\"version\":1,\"nodes\":" + nodes + ",\"edges\":" + edges + "}"), null);
     }

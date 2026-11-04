@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +33,8 @@ public class WorkflowDefinitionService {
             "DATA_SOURCE", "ANALYSIS", "RULE", "FIELD_MAPPING", "TRANSFORM", "FILTER",
             "JOIN", "AGGREGATE", "TRAIN_MODEL", "EVALUATE", "PREDICT", "OUTPUT");
     private static final Set<String> EXECUTABLE_KEYS = Set.of("sql", "script", "python", "javascript", "code");
+    private static final Pattern UUID_PATTERN = Pattern.compile(
+            "(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
 
     private final WorkflowDefinitionRepository repository;
     private final ObjectMapper objectMapper;
@@ -123,6 +126,8 @@ public class WorkflowDefinitionService {
                 throw badRequest("工作流包含无效或重复节点");
             }
             if (!node.path("data").isObject()) throw badRequest("工作流节点缺少有效配置");
+            if (type.equals("DATA_SOURCE")) validateDataSourceConfig(node.path("data").path("config"));
+            if (type.equals("RULE")) validateRuleConfig(node.path("data").path("config"));
             indegree.put(id, 0);
             graph.put(id, new ArrayList<>());
         }
@@ -152,6 +157,59 @@ public class WorkflowDefinitionService {
             return json;
         } catch (JsonProcessingException exception) {
             throw badRequest("工作流文档无法解析");
+        }
+    }
+
+    private void validateDataSourceConfig(JsonNode config) {
+        if (config.isMissingNode() || config.isNull()) return;
+        if (!config.isObject()) throw badRequest("数据源节点配置必须是对象");
+        boolean hasDataset = config.hasNonNull("datasetId");
+        boolean hasVersion = config.hasNonNull("datasetVersionId");
+        boolean hasTable = config.hasNonNull("tableId");
+        if (!(hasDataset || hasVersion || hasTable)) return;
+        if ((hasDataset && !validUuid(config.path("datasetId").asText()))
+                || (hasVersion && !validUuid(config.path("datasetVersionId").asText()))
+                || (hasTable && !validUuid(config.path("tableId").asText()))
+                || (hasVersion && !hasDataset)
+                || (hasTable && !hasVersion)
+                || (hasVersion && (!config.path("versionNo").canConvertToInt()
+                        || config.path("versionNo").asInt() < 1))
+                || (config.has("schemaHash") && (!config.path("schemaHash").isTextual()
+                        || config.path("schemaHash").asText().length() > 128))) {
+            throw badRequest("数据源引用无效，版本和表必须依附于上一级资产");
+        }
+        if (config.has("tableName") && (!config.path("tableName").isTextual()
+                || config.path("tableName").asText().length() > 255)) {
+            throw badRequest("数据源表名无效");
+        }
+        if (config.has("datasetName") && (!config.path("datasetName").isTextual()
+                || config.path("datasetName").asText().length() > 255)) {
+            throw badRequest("数据集名称无效");
+        }
+        if (config.has("rowCount") && (!config.path("rowCount").canConvertToLong()
+                || config.path("rowCount").asLong() < 0)) {
+            throw badRequest("数据源行数无效");
+        }
+    }
+
+    private boolean validUuid(String value) { return UUID_PATTERN.matcher(value).matches(); }
+
+    private void validateRuleConfig(JsonNode config) {
+        if (config.isMissingNode() || config.isNull()) return;
+        if (!config.isObject()) throw badRequest("规则节点配置必须是对象");
+        boolean hasRule = config.hasNonNull("ruleVersionId");
+        if (!hasRule) return;
+        if (!validUuid(config.path("ruleVersionId").asText())
+                || !config.path("versionNumber").canConvertToInt()
+                || config.path("versionNumber").asInt() < 1
+                || (config.has("workbookId") && !validUuid(config.path("workbookId").asText()))
+                || (config.has("contentHash") && (!config.path("contentHash").isTextual()
+                        || config.path("contentHash").asText().length() > 128))) {
+            throw badRequest("规则节点必须引用有效的已发布版本");
+        }
+        if (config.has("workbookName") && (!config.path("workbookName").isTextual()
+                || config.path("workbookName").asText().length() > 255)) {
+            throw badRequest("规则工作簿名称无效");
         }
     }
 
