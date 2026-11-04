@@ -918,7 +918,12 @@ onBeforeUnmount(() => {
     <section v-if="datasets.length && selectedTable?.columns?.length > 1" class="relation-panel" aria-label="字段关系分析">
       <div class="relation-heading">
         <div><h2>字段关系</h2><span :title="`${selectedColumn?.name || ''} · ${relationColumn?.name || ''}`">{{ selectedColumn?.name }} · {{ relationColumn?.name }}</span></div>
-        <el-button type="primary" plain :loading="loadingRelation" :disabled="!selectedColumnId || !relationColumnId || selectedColumnId === relationColumnId" @click="loadRelation">分析关系</el-button>
+        <div class="relation-actions">
+          <el-select v-model="relationColumnId" size="small" filterable :title="relationColumn?.name || ''" placeholder="选择比较字段">
+            <el-option v-for="column in relationColumns" :key="column.columnId" :value="column.columnId" :label="column.name" />
+          </el-select>
+          <el-button type="primary" plain :loading="loadingRelation" :disabled="!selectedColumnId || !relationColumnId || selectedColumnId === relationColumnId" @click="loadRelation">分析关系</el-button>
+        </div>
       </div>
       <div v-if="relationError" class="analysis-message is-error" role="alert"><span>{{ relationError }}</span><el-button text :icon="Refresh" @click="loadRelation">重试</el-button></div>
       <el-skeleton v-else-if="loadingRelation" :rows="5" animated />
@@ -1337,7 +1342,9 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.relation-heading > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.relation-heading > div:first-child { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.relation-actions { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.relation-actions :deep(.el-select) { width: min(220px, 28vw); }
 .relation-heading h2 { margin: 0; color: #20372f; font-size: 14px; font-weight: 650; }
 .relation-heading span { max-width: 100%; overflow: hidden; color: #829089; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .relation-chart { width: 100%; height: 330px; }
@@ -1539,6 +1546,9 @@ onBeforeUnmount(() => {
   }
 
   .relation-panel { padding: 13px 11px 10px; }
+  .relation-heading { align-items: flex-start; flex-direction: column; }
+  .relation-actions { width: 100%; }
+  .relation-actions :deep(.el-select) { flex: 1 1 auto; width: auto; }
   .relation-chart { height: 270px; }
 
   .board-grid { grid-template-columns: minmax(0, 1fr); }
