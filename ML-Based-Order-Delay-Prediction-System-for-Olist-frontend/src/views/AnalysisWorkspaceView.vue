@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Check, Close, DataAnalysis, Delete, FolderOpened, Plus, Refresh } from '@element-plus/icons-vue'
+import { ArrowRight, Check, Close, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { BarChart, ScatterChart } from 'echarts/charts'
@@ -25,6 +25,9 @@ echarts.use([BarChart, ScatterChart, GridComponent, TooltipComponent, CanvasRend
 const router = useRouter()
 const auth = useAuth()
 const datasets = ref([])
+const datasetNextPage = ref(0)
+const datasetHasMore = ref(false)
+const loadingMoreDatasets = ref(false)
 const catalog = ref(null)
 const analysis = ref(null)
 const selectedDatasetId = ref('')
@@ -68,9 +71,25 @@ const selectedTable = computed(() =>
 const selectedColumn = computed(() =>
   selectedTable.value?.columns?.find((column) => column.columnId === selectedColumnId.value) || null,
 )
+const selectedTableColumns = computed(() => selectedTable.value?.columns || [])
+const relationColumns = computed(() => selectedTableColumns.value.filter((column) => column.columnId !== selectedColumnId.value))
+const suggestedRelationColumn = computed(() => {
+  const numericPattern = /INT|FLOAT|DECIMAL|NUMBER|DOUBLE|REAL/
+  const selectedIsNumeric = numericPattern.test((selectedColumn.value?.logicalType || '').toUpperCase())
+  return relationColumns.value.find((column) => numericPattern.test((column.logicalType || '').toUpperCase()))
+    || (selectedIsNumeric ? relationColumns.value[0] : null)
+    || null
+})
 const selectedDataset = computed(() =>
   datasets.value.find((dataset) => dataset.id === selectedDatasetId.value) || null,
 )
+const analysisSuggestion = computed(() => {
+  const logicalType = (selectedColumn.value?.logicalType || '').toUpperCase()
+  if (/INT|FLOAT|DECIMAL|NUMBER|DOUBLE|REAL/.test(logicalType)) {
+    return { label: '数值分布', detail: '查看范围、缺失和区间频数' }
+  }
+  return { label: '类别分布', detail: '查看高频类别和唯一值估算' }
+})
 const isHistogram = computed(() => analysis.value?.chartType === 'histogram')
 const relationColumn = computed(() =>
   selectedTable.value?.columns?.find((column) => column.columnId === relationColumnId.value) || null,
@@ -91,6 +110,20 @@ function formatNumber(value) {
 
 function datasetLabel(dataset) {
   return dataset?.name || dataset?.originalFilename || '未命名数据集'
+}
+
+function selectAssetColumn(columnId) {
+  selectedColumnId.value = columnId
+  const firstRelation = relationColumns.value[0]
+  if (relationColumnId.value === columnId || !relationColumns.value.some((column) => column.columnId === relationColumnId.value)) {
+    relationColumnId.value = firstRelation?.columnId || ''
+  }
+}
+
+function useSuggestedRelation() {
+  if (!suggestedRelationColumn.value) return
+  relationColumnId.value = suggestedRelationColumn.value.columnId
+  nextTick(loadRelation)
 }
 
 function markWorkspaceDirty() {
@@ -329,6 +362,8 @@ async function loadDatasets() {
   try {
     const result = await listDatasets({ status: 'READY', page: 0, size: 100 })
     datasets.value = result.items || []
+    datasetNextPage.value = 1
+    datasetHasMore.value = datasetNextPage.value < (result.totalPages || 0)
     if (!datasets.value.some((dataset) => dataset.id === selectedDatasetId.value)) {
       selectedDatasetId.value = datasets.value[0]?.id || ''
     }
@@ -338,6 +373,28 @@ async function loadDatasets() {
   } finally {
     loadingDatasets.value = false
   }
+}
+
+async function loadMoreDatasets() {
+  if (loadingMoreDatasets.value || !datasetHasMore.value) return
+  loadingMoreDatasets.value = true
+  datasetError.value = ''
+  try {
+    const result = await listDatasets({ status: 'READY', page: datasetNextPage.value, size: 100 })
+    const existingIds = new Set(datasets.value.map((dataset) => dataset.id))
+    datasets.value = [...datasets.value, ...(result.items || []).filter((dataset) => !existingIds.has(dataset.id))]
+    datasetNextPage.value += 1
+    datasetHasMore.value = datasetNextPage.value < (result.totalPages || 0)
+  } catch (error) {
+    datasetError.value = error.message || '更多数据集加载失败'
+  } finally {
+    loadingMoreDatasets.value = false
+  }
+}
+
+async function refreshAssetBrowser() {
+  await loadDatasets()
+  if (selectedDatasetId.value) await loadCatalog(selectedDatasetId.value)
 }
 
 async function loadCatalog(datasetId) {
@@ -665,93 +722,79 @@ onBeforeUnmount(() => {
       <el-button v-else text :icon="Refresh" @click="refreshWorkspaces">重试</el-button>
     </div>
 
-    <section class="analysis-controls" aria-label="分析对象">
-      <label class="control-field">
-        <span>数据集</span>
-        <el-select
-          v-model="selectedDatasetId"
-          filterable
-          :loading="loadingDatasets"
-          :disabled="loadingDatasets || !datasets.length"
-          :title="selectedDataset ? datasetLabel(selectedDataset) : ''"
-          placeholder="选择已就绪的数据集"
-        >
-          <el-option
-            v-for="dataset in datasets"
-            :key="dataset.id"
-            :value="dataset.id"
-            :label="datasetLabel(dataset)"
-          >
-            <div class="dataset-option" :title="datasetLabel(dataset)">
-              <span>{{ datasetLabel(dataset) }}</span>
-              <small>{{ dataset.tableCount }} 张表</small>
-            </div>
-          </el-option>
-        </el-select>
-      </label>
-      <label class="control-field">
-        <span>数据表</span>
-        <el-select
-          v-model="selectedTableId"
-          :loading="loadingCatalog"
-          :disabled="loadingCatalog || !catalog?.tables?.length"
-          :title="selectedTable?.tableName || ''"
-          placeholder="选择数据表"
-        >
-          <el-option
-            v-for="table in catalog?.tables || []"
-            :key="table.tableId"
-            :value="table.tableId"
-            :label="table.tableName"
-          >
-            <span class="option-truncate" :title="table.tableName">{{ table.tableName }}</span>
-          </el-option>
-        </el-select>
-      </label>
-      <label class="control-field">
-        <span>分析字段</span>
-        <el-select
-          v-model="selectedColumnId"
-          filterable
-          :disabled="!selectedTable?.columns?.length"
-          :title="selectedColumn?.name || ''"
-          placeholder="选择字段"
-        >
-          <el-option
-            v-for="column in selectedTable?.columns || []"
-            :key="column.columnId"
-            :value="column.columnId"
-            :label="column.name"
-          >
-            <div class="column-option" :title="column.name">
-              <span>{{ column.name }}</span>
-              <small>{{ column.logicalType || '未分类' }}</small>
-            </div>
-          </el-option>
-        </el-select>
-      </label>
-      <label class="control-field">
-        <span>关系字段</span>
-        <el-select
-          v-model="relationColumnId"
-          filterable
-          :disabled="!selectedTable?.columns?.length"
-          :title="relationColumn?.name || ''"
-          placeholder="选择第二个字段"
-        >
-          <el-option
-            v-for="column in selectedTable?.columns?.filter((item) => item.columnId !== selectedColumnId) || []"
-            :key="column.columnId"
-            :value="column.columnId"
-            :label="column.name"
-          >
-            <div class="column-option" :title="column.name">
-              <span>{{ column.name }}</span>
-              <small>{{ column.logicalType || '未分类' }}</small>
-            </div>
-          </el-option>
-        </el-select>
-      </label>
+    <section class="analysis-explorer" aria-label="数据资产浏览器">
+      <header class="explorer-heading">
+        <div>
+          <span class="explorer-kicker">ASSET EXPLORER</span>
+          <h2>从数据资产开始</h2>
+          <p>选择一个字段，系统会按字段类型给出分析建议。</p>
+        </div>
+        <el-button text :icon="Refresh" :loading="loadingDatasets || loadingCatalog" @click="refreshAssetBrowser">刷新资产</el-button>
+      </header>
+      <div class="explorer-grid">
+        <section class="asset-column" aria-label="数据集">
+          <div class="asset-column-heading"><strong>数据集</strong><span>{{ datasets.length }}</span></div>
+          <el-skeleton v-if="loadingDatasets" :rows="5" animated />
+          <el-empty v-else-if="!datasets.length" description="暂无已就绪数据集" :image-size="58" />
+          <template v-else>
+            <button
+              v-for="dataset in datasets"
+              :key="dataset.id"
+              type="button"
+              class="asset-item"
+              :class="{ 'is-active': dataset.id === selectedDatasetId }"
+              :title="datasetLabel(dataset)"
+              @click="selectedDatasetId = dataset.id"
+            >
+              <span class="asset-item-copy"><strong>{{ datasetLabel(dataset) }}</strong><small>{{ dataset.tableCount || 0 }} 张表 · {{ formatNumber(dataset.rowCount) }} 行</small></span>
+              <el-icon><ArrowRight /></el-icon>
+            </button>
+            <el-button v-if="datasetHasMore" class="load-more-assets" text :loading="loadingMoreDatasets" @click="loadMoreDatasets">加载更多数据集</el-button>
+          </template>
+        </section>
+        <section class="asset-column" aria-label="数据表">
+          <div class="asset-column-heading"><strong>数据表</strong><span>{{ catalog?.tables?.length || 0 }}</span></div>
+          <el-skeleton v-if="loadingCatalog" :rows="5" animated />
+          <el-empty v-else-if="!catalog?.tables?.length" description="选择数据集查看表" :image-size="58" />
+          <template v-else>
+            <button
+              v-for="table in catalog?.tables || []"
+              :key="table.tableId"
+              type="button"
+              class="asset-item"
+              :class="{ 'is-active': table.tableId === selectedTableId }"
+              :title="table.tableName"
+              @click="selectedTableId = table.tableId"
+            >
+              <span class="asset-item-copy"><strong>{{ table.tableName }}</strong><small>{{ formatNumber(table.rowCount) }} 行 · {{ table.columnCount || table.columns?.length || 0 }} 个字段</small></span>
+              <el-icon><ArrowRight /></el-icon>
+            </button>
+          </template>
+        </section>
+        <section class="asset-column field-column" aria-label="字段">
+          <div class="asset-column-heading"><strong>字段</strong><span>{{ selectedTableColumns.length }}</span></div>
+          <el-empty v-if="!selectedTableColumns.length" description="选择数据表查看字段" :image-size="58" />
+          <template v-else>
+            <button
+              v-for="column in selectedTableColumns"
+              :key="column.columnId"
+              type="button"
+              class="asset-item"
+              :class="{ 'is-active': column.columnId === selectedColumnId }"
+              :title="column.name"
+              @click="selectAssetColumn(column.columnId)"
+            >
+              <span class="asset-item-copy"><strong>{{ column.name }}</strong><small>{{ column.logicalType || '未分类' }} · {{ column.nullable ? '可为空' : '非空' }}</small></span>
+              <el-icon><DataAnalysis /></el-icon>
+            </button>
+          </template>
+        </section>
+      </div>
+      <div v-if="selectedColumn" class="explorer-suggestion">
+        <div><span class="suggestion-mark"><el-icon><MagicStick /></el-icon></span><div><strong>推荐：{{ analysisSuggestion.label }}</strong><small>{{ analysisSuggestion.detail }} · {{ selectedColumn.name }}</small></div></div>
+        <el-button size="small" type="primary" plain @click="selectAssetColumn(selectedColumn.columnId)">查看字段分析</el-button>
+        <el-button v-if="suggestedRelationColumn" size="small" plain @click="useSuggestedRelation">比较 {{ suggestedRelationColumn.name }}</el-button>
+      </div>
     </section>
 
     <div v-if="datasetError" class="analysis-message is-error" role="alert">
@@ -919,61 +962,137 @@ onBeforeUnmount(() => {
   color: #64736d;
 }
 
-.analysis-controls {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.35fr) repeat(3, minmax(160px, 1fr));
-  gap: 14px;
-  padding: 16px;
+.analysis-explorer {
+  min-width: 0;
+  overflow: hidden;
   background: rgba(250, 253, 251, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.88);
   border-radius: 8px;
   box-shadow: 0 10px 28px rgba(27, 61, 50, 0.055);
 }
 
-.control-field {
+.explorer-heading {
+  display: flex;
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #e4ebe7;
+}
+
+.explorer-heading > div { min-width: 0; }
+.explorer-kicker { color: #5f897a; font-size: 9px; font-weight: 750; }
+.explorer-heading h2 { margin: 3px 0 0; color: #243b32; font-size: 14px; font-weight: 680; }
+.explorer-heading p { margin: 4px 0 0; color: #78877f; font-size: 10px; line-height: 1.45; }
+
+.explorer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .95fr) minmax(0, .95fr) minmax(0, 1.1fr);
+  min-height: 250px;
+  max-height: 340px;
+}
+
+.asset-column {
+  min-width: 0;
+  overflow: auto;
+  padding: 10px;
+  border-right: 1px solid #e4ebe7;
+  scrollbar-width: thin;
+}
+
+.asset-column:last-child { border-right: 0; }
+
+.asset-column-heading {
+  display: flex;
+  position: sticky;
+  z-index: 1;
+  top: -10px;
+  align-items: center;
+  justify-content: space-between;
+  margin: -10px -10px 7px;
+  padding: 11px 12px 8px;
+  color: #50655c;
+  background: rgba(250, 253, 251, 0.96);
+  font-size: 10px;
+}
+
+.asset-column-heading span { color: #83918a; font-variant-numeric: tabular-nums; }
+
+.asset-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 50px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 2px 0;
+  padding: 8px 10px;
+  color: #5c6d65;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.asset-item:hover { background: #f1f7f4; }
+.asset-item.is-active { color: #245d4b; background: #e8f3ee; border-color: #d4e7de; }
+.asset-item > .el-icon { flex: 0 0 auto; font-size: 13px; }
+
+.asset-item-copy {
   display: grid;
   min-width: 0;
-  gap: 7px;
-  color: #586b63;
-  font-size: 11px;
-  font-weight: 600;
+  gap: 4px;
 }
 
-.control-field :deep(.el-select) {
-  width: 100%;
-}
-
-.control-field :deep(.el-select__selected-item) {
-  max-width: 100%;
+.asset-item-copy strong,
+.asset-item-copy small {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dataset-option,
-.column-option {
+.asset-item-copy strong { font-size: 11px; font-weight: 620; }
+.asset-item-copy small { color: #86928c; font-size: 9px; }
+.load-more-assets { width: 100%; margin: 4px 0 2px; }
+
+.explorer-suggestion {
   display: flex;
   min-width: 0;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 7px;
+  padding: 10px 12px;
+  border-top: 1px solid #e4ebe7;
 }
 
-.dataset-option > span,
-.column-option > span,
-.option-truncate {
+.explorer-suggestion > div {
+  display: flex;
   min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.explorer-suggestion > div > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.explorer-suggestion strong,
+.explorer-suggestion small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dataset-option small,
-.column-option small {
-  flex: 0 0 auto;
-  color: #83918b;
-  font-size: 10px;
-}
+.explorer-suggestion strong { color: #35594b; font-size: 10px; }
+.explorer-suggestion small { color: #819088; font-size: 9px; }
+.suggestion-mark { display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; color: #2f775e; background: #e8f3ee; border-radius: 6px; }
 
 .analysis-message {
   display: flex;
@@ -1366,25 +1485,18 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .analysis-controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .control-field:first-child {
-    grid-column: 1 / -1;
-  }
+  .explorer-grid { grid-template-columns: repeat(3, minmax(210px, 1fr)); overflow-x: auto; }
+  .asset-column { min-width: 210px; }
 }
 
 @media (max-width: 600px) {
-  .analysis-controls {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-    padding: 12px;
-  }
-
-  .control-field:first-child {
-    grid-column: auto;
-  }
+  .explorer-heading { align-items: flex-start; padding: 11px 12px; }
+  .explorer-heading p { max-width: 230px; }
+  .explorer-grid { display: flex; min-height: 220px; max-height: 290px; }
+  .asset-column { flex: 0 0 78vw; max-width: 300px; }
+  .explorer-suggestion { align-items: stretch; flex-wrap: wrap; }
+  .explorer-suggestion > div { flex-basis: 100%; }
+  .explorer-suggestion > .el-button { flex: 1 1 auto; margin-left: 0; }
 
   .analysis-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
