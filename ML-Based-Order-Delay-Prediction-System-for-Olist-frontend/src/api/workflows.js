@@ -55,6 +55,10 @@ export function deleteWorkflow(id) {
   return request(`/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 export function listWorkflowRuns(id) { return request(`/workflows/${encodeURIComponent(id)}/runs`) }
+export function listRecentWorkflowRuns(limit = 50) {
+  const boundedLimit = Math.max(1, Math.min(50, Number(limit) || 50))
+  return request(`/workflow-runs?limit=${boundedLimit}`)
+}
 export function startWorkflowRun(id, expectedRevision) {
   return request(`/workflows/${encodeURIComponent(id)}/runs`, {
     method: 'POST',

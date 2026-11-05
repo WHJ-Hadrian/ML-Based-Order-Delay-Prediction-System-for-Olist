@@ -56,6 +56,15 @@ export const NAVIGATION_ITEMS = Object.freeze([
     component: () => import('@/views/WorkflowWorkspaceView.vue'),
   },
   {
+    key: 'workflow-runs',
+    path: '/workflow-runs',
+    title: '运行中心',
+    description: '跨工作流查看后台运行状态、节点日志与冻结结果。',
+    emptyText: '还没有工作流运行',
+    icon: Share,
+    component: () => import('@/views/WorkflowRunCenterView.vue'),
+  },
+  {
     key: 'fields',
     path: '/fields',
     title: '字段库',

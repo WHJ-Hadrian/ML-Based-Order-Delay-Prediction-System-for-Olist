@@ -9,6 +9,7 @@ import {
   SetUp, Sort, DataAnalysis, Connection, Cpu, Histogram, Files, Filter, Operation, FolderAdd,
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
+import { useRoute } from 'vue-router'
 import { cancelWorkflowRun, createWorkflow, deleteWorkflow, duplicateWorkflow, getWorkflow, listWorkflowRuns, listWorkflows, retryWorkflowRun, startWorkflowRun, updateWorkflow } from '@/api/workflows'
 import { getDatasetVersionCatalog, getDatasetVersions, listDatasets } from '@/api/datasets'
 import { listPublishedRuleVersions } from '@/api/ruleLibrary'
@@ -27,6 +28,7 @@ const nodeCatalog = [
   { type: 'PREDICT', label: '预测', description: '对独立数据运行模型推理', icon: DataAnalysis, color: '#3a7790' },
   { type: 'OUTPUT', label: '输出', description: '定义数据或模型产物输出', icon: Expand, color: '#658b56' },
 ]
+const route = useRoute()
 const executableNodeCount = nodeCatalog.filter((item) => item.executable).length
 
 const workflows = ref([])
@@ -223,7 +225,10 @@ async function loadList() {
   error.value = ''
   try {
     workflows.value = await listWorkflows() || []
-    if (workflows.value.length) await selectWorkflow(workflows.value[0].id, true)
+    const requestedWorkflowId = String(route.query.workflow || '')
+    const initialWorkflow = workflows.value.find((workflow) => workflow.id === requestedWorkflowId)
+      || workflows.value[0]
+    if (initialWorkflow) await selectWorkflow(initialWorkflow.id, true)
   } catch (cause) {
     error.value = cause.message || '工作流载入失败'
   } finally {
