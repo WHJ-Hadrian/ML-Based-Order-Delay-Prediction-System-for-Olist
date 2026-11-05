@@ -66,6 +66,15 @@ public class WorkflowRun {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "execution_lease_owner", length = 100)
+    private String executionLeaseOwner;
+
+    @Column(name = "execution_engine", length = 16, nullable = false, updatable = false)
+    private String executionEngine = "temporal";
+
+    @Column(name = "execution_lease_until")
+    private Instant executionLeaseUntil;
+
     @Version
     @Column(name = "lock_version", nullable = false)
     private long lockVersion;
@@ -127,6 +136,20 @@ public class WorkflowRun {
         updatedAt = now;
     }
 
+    public void claim(String workerId, Instant leaseUntil, Instant now) {
+        status = "RUNNING";
+        if (startedAt == null) startedAt = now;
+        executionLeaseOwner = workerId;
+        executionLeaseUntil = leaseUntil;
+        errorMessage = null;
+        updatedAt = now;
+    }
+
+    public void releaseLease() {
+        executionLeaseOwner = null;
+        executionLeaseUntil = null;
+    }
+
     public UUID getId() { return id; }
     public UUID getWorkflowId() { return workflowId; }
     public String getOwnerId() { return ownerId; }
@@ -142,4 +165,8 @@ public class WorkflowRun {
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+    public String getExecutionLeaseOwner() { return executionLeaseOwner; }
+    public Instant getExecutionLeaseUntil() { return executionLeaseUntil; }
+    public String getExecutionEngine() { return executionEngine; }
+    public void setExecutionEngine(String executionEngine) { this.executionEngine = executionEngine; }
 }

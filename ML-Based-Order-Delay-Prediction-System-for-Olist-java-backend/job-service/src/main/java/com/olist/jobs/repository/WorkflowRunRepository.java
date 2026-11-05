@@ -9,10 +9,21 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 
 public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID> {
     List<WorkflowRun> findTop50ByWorkflowIdAndOwnerIdOrderByCreatedAtDesc(UUID workflowId, String ownerId);
     Optional<WorkflowRun> findByIdAndOwnerId(UUID id, String ownerId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select run from WorkflowRun run where run.executionEngine = 'local' and (run.status = 'QUEUED' "
+            + "or (run.status = 'RUNNING' and run.executionLeaseUntil <= :now)) order by run.createdAt, run.id")
+    List<WorkflowRun> findClaimable(@Param("now") java.time.Instant now, org.springframework.data.domain.Pageable page);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select run from WorkflowRun run where run.id = :id")
+    Optional<WorkflowRun> lockById(@Param("id") UUID id);
 
     @Query(value = "select new com.olist.jobs.api.WorkflowRunSummaryResponse("
             + "run.id, run.workflowId, run.workflowName, run.workflowRevision, run.status, run.progress, "

@@ -35,6 +35,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.beans.factory.annotation.Value;
 
 @Service
 public class WorkflowRunService {
@@ -56,6 +57,9 @@ public class WorkflowRunService {
     private final WorkflowRunStarter starter;
     private final ObjectMapper mapper;
     private final TransactionTemplate transactions;
+
+    @Value("${jobs.runner:temporal}")
+    private String executionEngine = "temporal";
 
     public WorkflowRunService(
             WorkflowDefinitionRepository workflows,
@@ -86,7 +90,7 @@ public class WorkflowRunService {
         } catch (RuntimeException exception) {
             transactions.executeWithoutResult(status -> {
                 WorkflowRun persisted = requireOwned(ownerId, run.getId());
-                persisted.fail("无法提交到工作流运行服务，请检查 Temporal Worker 状态", Instant.now());
+                persisted.fail("无法提交到工作流运行服务，请检查服务状态", Instant.now());
                 runs.save(persisted);
             });
         }
@@ -105,7 +109,7 @@ public class WorkflowRunService {
         } catch (RuntimeException exception) {
             transactions.executeWithoutResult(status -> {
                 WorkflowRun persisted = requireOwned(ownerId, retry.getId());
-                persisted.fail("无法提交到工作流运行服务，请检查 Temporal Worker 状态", Instant.now());
+                persisted.fail("无法提交到工作流运行服务，请检查服务状态", Instant.now());
                 runs.save(persisted);
             });
         }
@@ -175,6 +179,7 @@ public class WorkflowRunService {
         String snapshotJson = writeJson(snapshot);
         WorkflowRun run = new WorkflowRun(id, workflowId, ownerId, workflowName, revision,
                 snapshotJson, retryOfId, now);
+        run.setExecutionEngine(executionEngine);
         transactions.executeWithoutResult(status -> {
             runs.saveAndFlush(run);
             for (JsonNode node : snapshot.path("nodes")) {

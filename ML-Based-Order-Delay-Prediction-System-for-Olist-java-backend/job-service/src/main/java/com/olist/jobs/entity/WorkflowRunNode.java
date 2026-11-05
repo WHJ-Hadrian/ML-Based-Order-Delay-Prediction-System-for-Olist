@@ -76,6 +76,12 @@ public class WorkflowRunNode {
         finishedAt = now;
     }
 
+    public void cancel(Instant now) {
+        status = "CANCELED";
+        errorMessage = "运行已取消";
+        finishedAt = now;
+    }
+
     public String getNodeId() { return nodeId; }
     public String getNodeType() { return nodeType; }
     public String getStatus() { return status; }
