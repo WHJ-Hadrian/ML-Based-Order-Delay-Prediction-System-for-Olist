@@ -104,6 +104,9 @@ public class DatasetServiceImpl implements DatasetService {
     private static final int MAX_ROW_PAGE_SIZE = 500;
     private static final int MAX_SEARCH_RESULT_PAGE_SIZE = 100;
     private static final int MAX_SEARCH_KEYWORD_LENGTH = 128;
+    private static final int MAX_WORKFLOW_SAMPLE_ROWS = 20;
+    private static final int MAX_WORKFLOW_SAMPLE_COLUMNS = 100;
+    private static final int MAX_WORKFLOW_SAMPLE_CELL_LENGTH = 512;
     private static final String DEFAULT_NAME_PREFIX = "数据集";
     private static final Pattern DEFAULT_NAME_PATTERN = Pattern.compile("^数据集(\\d+)$");
 
@@ -640,6 +643,47 @@ public class DatasetServiceImpl implements DatasetService {
                 clickHouseProperties.getDatabase(),
                 version.getRowCount(),
                 tableVOs);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public TablePreviewVO workflowPreview(UUID versionId, UUID tableId, String ownerId, int limit) {
+        if (limit < 1 || limit > MAX_WORKFLOW_SAMPLE_ROWS) {
+            throw new InvalidDatasetException("工作流样本行数必须在 1 到 "
+                    + MAX_WORKFLOW_SAMPLE_ROWS + " 之间");
+        }
+        DatasetVersion version = requireReadyVersion(versionId, ownerId);
+        DatasetTable table = datasetTableMapper.findByIdAndDatasetId(tableId, version.getId());
+        if (table == null) {
+            throw new DatasetTableNotFoundException(versionId, tableId);
+        }
+        DatasetFile file = datasetFileMapper.findById(table.getFileId());
+        if (file == null) {
+            throw new DatasetTableNotFoundException(versionId, tableId);
+        }
+        try (InputStream input = datasetStorage.open(file.getStorageKey())) {
+            TableRows preview = tablePreviewReader.readRows(
+                    file.getOriginalFilename(), table.getFileName(), table.getTableName(),
+                    table.getTableFormat(), input, 0, limit);
+            int columnCount = Math.min(preview.columns().size(), MAX_WORKFLOW_SAMPLE_COLUMNS);
+            boolean cellsTruncated = preview.rows().stream()
+                    .flatMap(List::stream)
+                    .anyMatch(value -> value != null && value.length() > MAX_WORKFLOW_SAMPLE_CELL_LENGTH);
+            List<String> sampleColumns = preview.columns().subList(0, columnCount);
+            List<List<String>> sampleRows = preview.rows().stream()
+                    .map(row -> row.subList(0, Math.min(row.size(), columnCount)).stream()
+                            .map(value -> value != null && value.length() > MAX_WORKFLOW_SAMPLE_CELL_LENGTH
+                                    ? value.substring(0, MAX_WORKFLOW_SAMPLE_CELL_LENGTH) : value)
+                            .toList())
+                    .toList();
+            return new TablePreviewVO(table.getId(), table.getTableName(), limit,
+                    sampleColumns, sampleRows, List.of(), table.getRowCount(),
+                    table.getRowCount() > sampleRows.size()
+                            || preview.columns().size() > MAX_WORKFLOW_SAMPLE_COLUMNS
+                            || cellsTruncated);
+        } catch (IOException exception) {
+            throw new StorageException("读取工作流输入样本失败", exception);
+        }
     }
 
     @Override

@@ -41,6 +41,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -49,6 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(properties = "olist.workflow-worker.internal-token=test-workflow-worker-token")
 @Import(TestSecurityConfiguration.class)
 class DatasetUploadIntegrationTest {
 
@@ -976,6 +978,52 @@ class DatasetUploadIntegrationTest {
         mockMvc.perform(get("/api/v1/datasets/{id}/catalog", notReady))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.title").value("数据集未就绪"));
+    }
+
+    @Test
+    void workflowPreviewRequiresWorkerTokenOwnerAndBoundedSample() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/datasets")
+                        .with(jwt().jwt(token -> token.subject("owner-a")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"workflow-preview\"}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID versionId = UUID.fromString(objectMapper.readTree(created.getResponse().getContentAsString())
+                .path("id").asText());
+        MvcResult uploaded = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", versionId)
+                        .file(csvFile("orders.csv", "id,status\n1,ready\n2,late\n"))
+                        .with(jwt().jwt(token -> token.subject("owner-a"))))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID tableId = UUID.fromString(objectMapper.readTree(uploaded.getResponse().getContentAsString())
+                .path("tables").get(0).path("id").asText());
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", versionId)
+                        .with(jwt().jwt(token -> token.subject("owner-a"))))
+                .andExpect(status().isOk());
+
+        String path = "/internal/workflow-datasets/" + versionId + "/tables/" + tableId + "/preview";
+        mockMvc.perform(get(path)
+                        .header("X-Workflow-Worker-Token", "wrong-token")
+                        .header("X-Workflow-Owner-Id", "owner-a"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get(path)
+                        .header("X-Workflow-Worker-Token", "test-workflow-worker-token")
+                        .header("X-Workflow-Owner-Id", "owner-b"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get(path)
+                        .param("limit", "21")
+                        .header("X-Workflow-Worker-Token", "test-workflow-worker-token")
+                        .header("X-Workflow-Owner-Id", "owner-a"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get(path)
+                        .param("limit", "1")
+                        .header("X-Workflow-Worker-Token", "test-workflow-worker-token")
+                        .header("X-Workflow-Owner-Id", "owner-a"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.columns", hasSize(2)))
+                .andExpect(jsonPath("$.rows", hasSize(1)))
+                .andExpect(jsonPath("$.rows[0][0]").value("1"))
+                .andExpect(jsonPath("$.totalRows").value(2));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.olist.datasets.controller;
 import com.olist.datasets.security.WorkflowWorkerAuthenticator;
 import com.olist.datasets.service.DatasetService;
 import com.olist.datasets.vo.ExecutionSnapshotVO;
+import com.olist.datasets.vo.TablePreviewVO;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,12 +34,20 @@ public class InternalWorkflowDatasetController {
         if (ownerId == null || ownerId.isBlank() || ownerId.length() > 255) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "工作流 owner 标识无效");
         }
-        try {
-            return datasetService.executionSnapshot(id, ownerId);
-        } catch (org.springframework.web.server.ResponseStatusException exception) {
-            throw exception;
-        } catch (com.olist.datasets.exception.BusinessException exception) {
-            throw new ResponseStatusException(exception.getStatus(), exception.getMessage());
+        return datasetService.executionSnapshot(id, ownerId);
+    }
+
+    @GetMapping("/{versionId}/tables/{tableId}/preview")
+    public TablePreviewVO preview(
+            @PathVariable UUID versionId,
+            @PathVariable UUID tableId,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "20") int limit,
+            @RequestHeader(value = "X-Workflow-Worker-Token", required = false) String token,
+            @RequestHeader(value = "X-Workflow-Owner-Id", required = false) String ownerId) {
+        authenticator.requireValid(token);
+        if (ownerId == null || ownerId.isBlank() || ownerId.length() > 255) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "工作流 owner 标识无效");
         }
+        return datasetService.workflowPreview(versionId, tableId, ownerId, limit);
     }
 }

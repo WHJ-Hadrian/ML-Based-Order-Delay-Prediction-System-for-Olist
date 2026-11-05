@@ -63,6 +63,8 @@ public interface DatasetService {
 
     ExecutionSnapshotVO executionSnapshot(UUID id, String ownerId);
 
+    TablePreviewVO workflowPreview(UUID versionId, UUID tableId, String ownerId, int limit);
+
     List<DatasetColumnVO> columns(UUID id);
 
     TablePreviewVO previewTable(UUID datasetId, UUID tableId, int limit, boolean all);
