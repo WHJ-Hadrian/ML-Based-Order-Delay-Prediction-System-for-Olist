@@ -47,6 +47,13 @@ temporal:
   namespace: ${TEMPORAL_NAMESPACE:default}
 
 jobs:
+  runner: ${WORKFLOW_RUNNER:local}
+  local:
+    worker:
+      enabled: ${WORKFLOW_LOCAL_WORKER_ENABLED:true}
+      concurrency: ${WORKFLOW_LOCAL_WORKER_CONCURRENCY:2}
+      poll-interval: ${WORKFLOW_LOCAL_WORKER_POLL_INTERVAL:500}
+      lease-duration: ${WORKFLOW_LOCAL_WORKER_LEASE_DURATION:PT30S}
   temporal:
     task-queue: ${WORKFLOW_TEMPORAL_TASK_QUEUE:seek-dataset-workflows}
     worker:

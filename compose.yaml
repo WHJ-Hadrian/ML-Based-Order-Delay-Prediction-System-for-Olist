@@ -337,6 +337,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_jobs?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8083
       TEMPORAL_TARGET: temporal:7233
+      WORKFLOW_RUNNER: ${WORKFLOW_RUNNER:-temporal}
       TEMPORAL_NAMESPACE: default
       WORKFLOW_TEMPORAL_WORKER_ENABLED: ${WORKFLOW_TEMPORAL_WORKER_ENABLED:-true}
       DATASET_SERVICE_URL: http://dataset-service:8082

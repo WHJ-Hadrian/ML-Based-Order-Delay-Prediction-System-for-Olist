@@ -4,11 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.olist.jobs.entity.WorkflowRun;
-import com.olist.jobs.entity.WorkflowRunNode;
-import com.olist.jobs.repository.WorkflowRunNodeRepository;
-import com.olist.jobs.repository.WorkflowRunRepository;
-import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -16,7 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 import io.temporal.activity.Activity;
 import com.olist.jobs.workflow.WorkflowDatasetClient.ExecutionSnapshot;
 import com.olist.jobs.workflow.WorkflowDatasetClient.TablePreview;
@@ -24,26 +18,33 @@ import com.olist.jobs.workflow.WorkflowDatasetClient.TableSnapshot;
 
 @Component
 public class WorkflowRunActivityImpl implements WorkflowRunActivity {
-    private final WorkflowRunRepository runs;
-    private final WorkflowRunNodeRepository nodes;
+    private final WorkflowRunExecutionStore store;
     private final ObjectMapper mapper;
     private final WorkflowDatasetClient datasetClient;
 
     public WorkflowRunActivityImpl(
-            WorkflowRunRepository runs,
-            WorkflowRunNodeRepository nodes,
+            WorkflowRunExecutionStore store,
             ObjectMapper mapper,
             WorkflowDatasetClient datasetClient) {
-        this.runs = runs;
-        this.nodes = nodes;
+        this.store = store;
         this.mapper = mapper;
         this.datasetClient = datasetClient;
     }
 
     @Override
     public void execute(String runIdText, String ownerId, String snapshotJson) {
+        execute(runIdText, ownerId, snapshotJson, null);
+    }
+
+    public void executeLocal(LocalWorkflowRunQueue.ClaimedRun claim) {
+        execute(claim.id().toString(), claim.ownerId(), claim.snapshotJson(), claim);
+    }
+
+    private void execute(String runIdText, String ownerId, String snapshotJson,
+            LocalWorkflowRunQueue.ClaimedRun claim) {
         UUID runId = UUID.fromString(runIdText);
-        markStarted(runId);
+        if (!store.start(runId, claim)) return;
+        String activeNodeId = null;
         try {
             JsonNode document = mapper.readTree(snapshotJson);
             ArrayNode outputNodes = mapper.createArrayNode();
@@ -52,46 +53,39 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
             int total = orderedNodes.size();
             int completed = 0;
             for (JsonNode node : orderedNodes) {
-                Activity.getExecutionContext().heartbeat("node:" + node.path("id").asText());
-                String nodeId = node.path("id").asText();
-                WorkflowRunNode runNode = nodes.findByRunIdAndNodeId(runId, nodeId)
-                        .orElseThrow(() -> new IllegalStateException("运行节点记录不存在"));
-                runNode.start(Instant.now());
-                nodes.save(runNode);
-                try {
-                    String nodeType = node.path("type").asText();
-                    appendLog(runNode, "INFO", "节点开始执行");
-                    ObjectNode result;
-                    if ("DATA_SOURCE".equals(nodeType)) {
-                        appendLog(runNode, "INFO", "校验固定数据集版本并读取有界样本");
-                        result = inspectDataSource(ownerId, node);
-                        appendLog(runNode, "INFO", "已读取 " + result.path("sampleRows").size()
-                                + " 行样本、" + result.path("sampleColumns").size() + " 个字段");
-                    } else {
-                        appendLog(runNode, "INFO", "根据配置筛选上游样本");
-                        result = executeFilter(document, node, resultsByNode);
-                        appendLog(runNode, "INFO", "筛选完成，保留 "
-                                + result.path("sampleMatchedRows").asInt() + " / "
-                                + result.path("sampleInputRows").asInt() + " 行样本");
-                    }
-                    runNode.succeed(mapper.writeValueAsString(result), Instant.now());
-                    appendLog(runNode, "INFO", "节点执行成功");
-                    outputNodes.add(result);
-                    resultsByNode.put(nodeId, result);
-                    nodes.save(runNode);
-                    completed++;
-                    markProgress(runId, (completed * 100) / total, mapper.writeValueAsString(outputNodes));
-                } catch (Exception exception) {
-                    runNode.fail(safeMessage(exception), Instant.now());
-                    appendLog(runNode, "ERROR", safeMessage(exception));
-                    nodes.save(runNode);
-                    if (exception instanceof RuntimeException runtimeException) throw runtimeException;
-                    throw new IllegalStateException(safeMessage(exception), exception);
+                if (claim == null) {
+                    Activity.getExecutionContext().heartbeat("node:" + node.path("id").asText());
+                } else if (store.cancelIfRequested(runId, claim)) {
+                    return;
                 }
+                String nodeId = node.path("id").asText();
+                activeNodeId = nodeId;
+                String nodeType = node.path("type").asText();
+                String startMessage = "DATA_SOURCE".equals(nodeType)
+                        ? "校验固定数据集版本并读取有界样本" : "根据配置筛选上游样本";
+                if (!store.startNode(runId, claim, nodeId, startMessage)) return;
+                ObjectNode result;
+                String summary;
+                if ("DATA_SOURCE".equals(nodeType)) {
+                    result = inspectDataSource(ownerId, node);
+                    summary = "已读取 " + result.path("sampleRows").size()
+                            + " 行样本、" + result.path("sampleColumns").size() + " 个字段";
+                } else {
+                    result = executeFilter(document, node, resultsByNode);
+                    summary = "筛选完成，保留 "
+                            + result.path("sampleMatchedRows").asInt() + " / "
+                            + result.path("sampleInputRows").asInt() + " 行样本";
+                }
+                outputNodes.add(result);
+                resultsByNode.put(nodeId, result);
+                completed++;
+                if (!store.completeNode(runId, claim, nodeId, mapper.writeValueAsString(result),
+                        summary, (completed * 100) / total, mapper.writeValueAsString(outputNodes))) return;
+                activeNodeId = null;
             }
-            markSucceeded(runId, mapper.writeValueAsString(outputNodes));
+            store.succeed(runId, claim, mapper.writeValueAsString(outputNodes));
         } catch (Exception exception) {
-            markFailed(runId, safeMessage(exception));
+            if (!store.fail(runId, claim, activeNodeId, safeMessage(exception))) return;
             if (exception instanceof RuntimeException runtimeException) throw runtimeException;
             throw new IllegalStateException("工作流运行结果无法保存", exception);
         }
@@ -201,58 +195,9 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
         return result;
     }
 
-    private void appendLog(WorkflowRunNode node, String level, String message) {
-        ArrayNode logs;
-        try {
-            JsonNode current = node.getLogsJson() == null ? null : mapper.readTree(node.getLogsJson());
-            logs = current != null && current.isArray() ? (ArrayNode) current : mapper.createArrayNode();
-        } catch (Exception exception) {
-            logs = mapper.createArrayNode();
-        }
-        while (logs.size() >= 100) logs.remove(0);
-        ObjectNode entry = logs.addObject();
-        entry.put("timestamp", Instant.now().toEpochMilli());
-        entry.put("level", level);
-        String safeMessage = message == null ? "" : message;
-        entry.put("message", safeMessage.length() > 500 ? safeMessage.substring(0, 500) : safeMessage);
-        try {
-            node.setLogsJson(mapper.writeValueAsString(logs));
-            nodes.save(node);
-        } catch (Exception exception) {
-            throw new IllegalStateException("工作流节点日志无法持久化", exception);
-        }
-    }
-
     @Override
-    @Transactional
     public void cancel(String runIdText) {
-        WorkflowRun run = requireRun(UUID.fromString(runIdText));
-        run.cancel("运行已取消", Instant.now());
-        runs.save(run);
-    }
-
-    private void markStarted(UUID runId) {
-        WorkflowRun run = requireRun(runId);
-        run.start(Instant.now());
-        runs.save(run);
-    }
-
-    private void markFailed(UUID runId, String message) {
-        WorkflowRun run = requireRun(runId);
-        run.fail(message, Instant.now());
-        runs.save(run);
-    }
-
-    private void markProgress(UUID runId, int progress, String outputJson) {
-        WorkflowRun run = requireRun(runId);
-        run.progress(progress, outputJson, Instant.now());
-        runs.save(run);
-    }
-
-    private void markSucceeded(UUID runId, String outputJson) {
-        WorkflowRun run = requireRun(runId);
-        run.succeed(outputJson, Instant.now());
-        runs.save(run);
+        store.cancel(UUID.fromString(runIdText));
     }
 
     private ObjectNode inspectDataSource(String ownerId, JsonNode node) throws Exception {
@@ -295,10 +240,6 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
         result.set("sampleColumns", mapper.valueToTree(preview.columns()));
         result.set("sampleRows", mapper.valueToTree(preview.rows()));
         return result;
-    }
-
-    private WorkflowRun requireRun(UUID id) {
-        return runs.findById(id).orElseThrow(() -> new IllegalStateException("工作流运行记录不存在"));
     }
 
     private String safeMessage(Exception exception) {

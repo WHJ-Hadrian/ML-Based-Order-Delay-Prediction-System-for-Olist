@@ -69,6 +69,9 @@ public class WorkflowRun {
     @Column(name = "execution_lease_owner", length = 100)
     private String executionLeaseOwner;
 
+    @Column(name = "execution_lease_token", length = 36)
+    private String executionLeaseToken;
+
     @Column(name = "execution_engine", length = 16, nullable = false, updatable = false)
     private String executionEngine = "temporal";
 
@@ -97,6 +100,7 @@ public class WorkflowRun {
     }
 
     public void start(Instant now) {
+        if ("CANCELLING".equals(status) || "CANCELED".equals(status)) return;
         if (startedAt == null) startedAt = now;
         status = "RUNNING";
         errorMessage = null;
@@ -110,18 +114,22 @@ public class WorkflowRun {
     }
 
     public void succeed(String outputJson, Instant now) {
+        if ("CANCELLING".equals(status) || "CANCELED".equals(status)) return;
         progress = 100;
         status = "SUCCEEDED";
         this.outputJson = outputJson;
         finishedAt = now;
         updatedAt = now;
+        releaseLease();
     }
 
     public void fail(String message, Instant now) {
+        if ("CANCELLING".equals(status) || "CANCELED".equals(status)) return;
         status = "FAILED";
         errorMessage = message;
         finishedAt = now;
         updatedAt = now;
+        releaseLease();
     }
 
     public void cancel(String message, Instant now) {
@@ -129,6 +137,7 @@ public class WorkflowRun {
         errorMessage = message;
         finishedAt = now;
         updatedAt = now;
+        releaseLease();
     }
 
     public void requestCancellation(Instant now) {
@@ -136,18 +145,48 @@ public class WorkflowRun {
         updatedAt = now;
     }
 
-    public void claim(String workerId, Instant leaseUntil, Instant now) {
-        status = "RUNNING";
+    public void claim(String workerId, String leaseToken, Instant leaseUntil, Instant now) {
+        boolean recovering = executionLeaseUntil != null && !executionLeaseUntil.isAfter(now);
+        if (!"CANCELLING".equals(status)) status = "RUNNING";
         if (startedAt == null) startedAt = now;
+        if (recovering) {
+            progress = 0;
+            outputJson = null;
+            finishedAt = null;
+        }
         executionLeaseOwner = workerId;
+        executionLeaseToken = leaseToken;
         executionLeaseUntil = leaseUntil;
-        errorMessage = null;
+        if (!"CANCELLING".equals(status)) errorMessage = null;
         updatedAt = now;
     }
 
     public void releaseLease() {
         executionLeaseOwner = null;
+        executionLeaseToken = null;
         executionLeaseUntil = null;
+    }
+
+    public void expireLease(Instant now) {
+        executionLeaseOwner = null;
+        executionLeaseToken = null;
+        executionLeaseUntil = now;
+    }
+
+    public void renewLease(String workerId, Instant leaseUntil, Instant now) {
+        if (!workerId.equals(executionLeaseOwner)
+                || (!"RUNNING".equals(status) && !"CANCELLING".equals(status)) || executionLeaseUntil == null
+                || !executionLeaseUntil.isAfter(now)) {
+            throw new IllegalStateException("工作流运行租约已失效");
+        }
+        executionLeaseUntil = leaseUntil;
+        updatedAt = now;
+    }
+
+    public boolean hasLease(String workerId, String leaseToken, Instant now) {
+        return workerId.equals(executionLeaseOwner) && leaseToken.equals(executionLeaseToken)
+                && executionLeaseUntil != null && executionLeaseUntil.isAfter(now)
+                && ("RUNNING".equals(status) || "CANCELLING".equals(status));
     }
 
     public UUID getId() { return id; }
@@ -166,6 +205,7 @@ public class WorkflowRun {
     public Instant getFinishedAt() { return finishedAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public String getExecutionLeaseOwner() { return executionLeaseOwner; }
+    public String getExecutionLeaseToken() { return executionLeaseToken; }
     public Instant getExecutionLeaseUntil() { return executionLeaseUntil; }
     public String getExecutionEngine() { return executionEngine; }
     public void setExecutionEngine(String executionEngine) { this.executionEngine = executionEngine; }

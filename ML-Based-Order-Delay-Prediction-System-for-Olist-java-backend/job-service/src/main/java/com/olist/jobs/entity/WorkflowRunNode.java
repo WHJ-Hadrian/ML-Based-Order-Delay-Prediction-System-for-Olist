@@ -64,6 +64,14 @@ public class WorkflowRunNode {
 
     public void start(Instant now) { status = "RUNNING"; startedAt = now; }
 
+    public void resetForRecovery() {
+        status = "QUEUED";
+        resultJson = null;
+        errorMessage = null;
+        startedAt = null;
+        finishedAt = null;
+    }
+
     public void succeed(String resultJson, Instant now) {
         status = "SUCCEEDED";
         this.resultJson = resultJson;

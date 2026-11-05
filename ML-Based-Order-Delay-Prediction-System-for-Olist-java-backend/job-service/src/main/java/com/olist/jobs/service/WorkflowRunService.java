@@ -123,8 +123,21 @@ public class WorkflowRunService {
         }
         starter.cancel(runId);
         transactions.executeWithoutResult(status -> {
-            WorkflowRun persisted = requireOwned(ownerId, runId);
-            persisted.requestCancellation(Instant.now());
+            WorkflowRun persisted = runs.lockById(runId)
+                    .filter(candidate -> ownerId.equals(candidate.getOwnerId())).orElseThrow(this::notFound);
+            if (!"QUEUED".equals(persisted.getStatus()) && !"RUNNING".equals(persisted.getStatus())) return;
+            Instant now = Instant.now();
+            boolean queued = "QUEUED".equals(persisted.getStatus());
+            persisted.requestCancellation(now);
+            if (queued) {
+                persisted.cancel("运行已取消", now);
+                nodes.findByRunIdOrderByCreatedAtAsc(runId).stream()
+                        .filter(node -> "QUEUED".equals(node.getStatus()))
+                        .forEach(node -> {
+                            node.cancel(now);
+                            nodes.save(node);
+                        });
+            }
             runs.save(persisted);
         });
         return get(ownerId, runId);

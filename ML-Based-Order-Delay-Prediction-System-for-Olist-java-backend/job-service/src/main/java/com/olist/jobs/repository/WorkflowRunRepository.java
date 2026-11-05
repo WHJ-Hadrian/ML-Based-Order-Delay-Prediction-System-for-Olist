@@ -18,7 +18,7 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID> 
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select run from WorkflowRun run where run.executionEngine = 'local' and (run.status = 'QUEUED' "
-            + "or (run.status = 'RUNNING' and run.executionLeaseUntil <= :now)) order by run.createdAt, run.id")
+            + "or (run.status in ('RUNNING', 'CANCELLING') and run.executionLeaseUntil <= :now)) order by run.createdAt, run.id")
     List<WorkflowRun> findClaimable(@Param("now") java.time.Instant now, org.springframework.data.domain.Pageable page);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
