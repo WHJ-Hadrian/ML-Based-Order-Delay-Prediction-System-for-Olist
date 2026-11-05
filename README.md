@@ -107,6 +107,8 @@ docker compose --profile apps --profile rule-worker up --build -d
 
 Worker 通过 `WORKFLOW_WORKER_INTERNAL_TOKEN` 调用数据集服务的内部快照接口。Compose 默认值仅用于本地开发，其他环境应设置随机共享令牌，并确保 `job-service` 与 `dataset-service` 配置相同。
 
+分析工作台可将当前数据表、单张分析卡或整张画布中的多表来源带入新工作流或追加到已有工作流。追加按数据版本和表去重，保存固定版本引用；这一步只添加可运行的数据源节点，不会将分析卡转换成尚未实现执行器的分析节点。
+
 ## 健康检查
 
 - Gateway：`http://localhost:8080/actuator/health`
