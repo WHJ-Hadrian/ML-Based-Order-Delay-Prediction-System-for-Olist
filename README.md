@@ -103,7 +103,7 @@ docker compose --profile apps --profile rule-worker up --build -d
 
 ### 工作流运行 Worker
 
-`apps` profile 会在 `job-service` 进程内启动 Temporal Worker。画布可提交持久化运行；运行记录、定义快照与节点结果存入任务服务数据库，关闭浏览器不会中断任务。当前执行独立 `DATA_SOURCE` 节点及 `DATA_SOURCE → FILTER` 样本筛选链路，数据源会验证 owner 隔离的固定数据集版本/表并保存 schema、字段、行数和有界输入样本；样本最多 20 行、100 列，单元格最多 512 字符。筛选仅作用于该样本，不代表全量数据变换或物化；其他未实现节点会由服务端拒绝，不能伪装成成功。
+`apps` profile 会在 `job-service` 进程内启动 Temporal Worker。画布可提交持久化运行；运行记录、定义快照、节点结果与有界节点日志存入任务服务数据库，关闭浏览器不会中断任务。当前执行独立 `DATA_SOURCE` 节点及 `DATA_SOURCE → FILTER → FILTER` 单输入链式筛选，后续筛选消费前置筛选的样本结果；数据源会验证 owner 隔离的固定数据集版本/表并保存 schema、字段、行数和有界输入样本，样本最多 20 行、100 列，单元格最多 512 字符。筛选支持文本匹配、空值判断以及数值比较/区间判断，但仅作用于该有界样本，不代表全量数据变换或物化；其他未实现节点会由服务端拒绝，不能伪装成成功。
 
 Worker 通过 `WORKFLOW_WORKER_INTERNAL_TOKEN` 调用数据集服务的内部快照接口。Compose 默认值仅用于本地开发，其他环境应设置随机共享令牌，并确保 `job-service` 与 `dataset-service` 配置相同。
 
