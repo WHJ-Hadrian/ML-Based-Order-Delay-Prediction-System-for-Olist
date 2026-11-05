@@ -1,6 +1,9 @@
 package com.olist.jobs.api;
 
 import com.olist.jobs.service.WorkflowDefinitionService;
+import com.olist.jobs.service.WorkflowRunService;
+import com.olist.jobs.api.WorkflowRunRequest;
+import com.olist.jobs.api.WorkflowRunResponse;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
@@ -22,8 +25,12 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 @RequestMapping("/api/v1/workflows")
 public class WorkflowController {
     private final WorkflowDefinitionService service;
+    private final WorkflowRunService runService;
 
-    public WorkflowController(WorkflowDefinitionService service) { this.service = service; }
+    public WorkflowController(WorkflowDefinitionService service, WorkflowRunService runService) {
+        this.service = service;
+        this.runService = runService;
+    }
 
     @GetMapping
     public List<WorkflowSummaryResponse> list(@AuthenticationPrincipal Jwt jwt) {
@@ -63,5 +70,18 @@ public class WorkflowController {
     public ResponseEntity<Void> delete(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         service.delete(jwt.getSubject(), id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/runs")
+    public List<WorkflowRunResponse> runs(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+        return runService.list(jwt.getSubject(), id);
+    }
+
+    @PostMapping("/{id}/runs")
+    public ResponseEntity<WorkflowRunResponse> startRun(
+            @PathVariable UUID id,
+            @Valid @RequestBody WorkflowRunRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.accepted().body(runService.start(jwt.getSubject(), id, request));
     }
 }

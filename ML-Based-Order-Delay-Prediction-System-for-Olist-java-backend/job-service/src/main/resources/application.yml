@@ -45,3 +45,12 @@ info:
 temporal:
   target: ${TEMPORAL_TARGET:localhost:7233}
   namespace: ${TEMPORAL_NAMESPACE:default}
+
+jobs:
+  temporal:
+    task-queue: ${WORKFLOW_TEMPORAL_TASK_QUEUE:seek-dataset-workflows}
+    worker:
+      enabled: ${WORKFLOW_TEMPORAL_WORKER_ENABLED:false}
+  dataset-service-url: ${DATASET_SERVICE_URL:http://localhost:8082}
+  workflow-worker:
+    internal-token: ${WORKFLOW_WORKER_INTERNAL_TOKEN:}
