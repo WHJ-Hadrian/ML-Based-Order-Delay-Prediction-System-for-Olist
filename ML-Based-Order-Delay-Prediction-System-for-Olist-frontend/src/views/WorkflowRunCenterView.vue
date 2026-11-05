@@ -2,10 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CircleCheck, CircleClose, Loading, Refresh, Search, Share, VideoPlay } from '@element-plus/icons-vue'
-import { cancelWorkflowRun, getWorkflowRun, listRecentWorkflowRuns, retryWorkflowRun } from '@/api/workflows'
+import { cancelWorkflowRun, getWorkflowRun, retryWorkflowRun, searchWorkflowRuns } from '@/api/workflows'
 
 const router = useRouter()
 const runs = ref([])
+const totalRuns = ref(0)
+const totalPages = ref(0)
+const currentPage = ref(1)
+const pageSize = 20
 const selectedRun = ref(null)
 const selectedId = ref('')
 const search = ref('')
@@ -15,17 +19,12 @@ const detailLoading = ref(false)
 const actionBusy = ref(false)
 const error = ref('')
 let pollTimer
+let searchTimer
 let detailSequence = 0
+let listSequence = 0
+let disposed = false
 
 const activeRuns = computed(() => runs.value.filter((run) => isActive(run.status)).length)
-const filteredRuns = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase()
-  return runs.value.filter((run) => {
-    const statusMatches = statusFilter.value === 'ALL' || run.status === statusFilter.value
-    const queryMatches = !query || `${run.workflowName} ${run.id}`.toLocaleLowerCase().includes(query)
-    return statusMatches && queryMatches
-  })
-})
 
 function isActive(status) { return ['QUEUED', 'RUNNING', 'CANCELLING'].includes(status) }
 function statusLabel(status) {
@@ -42,22 +41,74 @@ function formatClock(value) {
 }
 function schedulePoll() {
   clearTimeout(pollTimer)
-  if (activeRuns.value) pollTimer = setTimeout(refreshRuns, 2500)
+  if (disposed) return
+  const delay = activeRuns.value || isActive(selectedRun.value?.status) ? 2500 : 15000
+  pollTimer = setTimeout(() => refreshRuns({ silent: true }), delay)
 }
 
-async function refreshRuns() {
-  loading.value = true
-  error.value = ''
+function resetSelection() {
+  detailSequence += 1
+  selectedId.value = ''
+  selectedRun.value = null
+  detailLoading.value = false
+}
+
+async function refreshRuns({ silent = false } = {}) {
+  clearTimeout(pollTimer)
+  clearTimeout(searchTimer)
+  const sequence = ++listSequence
+  if (!silent) loading.value = true
+  if (!silent) error.value = ''
   try {
-    runs.value = await listRecentWorkflowRuns()
-    if (selectedId.value && runs.value.some((run) => run.id === selectedId.value)) await refreshSelectedRun()
-    else if (runs.value.length && !selectedId.value) await selectRun(runs.value[0].id)
+    const result = await searchWorkflowRuns({
+      page: currentPage.value - 1,
+      size: pageSize,
+      keyword: search.value,
+      status: statusFilter.value,
+    })
+    if (sequence !== listSequence) return
+    runs.value = result.items || []
+    totalRuns.value = result.totalElements || 0
+    totalPages.value = result.totalPages || 0
+    if (currentPage.value > Math.max(1, totalPages.value)) {
+      currentPage.value = Math.max(1, totalPages.value)
+      return refreshRuns({ silent })
+    }
+    if (selectedId.value && !detailLoading.value && !actionBusy.value) await refreshSelectedRun()
+    else if (runs.value.length) await selectRun(runs.value[0].id)
   } catch (cause) {
-    error.value = cause.message || '运行列表载入失败'
+    if (sequence === listSequence) error.value = cause.message || '运行列表载入失败'
   } finally {
-    loading.value = false
-    schedulePoll()
+    if (sequence === listSequence) {
+      loading.value = false
+      schedulePoll()
+    }
   }
+}
+
+function queueSearch() {
+  listSequence += 1
+  clearTimeout(pollTimer)
+  runs.value = []
+  totalRuns.value = 0
+  totalPages.value = 0
+  loading.value = true
+  currentPage.value = 1
+  resetSelection()
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => refreshRuns(), 300)
+}
+
+function changeStatus() {
+  currentPage.value = 1
+  resetSelection()
+  refreshRuns()
+}
+
+function changePage(page) {
+  currentPage.value = page
+  resetSelection()
+  refreshRuns()
 }
 
 async function refreshSelectedRun() {
@@ -69,6 +120,11 @@ async function refreshSelectedRun() {
   } catch (cause) {
     if (sequence === detailSequence && selectedId.value === id) error.value = cause.message || '运行详情刷新失败'
   }
+}
+
+async function retryList() {
+  currentPage.value = 1
+  await refreshRuns()
 }
 
 async function selectRun(id) {
@@ -83,25 +139,40 @@ async function selectRun(id) {
   } catch (cause) {
     if (sequence === detailSequence) error.value = cause.message || '运行详情载入失败'
   } finally {
-    if (sequence === detailSequence) detailLoading.value = false
+    if (sequence === detailSequence) {
+      detailLoading.value = false
+      schedulePoll()
+    }
   }
 }
 
 async function actOnRun(action) {
   if (!selectedRun.value || actionBusy.value) return
+  const targetId = selectedRun.value.id
+  const sequence = ++detailSequence
+  clearTimeout(pollTimer)
   actionBusy.value = true
   error.value = ''
   try {
     const updated = action === 'cancel'
-      ? await cancelWorkflowRun(selectedRun.value.id)
-      : await retryWorkflowRun(selectedRun.value.id)
+      ? await cancelWorkflowRun(targetId)
+      : await retryWorkflowRun(targetId)
+    if (disposed || selectedId.value !== targetId || sequence !== detailSequence) return
     selectedRun.value = updated
-    if (action === 'retry') selectedId.value = updated.id
+    if (action === 'retry') {
+      selectedId.value = updated.id
+      currentPage.value = 1
+      search.value = ''
+      statusFilter.value = 'ALL'
+    }
     await refreshRuns()
   } catch (cause) {
-    error.value = cause.message || (action === 'cancel' ? '取消运行失败' : '重试运行失败')
+    if (!disposed && selectedId.value === targetId && sequence === detailSequence) {
+      error.value = cause.message || (action === 'cancel' ? '取消运行失败' : '重试运行失败')
+    }
   } finally {
     actionBusy.value = false
+    schedulePoll()
   }
 }
 
@@ -111,7 +182,13 @@ function openWorkflow() {
 }
 
 onMounted(refreshRuns)
-onBeforeUnmount(() => clearTimeout(pollTimer))
+onBeforeUnmount(() => {
+  disposed = true
+  clearTimeout(pollTimer)
+  clearTimeout(searchTimer)
+  listSequence += 1
+  detailSequence += 1
+})
 </script>
 
 <template>
@@ -121,16 +198,16 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
         <h1>运行中心</h1>
         <p>跨工作流追踪后台运行、查看冻结结果并处理失败任务。</p>
       </div>
-      <div class="run-center-health"><span class="health-dot" />{{ activeRuns }} 个运行中</div>
+      <div class="run-center-health"><span class="health-dot" />本页 {{ activeRuns }} 个运行中</div>
     </header>
 
-    <div v-if="error" class="run-center-error" role="alert"><span>{{ error }}</span><el-button text :icon="Refresh" @click="refreshRuns">重试</el-button></div>
+    <div v-if="error" class="run-center-error" role="alert"><span>{{ error }}</span><el-button text :icon="Refresh" @click="retryList">重试</el-button></div>
 
     <section class="run-center-workspace" aria-label="工作流运行中心">
       <aside class="run-center-list-panel">
         <div class="run-center-tools">
-          <el-input v-model="search" clearable :prefix-icon="Search" placeholder="搜索工作流或运行 ID" aria-label="搜索工作流或运行 ID" />
-          <el-select v-model="statusFilter" aria-label="筛选运行状态">
+          <el-input v-model="search" clearable :maxlength="100" :prefix-icon="Search" placeholder="按工作流名称搜索" aria-label="按工作流名称搜索" @input="queueSearch" />
+          <el-select v-model="statusFilter" aria-label="筛选运行状态" @change="changeStatus">
             <el-option label="全部状态" value="ALL" />
             <el-option label="排队中" value="QUEUED" />
             <el-option label="运行中" value="RUNNING" />
@@ -140,16 +217,26 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
             <el-option label="已取消" value="CANCELED" />
           </el-select>
         </div>
-        <div class="run-center-list-heading"><strong>最近运行</strong><span>{{ filteredRuns.length }} / {{ runs.length }}</span><el-button text circle :icon="Refresh" :loading="loading" aria-label="刷新运行列表" title="刷新运行列表" @click="refreshRuns" /></div>
-        <nav v-if="filteredRuns.length" class="global-run-list" aria-label="工作流运行列表">
-          <button v-for="run in filteredRuns" :key="run.id" type="button" class="global-run-item" :class="{ 'is-selected': selectedId === run.id }" :title="`${run.workflowName} · ${run.id}`" @click="selectRun(run.id)">
+        <div class="run-center-list-heading"><strong>运行记录</strong><span>显示 {{ runs.length }} 条 · 共 {{ totalRuns }} 条</span><el-button text circle :icon="Refresh" :loading="loading" aria-label="刷新运行列表" title="刷新运行列表" @click="refreshRuns" /></div>
+        <nav v-if="runs.length" class="global-run-list" aria-label="工作流运行列表">
+          <button v-for="run in runs" :key="run.id" type="button" class="global-run-item" :class="{ 'is-selected': selectedId === run.id }" :title="`${run.workflowName} · ${run.id}`" @click="selectRun(run.id)">
             <span class="global-run-status" :class="`status-${run.status.toLowerCase()}`"><el-icon><Loading v-if="isActive(run.status)" /><CircleCheck v-else-if="run.status === 'SUCCEEDED'" /><CircleClose v-else /></el-icon></span>
             <span class="global-run-copy"><strong>{{ run.workflowName }}</strong><small>{{ statusLabel(run.status) }} · 修订 {{ run.workflowRevision }}</small><small>{{ formatTime(run.createdAt) }}</small></span>
             <span v-if="isActive(run.status)" class="global-run-progress">{{ run.progress }}%</span>
           </button>
         </nav>
         <div v-else-if="loading" class="run-center-empty">正在读取运行记录</div>
-        <div v-else class="run-center-empty">{{ runs.length ? '没有符合筛选条件的运行' : '还没有工作流运行记录' }}</div>
+        <div v-else class="run-center-empty">{{ totalRuns ? '当前页没有运行记录' : search.trim() || statusFilter !== 'ALL' ? '没有符合筛选条件的运行' : '还没有工作流运行记录' }}</div>
+        <el-pagination
+          v-if="totalPages > 1"
+          class="run-center-pagination"
+          :current-page="currentPage"
+          :page-size="pageSize"
+          :total="totalRuns"
+          :pager-count="5"
+          layout="prev, pager, next"
+          @current-change="changePage"
+        />
       </aside>
 
       <section class="run-center-detail" aria-label="运行详情">
@@ -216,6 +303,8 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
 .run-center-list-heading strong { font-size: 12px; }
 .run-center-list-heading > span { flex: 1; color: #87938c; font-size: 10px; }
 .global-run-list { display: grid; align-content: start; max-height: calc(100vh - 255px); overflow: auto; }
+.run-center-pagination { flex: 0 0 auto; justify-content: center; padding: 10px 6px; border-top: 1px solid #edf1ee; }
+.run-center-pagination :deep(.el-pager li), .run-center-pagination :deep(button) { min-width: 24px; height: 24px; font-size: 10px; }
 .global-run-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: 9px; padding: 11px 12px; color: #405149; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #edf1ee; cursor: pointer; }
 .global-run-item:hover { background: #f7faf8; }
 .global-run-item.is-selected { background: #eef6f1; box-shadow: inset 3px 0 #31835f; }
