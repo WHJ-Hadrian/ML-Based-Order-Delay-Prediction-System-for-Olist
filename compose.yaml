@@ -316,6 +316,7 @@ services:
       CLICKHOUSE_USER: olist
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local-clickhouse-only}
       RULE_WORKER_INTERNAL_TOKEN: ${RULE_WORKER_INTERNAL_TOKEN:-}
+      WORKFLOW_WORKER_INTERNAL_TOKEN: ${WORKFLOW_WORKER_INTERNAL_TOKEN:-local-workflow-worker-change-me}
     depends_on:
       mysql:
         condition: service_healthy
@@ -337,6 +338,9 @@ services:
       SERVER_PORT: 8083
       TEMPORAL_TARGET: temporal:7233
       TEMPORAL_NAMESPACE: default
+      WORKFLOW_TEMPORAL_WORKER_ENABLED: ${WORKFLOW_TEMPORAL_WORKER_ENABLED:-true}
+      DATASET_SERVICE_URL: http://dataset-service:8082
+      WORKFLOW_WORKER_INTERNAL_TOKEN: ${WORKFLOW_WORKER_INTERNAL_TOKEN:-local-workflow-worker-change-me}
     depends_on:
       mysql:
         condition: service_healthy

@@ -101,6 +101,12 @@ docker compose --profile apps --profile rule-worker up --build -d
 
 也可以把生成的令牌持久写入 `.env` 的 `RULE_WORKER_INTERNAL_TOKEN`，避免仅在当前 PowerShell 会话中有效。Worker 只领取 `PREVIEW` 运行；过期租约可安全重跑，因为当前执行不会物化输出。`FULL` 物化仍未开放。ClickHouse 用户和租约边界见 `docs/rule-workbook/worker-execution.md`。
 
+### 工作流运行 Worker
+
+`apps` profile 会在 `job-service` 进程内启动 Temporal Worker。画布可提交持久化运行；运行记录、定义快照与节点结果存入任务服务数据库，关闭浏览器不会中断任务。当前仅执行彼此独立的 `DATA_SOURCE` 节点，用于验证固定数据集版本/表并保存 schema、字段和行数快照；有连线或包含规则、转换、训练等节点的工作流会由服务端拒绝，不能把未实现的节点伪装成成功。
+
+Worker 通过 `WORKFLOW_WORKER_INTERNAL_TOKEN` 调用数据集服务的内部快照接口。Compose 默认值仅用于本地开发，其他环境应设置随机共享令牌，并确保 `job-service` 与 `dataset-service` 配置相同。
+
 ## 健康检查
 
 - Gateway：`http://localhost:8080/actuator/health`
