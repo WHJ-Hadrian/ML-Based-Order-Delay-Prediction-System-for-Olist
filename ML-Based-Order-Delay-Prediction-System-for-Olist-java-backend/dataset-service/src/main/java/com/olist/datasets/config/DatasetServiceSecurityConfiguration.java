@@ -17,6 +17,7 @@ public class DatasetServiceSecurityConfiguration {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/internal/rule-runs/**").permitAll()
+                        .requestMatchers("/internal/workflow-datasets/**").permitAll()
                         .requestMatchers(
                                 "/actuator/health",
                                 "/actuator/health/**",

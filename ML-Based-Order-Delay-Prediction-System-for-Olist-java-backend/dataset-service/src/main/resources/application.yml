@@ -50,6 +50,8 @@ mybatis:
     map-underscore-to-camel-case: true
 
 olist:
+  workflow-worker:
+    internal-token: ${WORKFLOW_WORKER_INTERNAL_TOKEN:}
   rule-worker:
     internal-token: ${RULE_WORKER_INTERNAL_TOKEN:}
   dataset:
