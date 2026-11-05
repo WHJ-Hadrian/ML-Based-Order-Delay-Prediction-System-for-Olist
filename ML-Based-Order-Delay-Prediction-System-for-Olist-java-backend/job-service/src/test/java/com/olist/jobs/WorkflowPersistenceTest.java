@@ -27,6 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
     "spring.datasource.username=sa",
     "spring.datasource.password=",
     "spring.datasource.driver-class-name=org.h2.Driver",
+    "jobs.runner=temporal",
     "spring.security.oauth2.resourceserver.jwt.issuer-uri=http://localhost:8180/realms/olist",
     "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost:8180/realms/olist/protocol/openid-connect/certs"
 })
