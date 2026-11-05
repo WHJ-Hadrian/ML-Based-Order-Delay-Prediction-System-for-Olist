@@ -3,13 +3,18 @@ package com.olist.jobs.workflow;
 import io.temporal.client.WorkflowClient;
 import io.temporal.worker.Worker;
 import io.temporal.worker.WorkerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@ConditionalOnProperty(name = "jobs.temporal.worker.enabled", havingValue = "true")
+@ConditionalOnProperties({
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            name = "jobs.runner", havingValue = "temporal", matchIfMissing = true),
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            name = "jobs.temporal.worker.enabled", havingValue = "true")
+})
 public class WorkflowRunWorkerConfiguration {
     @Bean(initMethod = "start", destroyMethod = "shutdown")
     WorkerFactory workflowWorkerFactory(
