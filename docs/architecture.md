@@ -76,7 +76,7 @@ flowchart LR
 | `api-gateway` | Spring Cloud Gateway | 对外统一 API 入口，校验 JWT，并将 `/api/v1/...` 路由到对应 Java 服务。 |
 | `order-service` | Spring Boot | 管理订单及订单状态，拥有订单服务数据。 |
 | `dataset-service` | Spring Boot | 管理上传文件相关元数据、数据集版本及校验记录。文件内容存放于对象存储。 |
-| `job-service` | Spring Boot、Temporal Client / Worker | 持久化用户工作流定义和运行记录，校验 DAG，并执行已开放的数据源快照节点；其他节点执行器仍在建设。 |
+| `job-service` | Spring Boot、数据库队列、Temporal Client / Worker | 持久化用户工作流定义和运行记录，校验 DAG，并执行已开放的数据源快照节点；其他节点执行器仍在建设。 |
 | `prediction-service` | Spring Boot | 提供在线预测业务入口、预测记录和审计，并调用模型服务。 |
 | `model-management-service` | Spring Boot | 管理模型审核、上线、回滚及版本元数据。 |
 | `analytics-query-service` | Spring Boot | 为前端分析看板提供查询 API。 |
@@ -245,11 +245,13 @@ docker compose --profile observability up -d
 
 `batch` 启动 Spark，`stream` 启动 Flink，`observability` 启动 Prometheus 与 Grafana。Grafana 地址为 `http://localhost:3000`，Prometheus 地址为 `http://localhost:9090`。Temporal UI 地址为 `http://localhost:8233`，Keycloak 地址为 `http://localhost:8180`，本地邮件收件箱为 `http://localhost:8025`。
 
+直接从 IDE 或 Maven 启动 `job-service` 时，工作流默认由本地数据库队列 Worker 执行，不依赖 Temporal。Worker 使用数据库租约、续期令牌和行锁防止过期进程覆盖接管后的结果；运行记录已经入库后，即使关闭或切换浏览器页面也会继续执行。Compose 仍默认设置 `WORKFLOW_RUNNER=temporal`，保持完整环境中的 Temporal 编排；需要在 Compose 内验证数据库队列时，可显式设置 `WORKFLOW_RUNNER=local`。
+
 ## 7. 当前实现状态
 
 - Java Maven 工程和各服务启动类、基础安全及健康检查配置已经建立；服务模块边界和 Gateway 路由已配置。
 - 前端使用邮箱先行的分步登录/注册界面：登录时输入邮箱后进入密码步骤，再通过 Keycloak 密码授权换取 access token（仅本地开发启用 password grant，生产应改用 Authorization Code + PKCE）；注册流程按姓名、生日与性别、密码分步完成。应用只保留这一个登录/注册入口，不再维护额外的 Keycloak 托管登录页；业务 API 使用 Keycloak 签发的 access token。数据集按 JWT `sub` 隔离。
-- `job-service` 已提供 owner 隔离的工作流定义列表、创建、读取、更新、复制与删除接口，保存修订号并校验节点白名单、端口、循环、文档大小及脚本/SQL 字段。前端 `/workflows` 支持多画布编辑和自动保存。工作流运行冻结定义修订并持久化运行及节点状态，由 Temporal Worker 在页面外执行；当前支持独立 `DATA_SOURCE` 节点及 `DATA_SOURCE → FILTER → FILTER` 单输入筛选链，输入样本最多 20 行、100 列、单元格 512 字符，后续筛选节点沿用前序筛选样本与 schema。筛选支持文本匹配、空值判断和依据 schema 类型校验的数值比较/区间判断，节点日志会持久化并展示，但筛选只作用于有界样本，不代表全量转换或物化；其他节点类型、物化输出和完整 lineage 尚未实现。
+- `job-service` 已提供 owner 隔离的工作流定义列表、创建、读取、更新、复制与删除接口，保存修订号并校验节点白名单、端口、循环、文档大小及脚本/SQL 字段。前端 `/workflows` 支持多画布编辑和自动保存。工作流运行冻结定义修订并持久化运行及节点状态，可由本地数据库队列 Worker 或 Temporal Worker 在页面外执行；本地 Worker 支持并发领取、租约续期、过期接管、令牌隔离和持久化取消。当前支持独立 `DATA_SOURCE` 节点及 `DATA_SOURCE → FILTER → FILTER` 单输入筛选链，输入样本最多 20 行、100 列、单元格 512 字符，后续筛选节点沿用前序筛选样本与 schema。筛选支持文本匹配、空值判断和依据 schema 类型校验的数值比较/区间判断，节点日志会持久化并展示，但筛选只作用于有界样本，不代表全量转换或物化；其他节点类型、物化输出和完整 lineage 尚未实现。
 - 数据集服务已实现文件上传、版本元数据查询、对象存储写入，以及字段库和清洗规则库的维护接口；规则工作簿发布版本目前仍绑定创建时的数据集版本，尚不是跨数据集通用的规则组件。
 - 订单、通用工作流执行与分析查询的部分业务接口仍未实现；请以各服务代码和测试为准，不将架构图中的职责视为已上线能力。
 - Python FastAPI 已提供健康检查、指标、受保护的模型训练/试炼端点和规则 PREVIEW Worker；工作流 Temporal Worker 目前位于 Java `job-service`，模型在线推理尚未实现。
