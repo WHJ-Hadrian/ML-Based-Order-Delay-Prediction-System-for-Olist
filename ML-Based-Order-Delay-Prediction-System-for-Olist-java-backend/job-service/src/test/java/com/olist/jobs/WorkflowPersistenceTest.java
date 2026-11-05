@@ -66,4 +66,21 @@ class WorkflowPersistenceTest {
         assertEquals("{\"rowCount\":12}", nodeRepository.findByRunIdOrderByCreatedAtAsc(runId)
                 .get(0).getResultJson());
     }
+
+    @Test
+    void recentRunQueryIsScopedToTheAuthenticatedOwner() {
+        Instant now = Instant.now();
+        UUID workflowA = UUID.randomUUID();
+        UUID workflowB = UUID.randomUUID();
+        runRepository.saveAndFlush(new WorkflowRun(UUID.randomUUID(), workflowA, "owner-a", "A", 1,
+                "{\"nodes\":[],\"edges\":[]}", null, now));
+        runRepository.saveAndFlush(new WorkflowRun(UUID.randomUUID(), workflowB, "owner-b", "B", 1,
+                "{\"nodes\":[],\"edges\":[]}", null, now));
+
+        var ownerARuns = runRepository.findTop50ByOwnerIdOrderByCreatedAtDesc("owner-a");
+
+        assertEquals(1, ownerARuns.size());
+        assertEquals("A", ownerARuns.get(0).getWorkflowName());
+        assertTrue(runRepository.findTop50ByOwnerIdOrderByCreatedAtDesc("owner-c").isEmpty());
+    }
 }

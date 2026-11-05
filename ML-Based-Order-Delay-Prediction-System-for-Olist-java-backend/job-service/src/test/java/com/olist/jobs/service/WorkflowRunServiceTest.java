@@ -99,6 +99,22 @@ class WorkflowRunServiceTest {
     }
 
     @Test
+    void listsOnlyOwnerRunsAsBoundedSummariesWithoutLoadingNodeResults() {
+        Instant now = Instant.now();
+        WorkflowRun latest = new WorkflowRun(UUID.randomUUID(), UUID.randomUUID(), "owner-a", "Workflow A", 3,
+                "{\"nodes\":[],\"edges\":[]}", null, now);
+        when(runs.findTop50ByOwnerIdOrderByCreatedAtDesc("owner-a"))
+                .thenReturn(java.util.List.of(latest));
+
+        var summaries = service.listRecent("owner-a", 500);
+
+        assertEquals(1, summaries.size());
+        assertEquals(latest.getId(), summaries.get(0).id());
+        assertEquals("Workflow A", summaries.get(0).workflowName());
+        verify(nodes, never()).findByRunIdOrderByCreatedAtAsc(any());
+    }
+
+    @Test
     void refusesFilterValuesOutsideTheValidatedContractBeforePersisting() throws Exception {
         UUID id = UUID.randomUUID();
         var definition = definition(id, "{\"version\":1,\"nodes\":["

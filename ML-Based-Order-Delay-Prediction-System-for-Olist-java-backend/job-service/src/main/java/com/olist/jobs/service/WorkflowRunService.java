@@ -7,6 +7,7 @@ import com.olist.jobs.api.WorkflowRunNodeResponse;
 import com.olist.jobs.api.WorkflowRunLogResponse;
 import com.olist.jobs.api.WorkflowRunResponse;
 import com.olist.jobs.api.WorkflowRunRequest;
+import com.olist.jobs.api.WorkflowRunSummaryResponse;
 import com.olist.jobs.entity.WorkflowDefinition;
 import com.olist.jobs.entity.WorkflowRun;
 import com.olist.jobs.entity.WorkflowRunNode;
@@ -122,6 +123,14 @@ public class WorkflowRunService {
         requireWorkflow(ownerId, workflowId);
         return runs.findTop50ByWorkflowIdAndOwnerIdOrderByCreatedAtDesc(workflowId, ownerId)
                 .stream().map(this::response).toList();
+    }
+
+    public List<WorkflowRunSummaryResponse> listRecent(String ownerId, int limit) {
+        int boundedLimit = Math.max(1, Math.min(50, limit));
+        return runs.findTop50ByOwnerIdOrderByCreatedAtDesc(ownerId).stream()
+                .limit(boundedLimit)
+                .map(WorkflowRunSummaryResponse::from)
+                .toList();
     }
 
     public WorkflowRunResponse get(String ownerId, UUID runId) {
@@ -297,8 +306,16 @@ public class WorkflowRunService {
     }
 
     private WorkflowRunResponse response(WorkflowRun run) {
+        Map<String, String> nodeLabels = new HashMap<>();
+        JsonNode snapshot = readSnapshot(run.getSnapshotJson());
+        for (JsonNode snapshotNode : snapshot.path("nodes")) {
+            String id = snapshotNode.path("id").asText("");
+            String label = snapshotNode.path("data").path("label").asText("");
+            if (!id.isBlank() && !label.isBlank()) nodeLabels.put(id, label);
+        }
         List<WorkflowRunNodeResponse> nodeResponses = nodes.findByRunIdOrderByCreatedAtAsc(run.getId())
-                .stream().map(node -> new WorkflowRunNodeResponse(node.getNodeId(), node.getNodeType(),
+                .stream().map(node -> new WorkflowRunNodeResponse(node.getNodeId(),
+                        nodeLabels.getOrDefault(node.getNodeId(), node.getNodeId()), node.getNodeType(),
                         node.getStatus(), parseJson(node.getResultJson()), node.getErrorMessage(),
                         parseLogs(node.getLogsJson()),
                         node.getStartedAt(), node.getFinishedAt()))

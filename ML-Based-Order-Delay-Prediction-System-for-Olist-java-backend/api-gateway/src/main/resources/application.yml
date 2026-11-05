@@ -67,7 +67,7 @@ spring:
             - id: jobs
               uri: ${JOB_SERVICE_URL:http://localhost:8083}
               predicates:
-                - Path=/api/v1/jobs/**,/api/v1/workflows,/api/v1/workflows/**,/api/v1/workflow-runs/**
+                - Path=/api/v1/jobs/**,/api/v1/workflows,/api/v1/workflows/**,/api/v1/workflow-runs,/api/v1/workflow-runs/**
             - id: predictions
               uri: ${PREDICTION_SERVICE_URL:http://localhost:8084}
               predicates:

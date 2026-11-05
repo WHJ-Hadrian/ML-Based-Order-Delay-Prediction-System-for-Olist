@@ -5,6 +5,7 @@ import java.util.List;
 
 public record WorkflowRunNodeResponse(
         String nodeId,
+        String nodeLabel,
         String nodeType,
         String status,
         Object result,
