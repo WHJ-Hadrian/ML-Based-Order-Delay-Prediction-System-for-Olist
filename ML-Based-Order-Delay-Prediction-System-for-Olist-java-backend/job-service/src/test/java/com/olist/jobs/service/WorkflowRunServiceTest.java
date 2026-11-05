@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +16,7 @@ import com.olist.jobs.repository.WorkflowRunNodeRepository;
 import com.olist.jobs.repository.WorkflowRunRepository;
 import com.olist.jobs.workflow.WorkflowRunStarter;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -75,9 +77,58 @@ class WorkflowRunServiceTest {
         verify(runs, never()).saveAndFlush(any());
     }
 
+    @Test
+    void refusesFilterValuesOutsideTheValidatedContractBeforePersisting() throws Exception {
+        UUID id = UUID.randomUUID();
+        var definition = definition(id, "{\"version\":1,\"nodes\":["
+                + sourceNode() + ","
+                + "{\"id\":\"filter\",\"type\":\"FILTER\",\"position\":{\"x\":1,\"y\":1},"
+                + "\"data\":{\"config\":{\"columnName\":\"status\",\"operator\":\"CONTAINS\"}}}],"
+                + "\"edges\":[{\"id\":\"edge-1\",\"source\":\"source\",\"target\":\"filter\"}]}");
+        when(workflows.findByIdAndOwnerId(id, "owner-a")).thenReturn(Optional.of(definition));
+
+        var exception = assertThrows(ResponseStatusException.class,
+                () -> service.start("owner-a", id, new WorkflowRunRequest(3L)));
+
+        assertEquals(400, exception.getStatusCode().value());
+        verify(runs, never()).saveAndFlush(any());
+        verify(starter, never()).start(any());
+    }
+
+    @Test
+    void acceptsSourceToFilterPreviewGraphForBackgroundExecution() throws Exception {
+        UUID id = UUID.randomUUID();
+        var definition = definition(id, "{\"version\":1,\"nodes\":["
+                + sourceNode() + ","
+                + "{\"id\":\"filter\",\"type\":\"FILTER\",\"position\":{\"x\":1,\"y\":1},"
+                + "\"data\":{\"config\":{\"columnName\":\"status\",\"operator\":\"CONTAINS\","
+                + "\"value\":\"late\"}}}],"
+                + "\"edges\":[{\"id\":\"edge-1\",\"source\":\"source\",\"target\":\"filter\"}]}");
+        when(workflows.findByIdAndOwnerId(id, "owner-a")).thenReturn(Optional.of(definition));
+        AtomicReference<com.olist.jobs.entity.WorkflowRun> savedRun = new AtomicReference<>();
+        doAnswer(invocation -> {
+            savedRun.set(invocation.getArgument(0));
+            return invocation.getArgument(0);
+        }).when(runs).saveAndFlush(any());
+        when(runs.findByIdAndOwnerId(any(), org.mockito.ArgumentMatchers.eq("owner-a")))
+                .thenAnswer(invocation -> Optional.ofNullable(savedRun.get()));
+        doAnswer(invocation -> null).when(transactionManager).commit(any());
+
+        service.start("owner-a", id, new WorkflowRunRequest(3L));
+
+        verify(starter).start(any());
+    }
+
+    private String sourceNode() {
+        return "{\"id\":\"source\",\"type\":\"DATA_SOURCE\",\"position\":{\"x\":0,\"y\":0},"
+                + "\"data\":{\"config\":{\"datasetVersionId\":\"550e8400-e29b-41d4-a716-446655440001\","
+                + "\"tableId\":\"550e8400-e29b-41d4-a716-446655440002\"}}}";
+    }
+
     private WorkflowDefinition definition(UUID id, String nodesJson) throws Exception {
         Instant now = Instant.now();
-        String document = "{\"version\":1,\"nodes\":" + nodesJson + ",\"edges\":[]}";
+        String document = nodesJson.startsWith("{") ? nodesJson
+                : "{\"version\":1,\"nodes\":" + nodesJson + ",\"edges\":[]}";
         return new WorkflowDefinition(id, "owner-a", "Source", 3, document, now, now);
     }
 }

@@ -15,6 +15,12 @@ import com.olist.jobs.repository.WorkflowRunRepository;
 import com.olist.jobs.workflow.WorkflowRunStarter;
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
@@ -25,7 +31,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class WorkflowRunService {
-    private static final int MAX_SOURCE_NODES = 20;
+    private static final int MAX_RUN_NODES = 20;
+    private static final Set<String> FILTER_OPERATORS = Set.of(
+            "EQUALS", "NOT_EQUALS", "CONTAINS", "IS_EMPTY", "IS_NOT_EMPTY");
     private static final Pattern UUID_PATTERN = Pattern.compile(
             "(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
 
@@ -153,20 +161,79 @@ public class WorkflowRunService {
     private void validateExecutable(JsonNode document) {
         JsonNode runNodes = document.path("nodes");
         JsonNode edges = document.path("edges");
-        if (!runNodes.isArray() || runNodes.isEmpty() || runNodes.size() > MAX_SOURCE_NODES
-                || !edges.isArray() || !edges.isEmpty()) {
-            throw badRequest("当前运行器支持 1 到 20 个独立数据源节点；其他 DAG 节点执行器尚未启用");
+        if (!runNodes.isArray() || runNodes.isEmpty() || runNodes.size() > MAX_RUN_NODES || !edges.isArray()) {
+            throw badRequest("运行节点必须在 1 到 20 个之间，并提供有效连线列表");
+        }
+        Map<String, String> types = new HashMap<>();
+        Map<String, List<String>> outgoing = new HashMap<>();
+        Map<String, Integer> indegree = new HashMap<>();
+        for (JsonNode node : runNodes) {
+            String id = node.path("id").asText("");
+            String type = node.path("type").asText("");
+            if (id.isBlank() || types.putIfAbsent(id, type) != null) {
+                throw badRequest("运行节点标识无效或重复");
+            }
+            outgoing.put(id, new ArrayList<>());
+            indegree.put(id, 0);
+            if ("DATA_SOURCE".equals(type)) {
+                JsonNode config = node.path("data").path("config");
+                if (!validUuid(config.path("datasetVersionId").asText())
+                        || !validUuid(config.path("tableId").asText())) {
+                    throw badRequest("每个数据源节点都必须固定一个已就绪的数据集版本和数据表");
+                }
+            } else if ("FILTER".equals(type)) {
+                validateFilterConfig(node.path("data").path("config"));
+            } else {
+                throw badRequest("当前运行器暂不执行「" + type + "」节点");
+            }
+        }
+        if (edges.size() > MAX_RUN_NODES - 1) throw badRequest("当前运行器最多支持 19 条连接");
+        Set<String> seenEdges = new HashSet<>();
+        for (JsonNode edge : edges) {
+            String source = edge.path("source").asText("");
+            String target = edge.path("target").asText("");
+            if (!"DATA_SOURCE".equals(types.get(source)) || !"FILTER".equals(types.get(target))
+                    || !"output".equals(edge.path("sourceHandle").asText("output"))
+                    || !"input".equals(edge.path("targetHandle").asText("input"))
+                    || !seenEdges.add(source + "|" + target) || indegree.get(target) != 0) {
+                throw badRequest("当前运行器只支持数据源连接到单个筛选节点，且每个筛选节点必须只有一个输入");
+            }
+            outgoing.get(source).add(target);
+            indegree.put(target, 1);
         }
         for (JsonNode node : runNodes) {
-            if (!"DATA_SOURCE".equals(node.path("type").asText())) {
-                throw badRequest("当前运行器只支持数据源节点，暂不执行「" + node.path("type").asText() + "」节点");
-            }
-            JsonNode config = node.path("data").path("config");
-            if (!validUuid(config.path("datasetVersionId").asText())
-                    || !validUuid(config.path("tableId").asText())) {
-                throw badRequest("每个数据源节点都必须固定一个已就绪的数据集版本和数据表");
+            if ("FILTER".equals(types.get(node.path("id").asText()))
+                    && indegree.get(node.path("id").asText()) != 1) {
+                throw badRequest("每个筛选节点都必须连接一个数据源");
             }
         }
+        ensureAcyclic(outgoing, indegree);
+    }
+
+    private void validateFilterConfig(JsonNode config) {
+        String column = config.path("columnName").asText("").trim();
+        String operator = config.path("operator").asText("");
+        JsonNode value = config.path("value");
+        if (!config.isObject() || column.isEmpty() || column.length() > 255
+                || !FILTER_OPERATORS.contains(operator)
+                || (!operator.startsWith("IS_") && (!value.isTextual() || value.asText().length() > 512))) {
+            throw badRequest("筛选节点需配置有效字段、白名单条件和不超过 512 个字符的值");
+        }
+    }
+
+    private void ensureAcyclic(Map<String, List<String>> graph, Map<String, Integer> indegree) {
+        ArrayDeque<String> ready = new ArrayDeque<>();
+        indegree.forEach((id, degree) -> { if (degree == 0) ready.addLast(id); });
+        int visited = 0;
+        while (!ready.isEmpty()) {
+            String current = ready.removeFirst();
+            visited++;
+            for (String target : graph.get(current)) {
+                int next = indegree.compute(target, (id, degree) -> degree - 1);
+                if (next == 0) ready.addLast(target);
+            }
+        }
+        if (visited != graph.size()) throw badRequest("工作流包含循环依赖");
     }
 
     private boolean validUuid(String value) { return UUID_PATTERN.matcher(value).matches(); }
