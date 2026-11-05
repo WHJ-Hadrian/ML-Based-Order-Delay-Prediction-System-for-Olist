@@ -8,6 +8,7 @@ import com.olist.jobs.api.WorkflowRunLogResponse;
 import com.olist.jobs.api.WorkflowRunResponse;
 import com.olist.jobs.api.WorkflowRunRequest;
 import com.olist.jobs.api.WorkflowRunSummaryResponse;
+import com.olist.jobs.api.WorkflowRunPageResponse;
 import com.olist.jobs.entity.WorkflowDefinition;
 import com.olist.jobs.entity.WorkflowRun;
 import com.olist.jobs.entity.WorkflowRunNode;
@@ -18,6 +19,7 @@ import com.olist.jobs.workflow.WorkflowRunStarter;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,6 +29,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -35,6 +39,9 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class WorkflowRunService {
     private static final int MAX_RUN_NODES = 20;
+    private static final int MAX_RUN_PAGE_SIZE = 100;
+    private static final Set<String> RUN_STATUSES = Set.of(
+            "QUEUED", "RUNNING", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELED");
     private static final Set<String> FILTER_OPERATORS = Set.of(
             "EQUALS", "NOT_EQUALS", "CONTAINS", "IS_EMPTY", "IS_NOT_EMPTY",
             "GREATER_THAN", "GREATER_THAN_OR_EQUAL", "LESS_THAN", "LESS_THAN_OR_EQUAL", "BETWEEN");
@@ -125,12 +132,19 @@ public class WorkflowRunService {
                 .stream().map(this::response).toList();
     }
 
-    public List<WorkflowRunSummaryResponse> listRecent(String ownerId, int limit) {
-        int boundedLimit = Math.max(1, Math.min(50, limit));
-        return runs.findTop50ByOwnerIdOrderByCreatedAtDesc(ownerId).stream()
-                .limit(boundedLimit)
-                .map(WorkflowRunSummaryResponse::from)
-                .toList();
+    public WorkflowRunPageResponse<WorkflowRunSummaryResponse> search(
+            String ownerId, int page, int size, String keyword, String status) {
+        if (page < 0) throw badRequest("页码不能小于 0");
+        if (size < 1 || size > MAX_RUN_PAGE_SIZE) throw badRequest("每页运行数必须在 1 到 100 之间");
+        if (keyword == null || keyword.length() > 100) throw badRequest("搜索词不能超过 100 个字符");
+        String normalizedStatus = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
+        if (!normalizedStatus.isEmpty() && !RUN_STATUSES.contains(normalizedStatus)) {
+            throw badRequest("运行状态筛选值无效");
+        }
+        String normalizedKeyword = keyword.trim().replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        var result = runs.searchOwnedRuns(ownerId, normalizedKeyword, normalizedStatus,
+                PageRequest.of(page, size, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"))));
+        return WorkflowRunPageResponse.of(result.getContent(), result.getNumber(), result.getSize(), result.getTotalElements());
     }
 
     public WorkflowRunResponse get(String ownerId, UUID runId) {

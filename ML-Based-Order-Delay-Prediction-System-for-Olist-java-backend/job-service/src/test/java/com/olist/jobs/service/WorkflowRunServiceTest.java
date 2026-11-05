@@ -28,6 +28,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.web.server.ResponseStatusException;
 
 @ExtendWith(MockitoExtension.class)
@@ -103,14 +104,16 @@ class WorkflowRunServiceTest {
         Instant now = Instant.now();
         WorkflowRun latest = new WorkflowRun(UUID.randomUUID(), UUID.randomUUID(), "owner-a", "Workflow A", 3,
                 "{\"nodes\":[],\"edges\":[]}", null, now);
-        when(runs.findTop50ByOwnerIdOrderByCreatedAtDesc("owner-a"))
-                .thenReturn(java.util.List.of(latest));
+        var summary = com.olist.jobs.api.WorkflowRunSummaryResponse.from(latest);
+        when(runs.searchOwnedRuns(org.mockito.ArgumentMatchers.eq("owner-a"),
+                org.mockito.ArgumentMatchers.eq(""), org.mockito.ArgumentMatchers.eq(""), any()))
+                .thenReturn(new PageImpl<>(java.util.List.of(summary)));
 
-        var summaries = service.listRecent("owner-a", 500);
+        var summaries = service.search("owner-a", 0, 20, "", "");
 
-        assertEquals(1, summaries.size());
-        assertEquals(latest.getId(), summaries.get(0).id());
-        assertEquals("Workflow A", summaries.get(0).workflowName());
+        assertEquals(1, summaries.totalElements());
+        assertEquals(latest.getId(), summaries.items().get(0).id());
+        assertEquals("Workflow A", summaries.items().get(0).workflowName());
         verify(nodes, never()).findByRunIdOrderByCreatedAtAsc(any());
     }
 

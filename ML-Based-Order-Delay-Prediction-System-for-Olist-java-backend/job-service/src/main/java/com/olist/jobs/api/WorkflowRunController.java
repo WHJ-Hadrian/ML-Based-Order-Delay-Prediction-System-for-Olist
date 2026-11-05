@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/workflow-runs")
@@ -20,10 +19,13 @@ public class WorkflowRunController {
     public WorkflowRunController(WorkflowRunService service) { this.service = service; }
 
     @GetMapping
-    public List<WorkflowRunSummaryResponse> list(
+    public WorkflowRunPageResponse<WorkflowRunSummaryResponse> list(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam(defaultValue = "50") int limit) {
-        return service.listRecent(jwt.getSubject(), limit);
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "") String keyword,
+            @RequestParam(defaultValue = "") String status) {
+        return service.search(jwt.getSubject(), page, size, keyword, status);
     }
 
     @GetMapping("/{id}")

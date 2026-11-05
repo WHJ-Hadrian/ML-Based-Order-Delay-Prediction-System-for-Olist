@@ -76,7 +76,7 @@ class WorkflowPersistenceTest {
     }
 
     @Test
-    void recentRunQueryIsScopedToTheAuthenticatedOwner() {
+    void pagedRunQueryIsScopedToTheAuthenticatedOwner() {
         Instant now = Instant.now();
         UUID workflowA = UUID.randomUUID();
         UUID workflowB = UUID.randomUUID();
@@ -85,29 +85,66 @@ class WorkflowPersistenceTest {
         runRepository.saveAndFlush(new WorkflowRun(UUID.randomUUID(), workflowB, "owner-b", "B", 1,
                 "{\"nodes\":[],\"edges\":[]}", null, now));
 
-        var ownerARuns = runRepository.findTop50ByOwnerIdOrderByCreatedAtDesc("owner-a");
+        var ownerARuns = runRepository.searchOwnedRuns("owner-a", "", "",
+                org.springframework.data.domain.PageRequest.of(0, 20));
 
-        assertEquals(1, ownerARuns.size());
-        assertEquals("A", ownerARuns.get(0).getWorkflowName());
-        assertTrue(runRepository.findTop50ByOwnerIdOrderByCreatedAtDesc("owner-c").isEmpty());
+        assertEquals(1, ownerARuns.getTotalElements());
+        assertEquals("A", ownerARuns.getContent().get(0).workflowName());
+        assertTrue(runRepository.searchOwnedRuns("owner-c", "", "",
+                org.springframework.data.domain.PageRequest.of(0, 20)).isEmpty());
     }
 
     @Test
     void recentRunHttpEndpointUsesJwtOwnerAndReturnsSummaries() throws Exception {
         Instant now = Instant.now();
-        UUID ownerRunId = UUID.randomUUID();
-        runRepository.saveAndFlush(new WorkflowRun(ownerRunId, UUID.randomUUID(), "owner-http-a", "Owned run", 2,
+        UUID firstPageRunId = UUID.randomUUID();
+        runRepository.saveAndFlush(new WorkflowRun(firstPageRunId, UUID.randomUUID(), "owner-http-a", "Owned alpha", 2,
                 "{\"nodes\":[],\"edges\":[]}", null, now));
+        runRepository.saveAndFlush(new WorkflowRun(UUID.randomUUID(), UUID.randomUUID(), "owner-http-a", "Owned beta", 2,
+                "{\"nodes\":[],\"edges\":[]}", null, now.minusSeconds(1)));
+        runRepository.saveAndFlush(new WorkflowRun(UUID.randomUUID(), UUID.randomUUID(), "owner-http-a", "Literal 100%", 2,
+                "{\"nodes\":[],\"edges\":[]}", null, now.minusSeconds(2)));
         runRepository.saveAndFlush(new WorkflowRun(UUID.randomUUID(), UUID.randomUUID(), "owner-http-b", "Other run", 1,
                 "{\"nodes\":[],\"edges\":[]}", null, now));
 
         mockMvc.perform(get("/api/v1/workflow-runs")
-                        .param("limit", "500")
+                        .param("page", "0")
+                        .param("size", "1")
+                        .param("keyword", "owned")
+                        .param("status", "queued")
                         .with(jwt().jwt(token -> token.subject("owner-http-a"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(ownerRunId.toString()))
-                .andExpect(jsonPath("$[0].workflowName").value("Owned run"))
-                .andExpect(jsonPath("$[0].nodes").doesNotExist())
-                .andExpect(jsonPath("$[1]").doesNotExist());
+                .andExpect(jsonPath("$.items[0].id").value(firstPageRunId.toString()))
+                .andExpect(jsonPath("$.items[0].workflowName").value("Owned alpha"))
+                .andExpect(jsonPath("$.items[0].nodes").doesNotExist())
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(1))
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.totalPages").value(2));
+
+        mockMvc.perform(get("/api/v1/workflow-runs")
+                        .param("page", "1")
+                        .param("size", "1")
+                        .param("keyword", "owned")
+                        .with(jwt().jwt(token -> token.subject("owner-http-a"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].workflowName").value("Owned beta"));
+
+        mockMvc.perform(get("/api/v1/workflow-runs")
+                        .param("keyword", "100%")
+                        .with(jwt().jwt(token -> token.subject("owner-http-a"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.items[0].workflowName").value("Literal 100%"));
+
+        mockMvc.perform(get("/api/v1/workflow-runs")
+                        .param("size", "101")
+                        .with(jwt().jwt(token -> token.subject("owner-http-a"))))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/v1/workflow-runs")
+                        .param("status", "ARBITRARY")
+                        .with(jwt().jwt(token -> token.subject("owner-http-a"))))
+                .andExpect(status().isBadRequest());
     }
 }
