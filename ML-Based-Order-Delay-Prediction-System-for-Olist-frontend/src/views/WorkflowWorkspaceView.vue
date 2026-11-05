@@ -14,12 +14,12 @@ import { getDatasetVersionCatalog, getDatasetVersions, listDatasets } from '@/ap
 import { listPublishedRuleVersions } from '@/api/ruleLibrary'
 
 const nodeCatalog = [
-  { type: 'DATA_SOURCE', label: '数据源', description: '从数据集版本或表引入数据', icon: Files, color: '#398a68' },
+  { type: 'DATA_SOURCE', label: '数据源', description: '从数据集版本或表引入数据', executable: true, icon: Files, color: '#398a68' },
   { type: 'ANALYSIS', label: '分析', description: '将分析方案作为工作流步骤', icon: DataAnalysis, color: '#3479a5' },
   { type: 'RULE', label: '规则', description: '应用已发布的规则版本', icon: SetUp, color: '#b87536' },
   { type: 'FIELD_MAPPING', label: '字段映射', description: '将来源字段绑定到语义字段', icon: Connection, color: '#7c68a4' },
   { type: 'TRANSFORM', label: '转换', description: '配置白名单数据转换操作', icon: Operation, color: '#568278' },
-  { type: 'FILTER', label: '筛选', description: '按可视化条件筛选记录', icon: Filter, color: '#bf8050' },
+  { type: 'FILTER', label: '筛选', description: '按可视化条件筛选记录', executable: true, icon: Filter, color: '#bf8050' },
   { type: 'JOIN', label: '连接', description: '按字段关系合并数据流', icon: Connection, color: '#5277a0' },
   { type: 'AGGREGATE', label: '聚合', description: '按维度汇总字段指标', icon: Histogram, color: '#927343' },
   { type: 'TRAIN_MODEL', label: '训练', description: '配置目标、特征与模型任务', icon: Cpu, color: '#397f7b' },
@@ -27,6 +27,7 @@ const nodeCatalog = [
   { type: 'PREDICT', label: '预测', description: '对独立数据运行模型推理', icon: DataAnalysis, color: '#3a7790' },
   { type: 'OUTPUT', label: '输出', description: '定义数据或模型产物输出', icon: Expand, color: '#658b56' },
 ]
+const executableNodeCount = nodeCatalog.filter((item) => item.executable).length
 
 const workflows = ref([])
 const runs = ref([])
@@ -61,6 +62,8 @@ const ruleError = ref('')
 const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeId.value) || null)
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) || null)
 const selectedRun = computed(() => runs.value.find((run) => run.id === selectedRunId.value) || null)
+const unsupportedNodes = computed(() => nodes.value.filter((node) => !nodeType(node.data?.kind).executable))
+const canRunWorkflow = computed(() => Boolean(nodes.value.length) && unsupportedNodes.value.length === 0)
 const selectedFilterColumn = computed(() => filterColumns.value.find(
   (column) => column.name === selectedNode.value?.data?.config?.columnName,
 ) || null)
@@ -300,7 +303,7 @@ function scheduleSave() {
 }
 
 function addNode(item) {
-  if (!activeId.value) return
+  if (!activeId.value || !item.executable) return
   const nextIndex = nodes.value.length
   const nodeId = `node-${crypto.randomUUID()}`
   nodes.value = [...nodes.value, {
@@ -684,7 +687,7 @@ onBeforeUnmount(() => {
             <span class="save-state" :class="{ 'is-dirty': dirty, 'is-error': error }">{{ error || (busy ? '同步中' : dirty ? '有未保存修改' : message || (activeId ? '已保存' : '定义草稿')) }}</span>
           </div>
           <div class="toolbar-actions">
-            <el-button type="primary" :icon="VideoPlay" :loading="runBusy" :disabled="!activeId || busy || dirty || !nodes.length" @click="startRun">运行</el-button>
+            <el-button type="primary" :icon="VideoPlay" :loading="runBusy" :disabled="!activeId || busy || dirty || !canRunWorkflow" @click="startRun">运行</el-button>
             <el-button circle aria-label="复制画布" title="复制画布" :icon="CopyDocument" :disabled="!activeId || busy" @click="duplicateActive" />
             <el-button circle aria-label="保存工作流" title="保存工作流" :icon="DocumentChecked" :loading="busy" :disabled="!dirty" @click="saveWorkflow" />
             <el-button circle aria-label="聚焦画布" title="聚焦画布" :icon="nativeFullscreen ? Expand : FullScreen" :disabled="!activeId" @click="toggleFullscreen" />
@@ -708,16 +711,17 @@ onBeforeUnmount(() => {
 
       <div v-else-if="activeId" class="workflow-editor">
         <aside class="node-library" aria-label="节点目录">
-          <div class="rail-heading"><strong>节点</strong><span>{{ nodeCatalog.length }}</span></div>
-          <button v-for="item in nodeCatalog" :key="item.type" class="node-add" type="button" :disabled="busy" :title="item.description" @click="addNode(item)">
+          <div class="rail-heading"><strong>节点</strong><span>{{ executableNodeCount }} 可运行 · {{ nodeCatalog.length - executableNodeCount }} 建设中</span></div>
+          <button v-for="item in nodeCatalog" :key="item.type" class="node-add" :class="{ 'is-unavailable': !item.executable }" type="button" :disabled="busy || !item.executable" :title="item.executable ? item.description : `${item.description} · 执行能力建设中`" @click="addNode(item)">
             <span class="node-icon" :style="{ '--node-accent': item.color }"><el-icon><component :is="item.icon" /></el-icon></span>
-            <span class="node-add-copy"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
-            <el-icon class="add-symbol"><Plus /></el-icon>
+            <span class="node-add-copy"><strong>{{ item.label }}</strong><small>{{ item.executable ? item.description : '执行器建设中' }}</small></span>
+            <el-icon v-if="item.executable" class="add-symbol"><Plus /></el-icon>
+            <span v-else class="node-status">建设中</span>
           </button>
         </aside>
 
         <section class="canvas-column" aria-label="工作流画布">
-          <div class="canvas-meta"><span>{{ nodes.length }} 个节点</span><span>{{ edges.length }} 条连接</span><span>修订 {{ revision }}</span></div>
+          <div class="canvas-meta"><span>{{ nodes.length }} 个节点</span><span>{{ edges.length }} 条连接</span><span>修订 {{ revision }}</span><span v-if="unsupportedNodes.length" class="execution-warning" :title="unsupportedNodes.map((node) => node.data.label || nodeType(node.data.kind).label).join('、')">无法运行：{{ unsupportedNodes.map((node) => node.data.label || nodeType(node.data.kind).label).join('、') }} 尚无执行器</span></div>
           <div class="canvas-stage">
             <VueFlow v-model:nodes="nodes" v-model:edges="edges" class="flow-canvas" :min-zoom="0.2" :max-zoom="1.8" :fit-view-on-init="true" :nodes-connectable="true" :nodes-draggable="true" :elements-selectable="true" :delete-key-code="null" @connect="connectNodes" @node-click="handleNodeClick" @edge-click="handleEdgeClick">
               <template #node-default="{ id, data, selected }">
@@ -740,6 +744,10 @@ onBeforeUnmount(() => {
         <aside class="node-inspector" aria-label="节点属性">
           <template v-if="selectedNode">
             <div class="rail-heading"><strong>节点属性</strong><span>{{ nodeType(selectedNode.data.kind).label }}</span></div>
+            <div v-if="!nodeType(selectedNode.data.kind).executable" class="node-unavailable" role="status">
+              <strong>此节点尚不能运行</strong>
+              <span>运行器当前支持数据源和有界样本筛选。此节点保留在现有画布中，但接入执行器前不能执行。</span>
+            </div>
             <label class="field-label">显示名称<el-input v-model="selectedNode.data.label" maxlength="100" /></label>
             <label class="field-label">说明<el-input v-model="selectedNode.data.description" type="textarea" :rows="3" maxlength="240" show-word-limit /></label>
             <template v-if="selectedNode.data.kind === 'DATA_SOURCE'">
@@ -921,13 +929,16 @@ onBeforeUnmount(() => {
 .node-add { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; padding: 7px 6px; color: #34483e; text-align: left; background: #fff; border: 0; border-radius: 5px; cursor: pointer; }
 .node-add:hover { background: #f3f7f4; }
 .node-add:disabled { cursor: not-allowed; opacity: .55; }
+.node-add.is-unavailable:disabled { opacity: .48; }
+.node-status { flex: 0 0 auto; color: #8a7a58; font-size: 9px; }
 .node-icon, .flow-node-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; color: var(--node-accent); background: color-mix(in srgb, var(--node-accent) 11%, white); border: 1px solid color-mix(in srgb, var(--node-accent) 25%, white); border-radius: 6px; }
 .node-add-copy { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .node-add-copy strong { font-size: 11px; }
 .node-add-copy small { overflow: hidden; color: #849188; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .add-symbol { color: #94a39a; }
 .canvas-column { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: #f6f9f7; }
-.canvas-meta { display: flex; min-height: 29px; align-items: center; gap: 14px; padding: 0 12px; color: #79867f; font-size: 10px; background: #fff; border-bottom: 1px solid #e5ece8; }
+.canvas-meta { display: flex; min-height: 29px; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 5px 12px; color: #79867f; font-size: 10px; background: #fff; border-bottom: 1px solid #e5ece8; }
+.canvas-meta .execution-warning { min-width: 0; color: #9a6540; overflow-wrap: anywhere; }
 .canvas-stage { position: relative; min-width: 0; min-height: 0; flex: 1; }
 .flow-canvas { width: 100%; height: 100%; min-height: 540px; background-color: #f6f9f7; }
 .flow-node { position: relative; display: flex; width: 224px; min-height: 82px; align-items: flex-start; gap: 9px; padding: 12px; color: #2e4338; background: #fff; border: 1px solid #d8e3dc; border-left: 3px solid var(--node-accent, #598d72); border-radius: 7px; box-shadow: 0 3px 12px rgba(40, 65, 52, .08); }
@@ -952,6 +963,9 @@ onBeforeUnmount(() => {
 .node-contract strong { color: #66756c; font-size: 10px; }
 .node-contract span { color: #375f4b; font: 10px ui-monospace, monospace; }
 .node-contract small { color: #829087; font-size: 9px; line-height: 1.5; }
+.node-unavailable { display: grid; gap: 5px; margin: 10px 0; padding: 9px; color: #786746; background: #f8f5ed; border-left: 2px solid #b99b5d; }
+.node-unavailable strong { font-size: 10px; }
+.node-unavailable span { font-size: 9px; line-height: 1.5; }
 .remove-node { width: 100%; margin-top: 8px; }
 .connection-copy { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #596960; font-size: 10px; overflow-wrap: anywhere; }
 .workflow-empty { display: grid; min-height: 480px; align-content: center; justify-items: center; gap: 14px; color: #87948d; }
