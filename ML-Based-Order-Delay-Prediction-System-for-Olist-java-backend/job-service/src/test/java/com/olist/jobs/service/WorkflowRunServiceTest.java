@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.olist.jobs.api.WorkflowRunRequest;
 import com.olist.jobs.entity.WorkflowDefinition;
+import com.olist.jobs.entity.WorkflowRun;
+import com.olist.jobs.entity.WorkflowRunNode;
 import com.olist.jobs.repository.WorkflowDefinitionRepository;
 import com.olist.jobs.repository.WorkflowRunNodeRepository;
 import com.olist.jobs.repository.WorkflowRunRepository;
@@ -78,6 +80,25 @@ class WorkflowRunServiceTest {
     }
 
     @Test
+    void returnsPersistedNodeLogsWithRunDetails() {
+        UUID runId = UUID.randomUUID();
+        Instant now = Instant.now();
+        WorkflowRun run = new WorkflowRun(runId, UUID.randomUUID(), "owner-a", "Preview", 2,
+                "{\"nodes\":[],\"edges\":[]}", null, now);
+        run.start(now);
+        WorkflowRunNode node = new WorkflowRunNode(UUID.randomUUID(), runId, "source", "DATA_SOURCE", now);
+        node.setLogsJson("[{\"timestamp\":1762430400000,\"level\":\"INFO\",\"message\":\"节点开始执行\"}]");
+        when(runs.findByIdAndOwnerId(runId, "owner-a")).thenReturn(Optional.of(run));
+        when(nodes.findByRunIdOrderByCreatedAtAsc(runId)).thenReturn(java.util.List.of(node));
+
+        var response = service.get("owner-a", runId);
+
+        assertEquals(1, response.nodes().get(0).logs().size());
+        assertEquals("节点开始执行", response.nodes().get(0).logs().get(0).message());
+        assertEquals("INFO", response.nodes().get(0).logs().get(0).level());
+    }
+
+    @Test
     void refusesFilterValuesOutsideTheValidatedContractBeforePersisting() throws Exception {
         UUID id = UUID.randomUUID();
         var definition = definition(id, "{\"version\":1,\"nodes\":["
@@ -117,6 +138,81 @@ class WorkflowRunServiceTest {
         service.start("owner-a", id, new WorkflowRunRequest(3L));
 
         verify(starter).start(any());
+    }
+
+    @Test
+    void acceptsNumericRangeFilterForBackgroundExecution() throws Exception {
+        UUID id = UUID.randomUUID();
+        var definition = definition(id, "{\"version\":1,\"nodes\":["
+                + sourceNode() + ","
+                + "{\"id\":\"filter\",\"type\":\"FILTER\",\"position\":{\"x\":1,\"y\":1},"
+                + "\"data\":{\"config\":{\"columnName\":\"amount\",\"operator\":\"BETWEEN\","
+                + "\"value\":\"10.5\",\"valueTo\":\"20\"}}}],"
+                + "\"edges\":[{\"id\":\"edge-1\",\"source\":\"source\",\"target\":\"filter\"}]}");
+        when(workflows.findByIdAndOwnerId(id, "owner-a")).thenReturn(Optional.of(definition));
+        AtomicReference<com.olist.jobs.entity.WorkflowRun> savedRun = new AtomicReference<>();
+        doAnswer(invocation -> {
+            savedRun.set(invocation.getArgument(0));
+            return invocation.getArgument(0);
+        }).when(runs).saveAndFlush(any());
+        when(runs.findByIdAndOwnerId(any(), org.mockito.ArgumentMatchers.eq("owner-a")))
+                .thenAnswer(invocation -> Optional.ofNullable(savedRun.get()));
+        doAnswer(invocation -> null).when(transactionManager).commit(any());
+
+        service.start("owner-a", id, new WorkflowRunRequest(3L));
+
+        verify(starter).start(any());
+    }
+
+    @Test
+    void acceptsAFilterChainAndPersistsItForBackgroundExecution() throws Exception {
+        UUID id = UUID.randomUUID();
+        var definition = definition(id, "{\"version\":1,\"nodes\":["
+                + sourceNode() + ","
+                + "{\"id\":\"filter-1\",\"type\":\"FILTER\",\"position\":{\"x\":1,\"y\":1},"
+                + "\"data\":{\"config\":{\"columnName\":\"status\",\"operator\":\"EQUALS\",\"value\":\"ready\"}}},"
+                + "{\"id\":\"filter-2\",\"type\":\"FILTER\",\"position\":{\"x\":2,\"y\":2},"
+                + "\"data\":{\"config\":{\"columnName\":\"amount\",\"operator\":\"GREATER_THAN\",\"value\":\"100\"}}}],"
+                + "\"edges\":[{\"id\":\"edge-1\",\"source\":\"source\",\"target\":\"filter-1\"},"
+                + "{\"id\":\"edge-2\",\"source\":\"filter-1\",\"target\":\"filter-2\"}]}");
+        when(workflows.findByIdAndOwnerId(id, "owner-a")).thenReturn(Optional.of(definition));
+        AtomicReference<com.olist.jobs.entity.WorkflowRun> savedRun = new AtomicReference<>();
+        doAnswer(invocation -> {
+            savedRun.set(invocation.getArgument(0));
+            return invocation.getArgument(0);
+        }).when(runs).saveAndFlush(any());
+        when(runs.findByIdAndOwnerId(any(), org.mockito.ArgumentMatchers.eq("owner-a")))
+                .thenAnswer(invocation -> Optional.ofNullable(savedRun.get()));
+        doAnswer(invocation -> null).when(transactionManager).commit(any());
+
+        service.start("owner-a", id, new WorkflowRunRequest(3L));
+
+        verify(starter).start(any());
+    }
+
+    @Test
+    void rejectsMalformedOrReversedNumericFilterBoundsBeforePersisting() throws Exception {
+        for (String config : new String[] {
+                "\"value\":\"ten\",\"valueTo\":\"20\"",
+                "\"value\":\"21\",\"valueTo\":\"20\"",
+                "\"value\":\"10\""
+        }) {
+            UUID id = UUID.randomUUID();
+            var definition = definition(id, "{\"version\":1,\"nodes\":["
+                    + sourceNode() + ","
+                    + "{\"id\":\"filter\",\"type\":\"FILTER\",\"position\":{\"x\":1,\"y\":1},"
+                    + "\"data\":{\"config\":{\"columnName\":\"amount\",\"operator\":\"BETWEEN\","
+                    + config + "}}}],"
+                    + "\"edges\":[{\"id\":\"edge-1\",\"source\":\"source\",\"target\":\"filter\"}]}");
+            when(workflows.findByIdAndOwnerId(id, "owner-a")).thenReturn(Optional.of(definition));
+
+            var exception = assertThrows(ResponseStatusException.class,
+                    () -> service.start("owner-a", id, new WorkflowRunRequest(3L)));
+
+            assertEquals(400, exception.getStatusCode().value());
+        }
+        verify(runs, never()).saveAndFlush(any());
+        verify(starter, never()).start(any());
     }
 
     private String sourceNode() {

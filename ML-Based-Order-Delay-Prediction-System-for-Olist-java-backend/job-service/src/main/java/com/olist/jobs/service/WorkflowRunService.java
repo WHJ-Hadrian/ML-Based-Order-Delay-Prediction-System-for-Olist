@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.olist.jobs.api.WorkflowRunNodeResponse;
+import com.olist.jobs.api.WorkflowRunLogResponse;
 import com.olist.jobs.api.WorkflowRunResponse;
 import com.olist.jobs.api.WorkflowRunRequest;
 import com.olist.jobs.entity.WorkflowDefinition;
@@ -13,6 +14,7 @@ import com.olist.jobs.repository.WorkflowDefinitionRepository;
 import com.olist.jobs.repository.WorkflowRunNodeRepository;
 import com.olist.jobs.repository.WorkflowRunRepository;
 import com.olist.jobs.workflow.WorkflowRunStarter;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.ArrayDeque;
@@ -33,7 +35,10 @@ import org.springframework.web.server.ResponseStatusException;
 public class WorkflowRunService {
     private static final int MAX_RUN_NODES = 20;
     private static final Set<String> FILTER_OPERATORS = Set.of(
-            "EQUALS", "NOT_EQUALS", "CONTAINS", "IS_EMPTY", "IS_NOT_EMPTY");
+            "EQUALS", "NOT_EQUALS", "CONTAINS", "IS_EMPTY", "IS_NOT_EMPTY",
+            "GREATER_THAN", "GREATER_THAN_OR_EQUAL", "LESS_THAN", "LESS_THAN_OR_EQUAL", "BETWEEN");
+    private static final Set<String> NUMERIC_FILTER_OPERATORS = Set.of(
+            "GREATER_THAN", "GREATER_THAN_OR_EQUAL", "LESS_THAN", "LESS_THAN_OR_EQUAL", "BETWEEN");
     private static final Pattern UUID_PATTERN = Pattern.compile(
             "(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
 
@@ -192,11 +197,13 @@ public class WorkflowRunService {
         for (JsonNode edge : edges) {
             String source = edge.path("source").asText("");
             String target = edge.path("target").asText("");
-            if (!"DATA_SOURCE".equals(types.get(source)) || !"FILTER".equals(types.get(target))
+            String sourceType = types.get(source);
+            if (!("DATA_SOURCE".equals(sourceType) || "FILTER".equals(sourceType))
+                    || !"FILTER".equals(types.get(target))
                     || !"output".equals(edge.path("sourceHandle").asText("output"))
                     || !"input".equals(edge.path("targetHandle").asText("input"))
                     || !seenEdges.add(source + "|" + target) || indegree.get(target) != 0) {
-                throw badRequest("当前运行器只支持数据源连接到单个筛选节点，且每个筛选节点必须只有一个输入");
+                throw badRequest("当前运行器仅支持数据源或上游筛选节点连接到筛选节点，且每个筛选节点必须只有一个输入");
             }
             outgoing.get(source).add(target);
             indegree.put(target, 1);
@@ -214,10 +221,29 @@ public class WorkflowRunService {
         String column = config.path("columnName").asText("").trim();
         String operator = config.path("operator").asText("");
         JsonNode value = config.path("value");
+        JsonNode upperValue = config.path("valueTo");
         if (!config.isObject() || column.isEmpty() || column.length() > 255
-                || !FILTER_OPERATORS.contains(operator)
-                || (!operator.startsWith("IS_") && (!value.isTextual() || value.asText().length() > 512))) {
+                || !FILTER_OPERATORS.contains(operator)) {
             throw badRequest("筛选节点需配置有效字段、白名单条件和不超过 512 个字符的值");
+        }
+        if (operator.startsWith("IS_")) return;
+        if (!value.isTextual() || value.asText().length() > 512) {
+            throw badRequest("筛选节点需配置有效字段、白名单条件和不超过 512 个字符的值");
+        }
+        if (NUMERIC_FILTER_OPERATORS.contains(operator)) {
+            try {
+                BigDecimal lower = new BigDecimal(value.asText().trim());
+                if (operator.equals("BETWEEN")) {
+                    if (!upperValue.isTextual() || upperValue.asText().length() > 512) {
+                        throw new NumberFormatException();
+                    }
+                    if (lower.compareTo(new BigDecimal(upperValue.asText().trim())) > 0) {
+                        throw badRequest("范围下限不能大于上限");
+                    }
+                }
+            } catch (NumberFormatException exception) {
+                throw badRequest("数值筛选条件必须填写有效数字" + (operator.equals("BETWEEN") ? "范围" : ""));
+            }
         }
     }
 
@@ -274,6 +300,7 @@ public class WorkflowRunService {
         List<WorkflowRunNodeResponse> nodeResponses = nodes.findByRunIdOrderByCreatedAtAsc(run.getId())
                 .stream().map(node -> new WorkflowRunNodeResponse(node.getNodeId(), node.getNodeType(),
                         node.getStatus(), parseJson(node.getResultJson()), node.getErrorMessage(),
+                        parseLogs(node.getLogsJson()),
                         node.getStartedAt(), node.getFinishedAt()))
                 .toList();
         return new WorkflowRunResponse(run.getId(), run.getWorkflowId(), run.getWorkflowName(),
@@ -288,6 +315,24 @@ public class WorkflowRunService {
             return mapper.readTree(json);
         } catch (JsonProcessingException exception) {
             return null;
+        }
+    }
+
+    private List<WorkflowRunLogResponse> parseLogs(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            JsonNode entries = mapper.readTree(json);
+            if (!entries.isArray()) return List.of();
+            List<WorkflowRunLogResponse> logs = new ArrayList<>();
+            for (JsonNode entry : entries) {
+                if (!entry.path("timestamp").canConvertToLong()
+                        || !entry.path("level").isTextual() || !entry.path("message").isTextual()) continue;
+                logs.add(new WorkflowRunLogResponse(Instant.ofEpochMilli(entry.path("timestamp").asLong()),
+                        entry.path("level").asText(), entry.path("message").asText()));
+            }
+            return List.copyOf(logs);
+        } catch (JsonProcessingException exception) {
+            return List.of();
         }
     }
 }

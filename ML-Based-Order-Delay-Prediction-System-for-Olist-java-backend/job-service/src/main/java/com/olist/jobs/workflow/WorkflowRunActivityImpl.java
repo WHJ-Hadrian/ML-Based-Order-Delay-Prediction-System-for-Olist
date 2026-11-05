@@ -59,19 +59,34 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
                 runNode.start(Instant.now());
                 nodes.save(runNode);
                 try {
-                    ObjectNode result = "DATA_SOURCE".equals(node.path("type").asText())
-                            ? inspectDataSource(ownerId, node)
-                            : executeFilter(document, node, resultsByNode);
+                    String nodeType = node.path("type").asText();
+                    appendLog(runNode, "INFO", "节点开始执行");
+                    ObjectNode result;
+                    if ("DATA_SOURCE".equals(nodeType)) {
+                        appendLog(runNode, "INFO", "校验固定数据集版本并读取有界样本");
+                        result = inspectDataSource(ownerId, node);
+                        appendLog(runNode, "INFO", "已读取 " + result.path("sampleRows").size()
+                                + " 行样本、" + result.path("sampleColumns").size() + " 个字段");
+                    } else {
+                        appendLog(runNode, "INFO", "根据配置筛选上游样本");
+                        result = executeFilter(document, node, resultsByNode);
+                        appendLog(runNode, "INFO", "筛选完成，保留 "
+                                + result.path("sampleMatchedRows").asInt() + " / "
+                                + result.path("sampleInputRows").asInt() + " 行样本");
+                    }
                     runNode.succeed(mapper.writeValueAsString(result), Instant.now());
+                    appendLog(runNode, "INFO", "节点执行成功");
                     outputNodes.add(result);
                     resultsByNode.put(nodeId, result);
                     nodes.save(runNode);
                     completed++;
                     markProgress(runId, (completed * 100) / total, mapper.writeValueAsString(outputNodes));
-                } catch (RuntimeException exception) {
+                } catch (Exception exception) {
                     runNode.fail(safeMessage(exception), Instant.now());
+                    appendLog(runNode, "ERROR", safeMessage(exception));
                     nodes.save(runNode);
-                    throw exception;
+                    if (exception instanceof RuntimeException runtimeException) throw runtimeException;
+                    throw new IllegalStateException(safeMessage(exception), exception);
                 }
             }
             markSucceeded(runId, mapper.writeValueAsString(outputNodes));
@@ -127,8 +142,9 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
             }
         }
         ObjectNode source = sourceNodeId == null ? null : resultsByNode.get(sourceNodeId);
-        if (source == null || !"DATA_SOURCE".equals(source.path("nodeType").asText())) {
-            throw new IllegalStateException("筛选节点没有可用的数据源样本");
+        if (source == null || !("DATA_SOURCE".equals(source.path("nodeType").asText())
+                || "FILTER".equals(source.path("nodeType").asText()))) {
+            throw new IllegalStateException("筛选节点没有可用的上游样本结果");
         }
         JsonNode config = node.path("data").path("config");
         String columnName = config.path("columnName").asText();
@@ -136,6 +152,7 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
         String expected = config.path("value").asText("");
         JsonNode columns = source.path("sampleColumns");
         int columnIndex = -1;
+        String logicalType = "";
         for (int index = 0; index < columns.size(); index++) {
             if (columnName.equals(columns.get(index).asText())) {
                 columnIndex = index;
@@ -143,20 +160,23 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
             }
         }
         if (columnIndex < 0) throw new IllegalStateException("筛选字段不在输入样本 schema 中");
+        for (JsonNode column : source.path("columns")) {
+            if (columnName.equals(column.path("name").asText())) {
+                logicalType = column.path("type").asText("");
+                break;
+            }
+        }
+        if (WorkflowSampleFilter.usesNumericComparison(operator) && !WorkflowSampleFilter.isNumericType(logicalType)) {
+            throw new IllegalStateException("数值筛选条件只能用于数值类型字段");
+        }
+        String upperBound = config.path("valueTo").asText(null);
         ArrayNode matchedRows = mapper.createArrayNode();
         int inputSampleRows = 0;
         for (JsonNode row : source.path("sampleRows")) {
             inputSampleRows++;
             String actual = columnIndex < row.size() && !row.get(columnIndex).isNull()
                     ? row.get(columnIndex).asText() : "";
-            boolean matches = switch (operator) {
-                case "EQUALS" -> actual.equals(expected);
-                case "NOT_EQUALS" -> !actual.equals(expected);
-                case "CONTAINS" -> actual.contains(expected);
-                case "IS_EMPTY" -> actual.isBlank();
-                case "IS_NOT_EMPTY" -> !actual.isBlank();
-                default -> throw new IllegalStateException("筛选条件不受支持");
-            };
+            boolean matches = WorkflowSampleFilter.matches(operator, actual, expected, upperBound);
             if (matches) matchedRows.add(row.deepCopy());
         }
         ObjectNode result = mapper.createObjectNode();
@@ -167,14 +187,40 @@ public class WorkflowRunActivityImpl implements WorkflowRunActivity {
         result.put("datasetVersionId", source.path("datasetVersionId").asText());
         result.put("columnName", columnName);
         result.put("operator", operator);
+        if (!operator.startsWith("IS_")) result.put("value", expected);
+        if ("BETWEEN".equals(operator)) result.put("valueTo", config.path("valueTo").asText());
         result.put("previewScope", "SOURCE_SAMPLE");
         result.put("inputRowCount", source.path("rowCount").asLong());
+        result.put("rowCount", source.path("rowCount").asLong());
         result.put("sampleInputRows", inputSampleRows);
         result.put("sampleMatchedRows", matchedRows.size());
         result.put("sampleTruncated", source.path("sampleTruncated").asBoolean());
+        result.set("columns", source.path("columns").deepCopy());
         result.set("sampleColumns", columns.deepCopy());
         result.set("sampleRows", matchedRows);
         return result;
+    }
+
+    private void appendLog(WorkflowRunNode node, String level, String message) {
+        ArrayNode logs;
+        try {
+            JsonNode current = node.getLogsJson() == null ? null : mapper.readTree(node.getLogsJson());
+            logs = current != null && current.isArray() ? (ArrayNode) current : mapper.createArrayNode();
+        } catch (Exception exception) {
+            logs = mapper.createArrayNode();
+        }
+        while (logs.size() >= 100) logs.remove(0);
+        ObjectNode entry = logs.addObject();
+        entry.put("timestamp", Instant.now().toEpochMilli());
+        entry.put("level", level);
+        String safeMessage = message == null ? "" : message;
+        entry.put("message", safeMessage.length() > 500 ? safeMessage.substring(0, 500) : safeMessage);
+        try {
+            node.setLogsJson(mapper.writeValueAsString(logs));
+            nodes.save(node);
+        } catch (Exception exception) {
+            throw new IllegalStateException("工作流节点日志无法持久化", exception);
+        }
     }
 
     @Override

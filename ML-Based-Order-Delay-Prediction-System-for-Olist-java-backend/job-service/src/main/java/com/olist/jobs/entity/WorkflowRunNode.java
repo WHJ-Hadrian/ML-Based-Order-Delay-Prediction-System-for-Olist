@@ -36,6 +36,9 @@ public class WorkflowRunNode {
     @Column(name = "result_json", columnDefinition = "MEDIUMTEXT")
     private String resultJson;
 
+    @Column(name = "logs_json", columnDefinition = "MEDIUMTEXT")
+    private String logsJson = "[]";
+
     @Column(name = "error_message", length = 2000)
     private String errorMessage;
 
@@ -77,6 +80,8 @@ public class WorkflowRunNode {
     public String getNodeType() { return nodeType; }
     public String getStatus() { return status; }
     public String getResultJson() { return resultJson; }
+    public String getLogsJson() { return logsJson; }
+    public void setLogsJson(String logsJson) { this.logsJson = logsJson; }
     public String getErrorMessage() { return errorMessage; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getStartedAt() { return startedAt; }

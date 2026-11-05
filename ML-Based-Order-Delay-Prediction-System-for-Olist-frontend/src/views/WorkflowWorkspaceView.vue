@@ -61,6 +61,11 @@ const ruleError = ref('')
 const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeId.value) || null)
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) || null)
 const selectedRun = computed(() => runs.value.find((run) => run.id === selectedRunId.value) || null)
+const selectedFilterColumn = computed(() => filterColumns.value.find(
+  (column) => column.name === selectedNode.value?.data?.config?.columnName,
+) || null)
+const isNumericLogicalType = (logicalType) => /^(U?INT\d+|FLOAT\d+|DECIMAL(?:\d+)?(?:\(.*\))?|INTEGER|LONG|DECIMAL|DOUBLE|FLOAT|FLOAT64|INT64)$/i.test(logicalType || '')
+const selectedFilterIsNumeric = computed(() => isNumericLogicalType(selectedFilterColumn.value?.logicalType))
 const { addEdges, fitView } = useVueFlow()
 let saveTimer
 let applyingDocument = false
@@ -156,6 +161,10 @@ function nodeStatusLabel(status) {
 
 function formatRunTime(value) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '等待 Worker'
+}
+
+function formatRunLogTime(value) {
+  return value ? new Date(value).toLocaleTimeString('zh-CN', { hour12: false }) : ''
 }
 
 function nodeType(type) { return nodeCatalog.find((item) => item.type === type) || nodeCatalog[0] }
@@ -487,12 +496,26 @@ function changeSourceTable(tableId) {
   }
 }
 
+function upstreamDataSource(nodeId) {
+  const visited = new Set()
+  let currentId = nodeId
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId)
+    const incoming = edges.value.find((edge) => edge.target === currentId)
+    if (!incoming) return null
+    const upstream = nodes.value.find((node) => node.id === incoming.source)
+    if (upstream?.data?.kind === 'DATA_SOURCE') return upstream
+    if (upstream?.data?.kind !== 'FILTER') return null
+    currentId = upstream.id
+  }
+  return null
+}
+
 async function loadFilterColumns(nodeId) {
   const sequence = ++filterLoadSequence
   filterColumns.value = []
   filterError.value = ''
-  const incoming = edges.value.find((edge) => edge.target === nodeId)
-  const source = nodes.value.find((node) => node.id === incoming?.source && node.data?.kind === 'DATA_SOURCE')
+  const source = upstreamDataSource(nodeId)
   const versionId = source?.data?.config?.datasetVersionId
   if (!versionId) return
   filterLoading.value = true
@@ -514,7 +537,14 @@ async function loadFilterColumns(nodeId) {
 
 function changeFilterColumn(columnName) {
   if (!selectedNode.value) return
-  selectedNode.value.data.config = { ...selectedNode.value.data.config, columnName }
+  const config = { ...selectedNode.value.data.config, columnName }
+  const column = filterColumns.value.find((item) => item.name === columnName)
+  if (!isNumericLogicalType(column?.logicalType) && ['GREATER_THAN', 'GREATER_THAN_OR_EQUAL', 'LESS_THAN', 'LESS_THAN_OR_EQUAL', 'BETWEEN'].includes(config.operator)) {
+    delete config.operator
+    delete config.value
+    delete config.valueTo
+  }
+  selectedNode.value.data.config = config
 }
 
 function changeFilterOperator(operator) {
@@ -522,6 +552,8 @@ function changeFilterOperator(operator) {
   const config = { ...selectedNode.value.data.config, operator }
   if (operator === 'IS_EMPTY' || operator === 'IS_NOT_EMPTY') delete config.value
   else if (typeof config.value !== 'string') config.value = ''
+  if (operator !== 'BETWEEN') delete config.valueTo
+  else if (typeof config.valueTo !== 'string') config.valueTo = ''
   selectedNode.value.data.config = config
 }
 
@@ -760,12 +792,20 @@ onBeforeUnmount(() => {
                   <el-option label="等于" value="EQUALS" />
                   <el-option label="不等于" value="NOT_EQUALS" />
                   <el-option label="包含文本" value="CONTAINS" />
+                  <el-option v-if="selectedFilterIsNumeric" label="大于" value="GREATER_THAN" />
+                  <el-option v-if="selectedFilterIsNumeric" label="大于等于" value="GREATER_THAN_OR_EQUAL" />
+                  <el-option v-if="selectedFilterIsNumeric" label="小于" value="LESS_THAN" />
+                  <el-option v-if="selectedFilterIsNumeric" label="小于等于" value="LESS_THAN_OR_EQUAL" />
+                  <el-option v-if="selectedFilterIsNumeric" label="介于" value="BETWEEN" />
                   <el-option label="为空" value="IS_EMPTY" />
                   <el-option label="不为空" value="IS_NOT_EMPTY" />
                 </el-select>
               </label>
-              <label v-if="selectedNode.data.config?.operator && !selectedNode.data.config.operator.startsWith('IS_')" class="field-label">匹配值
-                <el-input :model-value="selectedNode.data.config?.value || ''" maxlength="512" placeholder="输入要匹配的值" @update:model-value="(value) => { selectedNode.data.config.value = value }" />
+              <label v-if="selectedNode.data.config?.operator && !selectedNode.data.config.operator.startsWith('IS_')" class="field-label">{{ selectedNode.data.config.operator === 'BETWEEN' ? '范围下限' : '匹配值' }}
+                <el-input :model-value="selectedNode.data.config?.value || ''" maxlength="512" :type="selectedNode.data.config.operator.startsWith('GREATER_') || selectedNode.data.config.operator.startsWith('LESS_') || selectedNode.data.config.operator === 'BETWEEN' ? 'number' : 'text'" :placeholder="selectedFilterIsNumeric ? '输入数值' : '输入要匹配的值'" @update:model-value="(value) => { selectedNode.data.config.value = value }" />
+              </label>
+              <label v-if="selectedNode.data.config?.operator === 'BETWEEN'" class="field-label">范围上限
+                <el-input :model-value="selectedNode.data.config?.valueTo || ''" type="number" maxlength="512" placeholder="输入数值" @update:model-value="(value) => { selectedNode.data.config.valueTo = value }" />
               </label>
               <p v-if="filterLoading" class="source-empty">正在读取上游字段</p>
               <p v-if="filterError" class="source-error" role="alert">{{ filterError }}</p>
@@ -807,9 +847,14 @@ onBeforeUnmount(() => {
               <article v-for="node in selectedRun.nodes" :key="node.nodeId" class="run-node-result">
                 <header><strong :title="node.nodeId">{{ nodes.find((item) => item.id === node.nodeId)?.data.label || node.nodeId }}</strong><span>{{ nodeStatusLabel(node.status) }}</span></header>
                 <p v-if="node.errorMessage" class="run-error">{{ node.errorMessage }}</p>
+                <ol v-if="node.logs?.length" class="run-node-logs" aria-label="节点运行日志">
+                  <li v-for="(log, index) in node.logs" :key="`${log.timestamp}-${index}`" :class="{ 'is-error': log.level === 'ERROR' }">
+                    <time :datetime="new Date(log.timestamp).toISOString()">{{ formatRunLogTime(log.timestamp) }}</time><span>{{ log.message }}</span>
+                  </li>
+                </ol>
                 <template v-if="node.result">
                   <template v-if="node.result.nodeType === 'FILTER'">
-                    <div class="run-result-stats"><span>来源 {{ node.result.tableName }}</span><span>条件 {{ node.result.columnName }} · {{ ({ EQUALS: '等于', NOT_EQUALS: '不等于', CONTAINS: '包含文本', IS_EMPTY: '为空', IS_NOT_EMPTY: '不为空' })[node.result.operator] || node.result.operator }}</span><span>样本匹配 {{ node.result.sampleMatchedRows }} / {{ node.result.sampleInputRows }} 行</span><span>全表 {{ Number(node.result.inputRowCount || 0).toLocaleString('zh-CN') }} 行</span></div>
+                    <div class="run-result-stats"><span>来源 {{ node.result.tableName }}</span><span>条件 {{ node.result.columnName }} · {{ ({ EQUALS: '等于', NOT_EQUALS: '不等于', CONTAINS: '包含文本', IS_EMPTY: '为空', IS_NOT_EMPTY: '不为空', GREATER_THAN: '大于', GREATER_THAN_OR_EQUAL: '大于等于', LESS_THAN: '小于', LESS_THAN_OR_EQUAL: '小于等于', BETWEEN: '介于' })[node.result.operator] || node.result.operator }}<template v-if="node.result.operator === 'BETWEEN'"> {{ node.result.value }} 至 {{ node.result.valueTo }}</template><template v-else-if="!node.result.operator.startsWith('IS_')"> {{ node.result.value }}</template></span><span>样本匹配 {{ node.result.sampleMatchedRows }} / {{ node.result.sampleInputRows }} 行</span><span>全表 {{ Number(node.result.inputRowCount || 0).toLocaleString('zh-CN') }} 行</span></div>
                     <p class="run-preview-note">此结果仅为输入样本预览{{ node.result.sampleTruncated ? '，样本已截断' : '' }}</p>
                   </template>
                   <div v-else class="run-result-stats"><span>{{ node.result.tableName }}</span><span>{{ Number(node.result.rowCount || 0).toLocaleString('zh-CN') }} 行</span><span>{{ node.result.columnCount }} 个字段</span><span>Schema {{ String(node.result.schemaHash || '').slice(0, 12) }}</span></div>
@@ -943,6 +988,11 @@ onBeforeUnmount(() => {
 .run-node-result > header { display: flex; min-width: 0; justify-content: space-between; gap: 8px; }
 .run-node-result > header strong { min-width: 0; overflow: hidden; color: #3b5045; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .run-node-result > header span { flex: 0 0 auto; color: #738078; font-size: 10px; }
+.run-node-logs { display: grid; max-height: 150px; gap: 4px; margin: 9px 0 0; padding: 0; overflow: auto; list-style: none; }
+.run-node-logs li { display: grid; min-width: 0; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; color: #718078; font-size: 10px; line-height: 1.45; }
+.run-node-logs time { color: #98a39c; font-variant-numeric: tabular-nums; }
+.run-node-logs li > span { min-width: 0; overflow-wrap: anywhere; }
+.run-node-logs li.is-error, .run-node-logs li.is-error time { color: #a3473e; }
 .run-result-stats { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; color: #718078; font-size: 10px; }
 .run-columns { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .run-columns > span { display: flex; max-width: 100%; min-width: 0; align-items: center; gap: 7px; padding: 4px 7px; overflow: hidden; color: #4b6255; background: #fff; border: 1px solid #e1e9e4; border-radius: 4px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
