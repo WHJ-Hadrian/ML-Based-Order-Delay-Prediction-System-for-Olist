@@ -34,10 +34,12 @@ const analysis = ref(null)
 const selectedDatasetId = ref('')
 const selectedTableId = ref('')
 const selectedColumnId = ref('')
+const analysisSelection = ref([])
 const relationColumnId = ref('')
 const relation = ref(null)
 const boardCards = ref([])
 const addingToBoard = ref(false)
+const analysisBatchRequest = ref(0)
 const workspaces = ref([])
 const activeWorkspaceId = ref('')
 const selectedWorkspaceId = ref('')
@@ -122,6 +124,120 @@ function selectAssetColumn(columnId) {
   }
 }
 
+function selectionKey(reference) {
+  return cardReferenceId(reference)
+}
+
+function isAnalysisSelected(columnId) {
+  return analysisSelection.value.some((item) => item.columnId === columnId
+    && item.datasetVersionId === selectedDatasetId.value && item.tableId === selectedTableId.value)
+}
+
+function removeAnalysisSelection(reference) {
+  const key = selectionKey(reference)
+  analysisSelection.value = analysisSelection.value.filter((item) => selectionKey(item) !== key)
+}
+
+function toggleAnalysisColumn(column, checked) {
+  const reference = {
+    datasetVersionId: selectedDatasetId.value,
+    tableId: selectedTableId.value,
+    columnId: column.columnId,
+    datasetName: datasetLabel(selectedDataset.value),
+    tableName: selectedTable.value?.tableName || '',
+    columnName: column.name,
+  }
+  const key = selectionKey(reference)
+  const selected = new Map(analysisSelection.value.map((item) => [selectionKey(item), item]))
+  if (checked) {
+    if (selected.size >= 8) {
+      workspaceError.value = '一次最多选择 8 个字段加入分析画布'
+      return
+    }
+    selected.set(key, reference)
+  } else {
+    selected.delete(key)
+  }
+  analysisSelection.value = [...selected.values()]
+  workspaceError.value = ''
+}
+
+async function addSelectedAnalyses() {
+  if (addingToBoard.value || !analysisSelection.value.length) return
+  const references = [...analysisSelection.value]
+  const requestId = ++analysisBatchRequest.value
+  const existing = new Set(boardCards.value.map((card) => card.id))
+  const pending = references.filter((item) => !existing.has(selectionKey(item)))
+  const availableSlots = 20 - boardCards.value.length
+  if (!pending.length) {
+    workspaceError.value = '所选字段均已在分析画布中'
+    return
+  }
+  if (pending.length > availableSlots) {
+    workspaceError.value = `当前画布仅剩 ${availableSlots} 个位置，请减少选择后重试`
+    return
+  }
+
+  addingToBoard.value = true
+  workspaceError.value = ''
+  try {
+    const results = await mapWithConcurrency(pending, 3, async (reference) => {
+      try {
+        const result = await analyzeDatasetColumn(
+          reference.datasetVersionId, reference.tableId, reference.columnId,
+        )
+        return {
+          key: selectionKey(reference),
+          card: {
+            ...reference,
+            id: selectionKey(reference),
+            columnId: reference.columnId,
+            tableId: reference.tableId,
+            logicalType: result.logicalType,
+            chartType: result.chartType,
+            points: result.points || [],
+            rowCount: result.rowCount,
+            uniqueCountEstimate: result.uniqueCountEstimate,
+            missingCount: result.missingCount,
+            minimum: result.minimum,
+            maximum: result.maximum,
+          },
+        }
+      } catch (error) {
+        return { key: selectionKey(reference), error }
+      }
+    })
+    if (requestId !== analysisBatchRequest.value) return
+    const cards = results.flatMap((result) => result.card ? [result.card] : [])
+    const pendingKeys = new Set(pending.map(selectionKey))
+    const failedKeys = new Set(results.filter((result) => result.error).map((result) => result.key))
+    const selectedKeys = new Set(analysisSelection.value.map(selectionKey))
+    const currentBoardKeys = new Set(boardCards.value.map((card) => card.id))
+    const eligibleCards = cards.filter((card) => selectedKeys.has(card.id) && !currentBoardKeys.has(card.id))
+    const slotsRemaining = Math.max(0, 20 - boardCards.value.length)
+    const cardsToAdd = eligibleCards.slice(0, slotsRemaining)
+    const addedKeys = new Set(cardsToAdd.map((card) => card.id))
+    boardCards.value = [...boardCards.value, ...cardsToAdd]
+    const overflowKeys = new Set(eligibleCards.slice(slotsRemaining).map((card) => card.id))
+    const finalBoardKeys = new Set(boardCards.value.map((card) => card.id))
+    analysisSelection.value = analysisSelection.value.filter((item) => {
+      const key = selectionKey(item)
+      if (finalBoardKeys.has(key)) return false
+      return !pendingKeys.has(key) || failedKeys.has(key) || overflowKeys.has(key)
+    })
+    const stillFailedCount = [...failedKeys].filter((key) => selectedKeys.has(key)).length
+    const overflowCount = overflowKeys.size
+    if (cardsToAdd.length) markWorkspaceDirty()
+    if (stillFailedCount || overflowCount) {
+      workspaceError.value = `${stillFailedCount ? `${stillFailedCount} 个字段分析失败` : ''}${stillFailedCount && overflowCount ? '；' : ''}${overflowCount ? `${overflowCount} 个结果因画布已满未加入` : ''}。已加入 ${cardsToAdd.length} 张卡片。未完成字段仍保留选择。`
+    }
+  } catch (error) {
+    if (requestId === analysisBatchRequest.value) workspaceError.value = error.message || '批量分析失败，请重试'
+  } finally {
+    if (requestId === analysisBatchRequest.value) addingToBoard.value = false
+  }
+}
+
 function useSuggestedRelation() {
   if (!suggestedRelationColumn.value) return
   relationColumnId.value = suggestedRelationColumn.value.columnId
@@ -195,6 +311,13 @@ function addCurrentRelation() {
 
 function removeBoardCard(cardId) {
   boardCards.value = boardCards.value.filter((card) => card.id !== cardId)
+  markWorkspaceDirty()
+}
+
+function clearAnalysisBoard() {
+  analysisBatchRequest.value += 1
+  addingToBoard.value = false
+  boardCards.value = []
   markWorkspaceDirty()
 }
 
@@ -308,6 +431,8 @@ async function confirmDiscardChanges() {
 async function openSelectedWorkspace() {
   const id = selectedWorkspaceId.value
   if (!id || id === activeWorkspaceId.value || !(await confirmDiscardChanges())) return
+  analysisBatchRequest.value += 1
+  addingToBoard.value = false
   const requestId = ++workspaceRequest
   workspaceState.value = 'loading'
   workspaceError.value = ''
@@ -332,6 +457,8 @@ async function openSelectedWorkspace() {
 
 async function startNewWorkspace() {
   if (!(await confirmDiscardChanges())) return
+  analysisBatchRequest.value += 1
+  addingToBoard.value = false
   workspaceRequest += 1
   activeWorkspaceId.value = ''
   selectedWorkspaceId.value = ''
@@ -650,6 +777,8 @@ watch(
       loadDatasets()
       refreshWorkspaces()
     } else if (status === 'anonymous') {
+      analysisBatchRequest.value += 1
+      addingToBoard.value = false
       datasets.value = []
       catalog.value = null
       analysis.value = null
@@ -657,6 +786,7 @@ watch(
       selectedDatasetId.value = ''
       selectedTableId.value = ''
       selectedColumnId.value = ''
+      analysisSelection.value = []
       relationColumnId.value = ''
       boardCards.value = []
       workspaces.value = []
@@ -723,6 +853,7 @@ watch(relationChartElement, (element) => {
 })
 
 onBeforeUnmount(() => {
+  analysisBatchRequest.value += 1
   catalogRequest += 1
   analysisRequest += 1
   relationRequest += 1
@@ -815,7 +946,7 @@ onBeforeUnmount(() => {
         <div>
           <span class="explorer-kicker">ASSET EXPLORER</span>
           <h2>从数据资产开始</h2>
-          <p>选择一个字段，系统会按字段类型给出分析建议。</p>
+          <p>跨数据集与数据表收集字段，再组合成一张分析画布。</p>
         </div>
         <el-button text :icon="Refresh" :loading="loadingDatasets || loadingCatalog" @click="refreshAssetBrowser">刷新资产</el-button>
       </header>
@@ -863,18 +994,24 @@ onBeforeUnmount(() => {
           <div class="asset-column-heading"><strong>字段</strong><span>{{ selectedTableColumns.length }}</span></div>
           <el-empty v-if="!selectedTableColumns.length" description="选择数据表查看字段" :image-size="58" />
           <template v-else>
-            <button
+            <div
               v-for="column in selectedTableColumns"
               :key="column.columnId"
-              type="button"
               class="asset-item"
               :class="{ 'is-active': column.columnId === selectedColumnId }"
               :title="column.name"
-              @click="selectAssetColumn(column.columnId)"
             >
-              <span class="asset-item-copy"><strong>{{ column.name }}</strong><small>{{ column.logicalType || '未分类' }} · {{ column.nullable ? '可为空' : '非空' }}</small></span>
-              <el-icon><DataAnalysis /></el-icon>
-            </button>
+              <el-checkbox
+                :model-value="isAnalysisSelected(column.columnId)"
+                :disabled="boardCards.some((card) => card.id === `${selectedDatasetId}:${selectedTableId}:${column.columnId}`)"
+                :aria-label="`选择字段 ${column.name} 加入分析`"
+                @change="(checked) => toggleAnalysisColumn(column, checked)"
+              />
+              <button type="button" class="asset-item-select" :title="`预览 ${column.name}`" @click="selectAssetColumn(column.columnId)">
+                <span class="asset-item-copy"><strong>{{ column.name }}</strong><small>{{ column.logicalType || '未分类' }} · {{ column.nullable ? '可为空' : '非空' }}</small></span>
+                <el-icon><DataAnalysis /></el-icon>
+              </button>
+            </div>
           </template>
         </section>
       </div>
@@ -882,6 +1019,15 @@ onBeforeUnmount(() => {
         <div><span class="suggestion-mark"><el-icon><MagicStick /></el-icon></span><div><strong>推荐：{{ analysisSuggestion.label }}</strong><small>{{ analysisSuggestion.detail }} · {{ selectedColumn.name }}</small></div></div>
         <el-button size="small" type="primary" plain @click="selectAssetColumn(selectedColumn.columnId)">查看字段分析</el-button>
         <el-button v-if="suggestedRelationColumn" size="small" plain @click="useSuggestedRelation">比较 {{ suggestedRelationColumn.name }}</el-button>
+      </div>
+      <div v-if="analysisSelection.length" class="analysis-selection-bar">
+        <div class="selection-summary"><strong>已选 {{ analysisSelection.length }} / 8 个字段</strong><small>可跨数据集与数据表组合 · 画布最多 20 张卡片</small></div>
+        <div class="selection-items">
+          <el-tag v-for="item in analysisSelection" :key="selectionKey(item)" closable effect="plain" :title="`${item.datasetName} · ${item.tableName} · ${item.columnName}`" @close="removeAnalysisSelection(item)">
+            {{ item.columnName }} · {{ item.datasetName }} / {{ item.tableName }}
+          </el-tag>
+        </div>
+        <el-button type="primary" :loading="addingToBoard" :disabled="addingToBoard || boardCards.length >= 20" @click="addSelectedAnalyses">分析并加入画布</el-button>
       </div>
     </section>
 
@@ -974,7 +1120,7 @@ onBeforeUnmount(() => {
           <h2>分析画布</h2>
           <span>{{ boardCards.length }} 个分析 · 可跨数据集比较</span>
         </div>
-        <el-button text :icon="Close" :disabled="!boardCards.length" @click="boardCards = []; markWorkspaceDirty()">清空画布</el-button>
+        <el-button text :icon="Close" :disabled="!boardCards.length" @click="clearAnalysisBoard">清空画布</el-button>
       </header>
       <el-empty v-if="!boardCards.length" description="画布为空，可以从字段分布加入分析" :image-size="64" />
       <div v-else class="board-grid">
@@ -1151,6 +1297,10 @@ onBeforeUnmount(() => {
 .asset-item:hover { background: #f1f7f4; }
 .asset-item.is-active { color: #245d4b; background: #e8f3ee; border-color: #d4e7de; }
 .asset-item > .el-icon { flex: 0 0 auto; font-size: 13px; }
+.field-column .asset-item { justify-content: flex-start; gap: 8px; padding-inline: 8px; cursor: default; }
+.field-column .asset-item > :deep(.el-checkbox) { flex: 0 0 auto; margin-right: 0; }
+.asset-item-select { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; justify-content: space-between; gap: 8px; padding: 0; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.asset-item-select > .el-icon { flex: 0 0 auto; font-size: 13px; }
 
 .asset-item-copy {
   display: grid;
@@ -1204,6 +1354,13 @@ onBeforeUnmount(() => {
 .explorer-suggestion strong { color: #35594b; font-size: 10px; }
 .explorer-suggestion small { color: #819088; font-size: 9px; }
 .suggestion-mark { display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; color: #2f775e; background: #e8f3ee; border-radius: 6px; }
+.analysis-selection-bar { display: grid; min-width: 0; grid-template-columns: minmax(150px, auto) minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid #e4ebe7; }
+.selection-summary { display: grid; min-width: 0; gap: 3px; }
+.selection-summary strong { color: #35594b; font-size: 10px; }
+.selection-summary small { color: #819088; font-size: 9px; }
+.selection-items { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+.selection-items :deep(.el-tag) { max-width: 100%; }
+.selection-items :deep(.el-tag__content) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .analysis-message {
   display: flex;
@@ -1618,6 +1775,9 @@ onBeforeUnmount(() => {
   .explorer-suggestion { align-items: stretch; flex-wrap: wrap; }
   .explorer-suggestion > div { flex-basis: 100%; }
   .explorer-suggestion > .el-button { flex: 1 1 auto; margin-left: 0; }
+  .analysis-selection-bar { grid-template-columns: minmax(0, 1fr) auto; }
+  .selection-summary { grid-column: 1 / -1; }
+  .selection-items { grid-column: 1 / -1; }
 
   .analysis-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
