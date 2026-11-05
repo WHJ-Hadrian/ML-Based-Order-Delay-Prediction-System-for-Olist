@@ -11,7 +11,7 @@
 | `api-gateway` | Spring Cloud Gateway | 前端统一入口、JWT 校验和路由 |
 | `order-service` | Spring Boot | 订单与订单状态，独立拥有订单库 |
 | `dataset-service` | Spring Boot | 上传元数据、数据集版本、校验记录，以及字段库和清洗规则库 |
-| `job-service` | Spring Boot + Temporal Client | 长任务状态和工作流启动 |
+| `job-service` | Spring Boot + Temporal Client / Worker | 工作流定义、持久化运行状态和后台执行 |
 | `prediction-service` | Spring Boot | 在线预测业务、审计和模型服务调用 |
 | `model-management-service` | Spring Boot | 模型审核、上线、回滚和版本元数据 |
 | `analytics-query-service` | Spring Boot | 面向看板的分析查询 API |
@@ -103,7 +103,7 @@ docker compose --profile apps --profile rule-worker up --build -d
 
 ### 工作流运行 Worker
 
-`apps` profile 会在 `job-service` 进程内启动 Temporal Worker。画布可提交持久化运行；运行记录、定义快照与节点结果存入任务服务数据库，关闭浏览器不会中断任务。当前仅执行彼此独立的 `DATA_SOURCE` 节点，用于验证固定数据集版本/表并保存 schema、字段和行数快照；有连线或包含规则、转换、训练等节点的工作流会由服务端拒绝，不能把未实现的节点伪装成成功。
+`apps` profile 会在 `job-service` 进程内启动 Temporal Worker。画布可提交持久化运行；运行记录、定义快照与节点结果存入任务服务数据库，关闭浏览器不会中断任务。当前执行独立 `DATA_SOURCE` 节点及 `DATA_SOURCE → FILTER` 样本筛选链路，数据源会验证 owner 隔离的固定数据集版本/表并保存 schema、字段、行数和有界输入样本；样本最多 20 行、100 列，单元格最多 512 字符。筛选仅作用于该样本，不代表全量数据变换或物化；其他未实现节点会由服务端拒绝，不能伪装成成功。
 
 Worker 通过 `WORKFLOW_WORKER_INTERNAL_TOKEN` 调用数据集服务的内部快照接口。Compose 默认值仅用于本地开发，其他环境应设置随机共享令牌，并确保 `job-service` 与 `dataset-service` 配置相同。
 

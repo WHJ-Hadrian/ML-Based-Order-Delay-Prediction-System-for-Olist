@@ -6,7 +6,7 @@ import { MiniMap } from '@vue-flow/minimap'
 import { Handle, Position, VueFlow, useVueFlow } from '@vue-flow/core'
 import {
   CircleCheck, CircleClose, CopyDocument, Delete, DocumentChecked, Expand, FullScreen, Loading, Plus, Refresh, VideoPlay,
-  SetUp, Sort, DataAnalysis, Connection, Cpu, Histogram, Files, Filter, Operation,
+  SetUp, Sort, DataAnalysis, Connection, Cpu, Histogram, Files, Filter, Operation, FolderAdd,
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { cancelWorkflowRun, createWorkflow, deleteWorkflow, duplicateWorkflow, getWorkflow, listWorkflowRuns, listWorkflows, retryWorkflowRun, startWorkflowRun, updateWorkflow } from '@/api/workflows'
@@ -52,6 +52,9 @@ const sourceVersions = ref([])
 const sourceTables = ref([])
 const sourceLoading = ref(false)
 const sourceError = ref('')
+const filterColumns = ref([])
+const filterLoading = ref(false)
+const filterError = ref('')
 const publishedRules = ref([])
 const ruleLoading = ref(false)
 const ruleError = ref('')
@@ -63,6 +66,7 @@ let saveTimer
 let applyingDocument = false
 let sourceLoadSequence = 0
 let ruleLoadSequence = 0
+let filterLoadSequence = 0
 let runPollTimer
 
 function runIsActive(run) { return ['QUEUED', 'RUNNING', 'CANCELLING'].includes(run?.status) }
@@ -483,6 +487,44 @@ function changeSourceTable(tableId) {
   }
 }
 
+async function loadFilterColumns(nodeId) {
+  const sequence = ++filterLoadSequence
+  filterColumns.value = []
+  filterError.value = ''
+  const incoming = edges.value.find((edge) => edge.target === nodeId)
+  const source = nodes.value.find((node) => node.id === incoming?.source && node.data?.kind === 'DATA_SOURCE')
+  const versionId = source?.data?.config?.datasetVersionId
+  if (!versionId) return
+  filterLoading.value = true
+  try {
+    const catalog = await getDatasetVersionCatalog(versionId)
+    if (sequence !== filterLoadSequence || selectedNodeId.value !== nodeId) return
+    filterColumns.value = catalog?.tables
+      ?.find((table) => table.tableId === source.data.config.tableId)?.columns || []
+    const config = nodes.value.find((node) => node.id === nodeId)?.data?.config || {}
+    if (config.columnName && !filterColumns.value.some((column) => column.name === config.columnName)) {
+      filterError.value = '已配置字段不在上游数据表中，请重新选择'
+    }
+  } catch (cause) {
+    if (sequence === filterLoadSequence) filterError.value = cause.message || '上游字段载入失败'
+  } finally {
+    if (sequence === filterLoadSequence) filterLoading.value = false
+  }
+}
+
+function changeFilterColumn(columnName) {
+  if (!selectedNode.value) return
+  selectedNode.value.data.config = { ...selectedNode.value.data.config, columnName }
+}
+
+function changeFilterOperator(operator) {
+  if (!selectedNode.value) return
+  const config = { ...selectedNode.value.data.config, operator }
+  if (operator === 'IS_EMPTY' || operator === 'IS_NOT_EMPTY') delete config.value
+  else if (typeof config.value !== 'string') config.value = ''
+  selectedNode.value.data.config = config
+}
+
 function handleEdgeClick({ edge }) {
   selectedEdgeId.value = edge.id
   selectedNodeId.value = ''
@@ -567,6 +609,15 @@ watch(selectedNodeId, (nodeId) => {
     ruleLoadSequence += 1
     ruleLoading.value = false
   }
+  if (node?.data.kind === 'FILTER') loadFilterColumns(nodeId)
+  else {
+    filterLoadSequence += 1
+    filterLoading.value = false
+  }
+})
+
+watch(() => edges.value.map((edge) => `${edge.source}:${edge.target}`).join('|'), () => {
+  if (selectedNode.value?.data.kind === 'FILTER') loadFilterColumns(selectedNode.value.id)
 })
 
 onMounted(() => {
@@ -696,6 +747,29 @@ onBeforeUnmount(() => {
               <p v-else-if="!ruleLoading && !publishedRules.length" class="source-empty">暂无可引用的已发布规则版本</p>
               <p v-else-if="selectedNode.data.config?.ruleVersionId" class="source-schema">来源版本 {{ selectedNode.data.config.sourceDatasetVersionId }} · 内容 {{ selectedNode.data.config.contentHash?.slice(0, 12) }}…</p>
             </template>
+            <template v-if="selectedNode.data.kind === 'FILTER'">
+              <div class="node-contract filter-contract"><strong>样本筛选预览</strong><small>只在上游数据源的有界输入样本上筛选；结果用于检查条件，不代表全量数据物化。</small></div>
+              <p v-if="!selectedNode.data.config?.columnName && !filterLoading && !filterError" class="source-empty">先将一个已配置的数据源连接到此节点</p>
+              <label class="field-label">字段
+                <el-select :model-value="selectedNode.data.config?.columnName || ''" filterable clearable placeholder="选择上游字段" :loading="filterLoading" :disabled="!filterColumns.length" @change="changeFilterColumn">
+                  <el-option v-for="column in filterColumns" :key="column.columnId || column.name" :value="column.name" :label="`${column.name} · ${column.logicalType || '未知类型'}`" />
+                </el-select>
+              </label>
+              <label class="field-label">条件
+                <el-select :model-value="selectedNode.data.config?.operator || ''" placeholder="选择筛选条件" @change="changeFilterOperator">
+                  <el-option label="等于" value="EQUALS" />
+                  <el-option label="不等于" value="NOT_EQUALS" />
+                  <el-option label="包含文本" value="CONTAINS" />
+                  <el-option label="为空" value="IS_EMPTY" />
+                  <el-option label="不为空" value="IS_NOT_EMPTY" />
+                </el-select>
+              </label>
+              <label v-if="selectedNode.data.config?.operator && !selectedNode.data.config.operator.startsWith('IS_')" class="field-label">匹配值
+                <el-input :model-value="selectedNode.data.config?.value || ''" maxlength="512" placeholder="输入要匹配的值" @update:model-value="(value) => { selectedNode.data.config.value = value }" />
+              </label>
+              <p v-if="filterLoading" class="source-empty">正在读取上游字段</p>
+              <p v-if="filterError" class="source-error" role="alert">{{ filterError }}</p>
+            </template>
             <div class="node-contract"><strong>节点类型</strong><span>{{ selectedNode.data.kind }}</span><small>{{ nodeType(selectedNode.data.kind).description }}</small></div>
             <el-button class="remove-node" plain type="danger" :icon="Delete" @click="removeSelectedNode">删除节点</el-button>
           </template>
@@ -734,8 +808,25 @@ onBeforeUnmount(() => {
                 <header><strong :title="node.nodeId">{{ nodes.find((item) => item.id === node.nodeId)?.data.label || node.nodeId }}</strong><span>{{ nodeStatusLabel(node.status) }}</span></header>
                 <p v-if="node.errorMessage" class="run-error">{{ node.errorMessage }}</p>
                 <template v-if="node.result">
-                  <div class="run-result-stats"><span>{{ node.result.tableName }}</span><span>{{ Number(node.result.rowCount || 0).toLocaleString('zh-CN') }} 行</span><span>{{ node.result.columnCount }} 个字段</span><span>Schema {{ String(node.result.schemaHash || '').slice(0, 12) }}</span></div>
+                  <template v-if="node.result.nodeType === 'FILTER'">
+                    <div class="run-result-stats"><span>来源 {{ node.result.tableName }}</span><span>条件 {{ node.result.columnName }} · {{ ({ EQUALS: '等于', NOT_EQUALS: '不等于', CONTAINS: '包含文本', IS_EMPTY: '为空', IS_NOT_EMPTY: '不为空' })[node.result.operator] || node.result.operator }}</span><span>样本匹配 {{ node.result.sampleMatchedRows }} / {{ node.result.sampleInputRows }} 行</span><span>全表 {{ Number(node.result.inputRowCount || 0).toLocaleString('zh-CN') }} 行</span></div>
+                    <p class="run-preview-note">此结果仅为输入样本预览{{ node.result.sampleTruncated ? '，样本已截断' : '' }}</p>
+                  </template>
+                  <div v-else class="run-result-stats"><span>{{ node.result.tableName }}</span><span>{{ Number(node.result.rowCount || 0).toLocaleString('zh-CN') }} 行</span><span>{{ node.result.columnCount }} 个字段</span><span>Schema {{ String(node.result.schemaHash || '').slice(0, 12) }}</span></div>
                   <div class="run-columns"><span v-for="column in node.result.columns || []" :key="column.columnId" :title="`${column.name} · ${column.type}`">{{ column.name }}<small>{{ column.type }}</small></span></div>
+                  <div v-if="node.result.sampleColumns?.length" class="run-sample-wrap">
+                    <div class="run-sample-heading"><strong>输入样本</strong><span>前 {{ node.result.sampleLimit }} 行 · 共 {{ Number(node.result.sampleTotalRows || 0).toLocaleString('zh-CN') }} 行</span><span v-if="node.result.sampleTruncated" class="run-sample-truncated">样本已截断</span></div>
+                    <div class="run-sample-scroll" tabindex="0" :aria-label="`${node.result.tableName} 输入样本`">
+                      <table class="run-sample-table">
+                        <thead><tr><th v-for="(column, index) in node.result.sampleColumns" :key="`${index}-${column}`" :title="column">{{ column }}</th></tr></thead>
+                        <tbody>
+                          <tr v-for="(row, rowIndex) in node.result.sampleRows || []" :key="rowIndex">
+                            <td v-for="(column, columnIndex) in node.result.sampleColumns" :key="`${rowIndex}-${columnIndex}`" :title="row[columnIndex] ?? ''">{{ row[columnIndex] ?? '空' }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </template>
               </article>
             </div>
@@ -809,6 +900,7 @@ onBeforeUnmount(() => {
 .field-label { display: grid; gap: 6px; margin: 14px 0; color: #66756c; font-size: 10px; }
 .source-contract { margin-top: 10px; }
 .rule-contract { margin-top: 10px; }
+.filter-contract { margin-top: 10px; }
 .source-schema, .source-empty, .source-error { margin: -5px 0 12px; color: #77867d; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .source-error { color: #a1463e; }
 .node-contract { display: grid; gap: 5px; margin: 14px 0; padding: 9px; background: #f5f8f6; border-radius: 5px; }
@@ -855,6 +947,18 @@ onBeforeUnmount(() => {
 .run-columns { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .run-columns > span { display: flex; max-width: 100%; min-width: 0; align-items: center; gap: 7px; padding: 4px 7px; overflow: hidden; color: #4b6255; background: #fff; border: 1px solid #e1e9e4; border-radius: 4px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .run-columns small { flex: 0 0 auto; color: #94a098; font-size: 9px; }
+.run-sample-wrap { display: grid; min-width: 0; gap: 7px; margin-top: 12px; }
+.run-sample-heading { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.run-sample-heading strong { color: #53645a; font-size: 10px; }
+.run-sample-heading span { color: #88948d; font-size: 9px; }
+.run-sample-heading .run-sample-truncated { color: #9b6f3a; }
+.run-preview-note { margin: 0; color: #8a744f; font-size: 9px; }
+.run-sample-scroll { min-width: 0; max-width: 100%; max-height: 220px; overflow: auto; border: 1px solid #e3eae5; border-radius: 4px; }
+.run-sample-table { width: max-content; min-width: 100%; border-collapse: collapse; color: #53645a; font-size: 10px; }
+.run-sample-table th, .run-sample-table td { max-width: 240px; padding: 6px 9px; overflow: hidden; border-bottom: 1px solid #edf1ee; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.run-sample-table th { position: sticky; top: 0; z-index: 1; color: #4d6255; background: #f4f8f5; font-weight: 600; }
+.run-sample-table td { max-width: 280px; }
+.run-sample-table tr:last-child td { border-bottom: 0; }
 .run-error { margin: 8px 0 0; color: #a3473e; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .run-empty { margin: 0; padding: 18px; color: #8b9790; text-align: center; font-size: 11px; }
 @media (max-width: 1000px) {
