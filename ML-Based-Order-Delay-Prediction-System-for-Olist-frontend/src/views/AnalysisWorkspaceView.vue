@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Check, Close, CopyDocument, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh } from '@element-plus/icons-vue'
+import { ArrowRight, Check, Close, CopyDocument, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh, Share } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { BarChart, ScatterChart } from 'echarts/charts'
@@ -20,6 +20,7 @@ import {
   updateAnalysisWorkspace,
 } from '@/api/datasets'
 import { useAuth } from '@/auth/keycloak'
+import WorkflowSourceDialog from '@/components/WorkflowSourceDialog.vue'
 
 echarts.use([BarChart, ScatterChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -59,6 +60,8 @@ const analysisError = ref('')
 const relationError = ref('')
 const chartElement = ref(null)
 const relationChartElement = ref(null)
+const workflowDialogVisible = ref(false)
+const workflowReferences = ref([])
 
 let chart = null
 let resizeObserver = null
@@ -605,6 +608,26 @@ async function refreshAssetBrowser() {
   if (selectedDatasetId.value) await loadCatalog(selectedDatasetId.value)
 }
 
+async function openWorkflowDialog(references) {
+  if (!references.length || !(await confirmDiscardChanges())) return
+  workflowReferences.value = references
+  workflowDialogVisible.value = true
+}
+
+function selectedTableReference() {
+  if (!selectedTable.value || !catalog.value?.datasetVersionId) return []
+  return [{
+    datasetVersionId: catalog.value.datasetVersionId,
+    tableId: selectedTable.value.tableId,
+    datasetName: datasetLabel(selectedDataset.value),
+    tableName: selectedTable.value.tableName,
+  }]
+}
+
+function openCreatedWorkflow(workflowId) {
+  router.push({ path: '/workflows', query: { workflow: workflowId } })
+}
+
 async function loadCatalog(datasetId) {
   const requestId = ++catalogRequest
   catalog.value = null
@@ -948,7 +971,14 @@ onBeforeUnmount(() => {
           <h2>从数据资产开始</h2>
           <p>跨数据集与数据表收集字段，再组合成一张分析画布。</p>
         </div>
-        <el-button text :icon="Refresh" :loading="loadingDatasets || loadingCatalog" @click="refreshAssetBrowser">刷新资产</el-button>
+        <div class="explorer-actions">
+          <el-button
+            :icon="Share"
+            :disabled="!selectedDataset || !selectedTable || !catalog?.datasetVersionId"
+            @click="openWorkflowDialog(selectedTableReference())"
+          >在工作流中继续</el-button>
+          <el-button text :icon="Refresh" :loading="loadingDatasets || loadingCatalog" @click="refreshAssetBrowser">刷新资产</el-button>
+        </div>
       </header>
       <div class="explorer-grid">
         <section class="asset-column" aria-label="数据集">
@@ -1030,6 +1060,8 @@ onBeforeUnmount(() => {
         <el-button type="primary" :loading="addingToBoard" :disabled="addingToBoard || boardCards.length >= 20" @click="addSelectedAnalyses">分析并加入画布</el-button>
       </div>
     </section>
+
+    <WorkflowSourceDialog v-model="workflowDialogVisible" :references="workflowReferences" @opened="openCreatedWorkflow" />
 
     <div v-if="datasetError" class="analysis-message is-error" role="alert">
       <span>{{ datasetError }}</span>
@@ -1120,7 +1152,10 @@ onBeforeUnmount(() => {
           <h2>分析画布</h2>
           <span>{{ boardCards.length }} 个分析 · 可跨数据集比较</span>
         </div>
-        <el-button text :icon="Close" :disabled="!boardCards.length" @click="clearAnalysisBoard">清空画布</el-button>
+        <div class="board-heading-actions">
+          <el-button :icon="Share" :disabled="!boardCards.length" @click="openWorkflowDialog(boardCards)">整张画布加入工作流</el-button>
+          <el-button text :icon="Close" :disabled="!boardCards.length" @click="clearAnalysisBoard">清空画布</el-button>
+        </div>
       </header>
       <el-empty v-if="!boardCards.length" description="画布为空，可以从字段分布加入分析" :image-size="64" />
       <div v-else class="board-grid">
@@ -1130,7 +1165,10 @@ onBeforeUnmount(() => {
               <strong>{{ card.columnName }}</strong>
               <span :title="`${card.datasetName} · ${card.tableName}`">{{ card.datasetName }} · {{ card.tableName }}</span>
             </div>
-            <el-button circle text aria-label="移除分析卡片" title="移除分析卡片" :icon="Close" @click="removeBoardCard(card.id)" />
+            <div class="board-card-actions">
+              <el-button circle text aria-label="将此表加入工作流" title="将此表加入工作流" :icon="Share" @click="openWorkflowDialog([card])" />
+              <el-button circle text aria-label="移除分析卡片" title="移除分析卡片" :icon="Close" @click="removeBoardCard(card.id)" />
+            </div>
           </header>
           <div class="board-card-stats">
             <template v-if="card.relationColumnId">
@@ -1227,6 +1265,10 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   box-shadow: 0 10px 28px rgba(27, 61, 50, 0.055);
 }
+.explorer-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.board-heading-actions, .board-card-actions { display: flex; min-width: 0; align-items: center; gap: 4px; }
+.board-heading-actions { flex-wrap: wrap; justify-content: flex-end; }
+.board-heading-actions .el-button + .el-button, .board-card-actions .el-button + .el-button { margin-left: 0; }
 
 .explorer-heading {
   display: flex;
@@ -1453,7 +1495,7 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
 }
 
-.board-heading > div {
+.board-heading > div:first-child {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1769,6 +1811,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 600px) {
   .explorer-heading { align-items: flex-start; padding: 11px 12px; }
+  .explorer-actions { justify-content: flex-start; }
   .explorer-heading p { max-width: 230px; }
   .explorer-grid { display: flex; min-height: 220px; max-height: 290px; }
   .asset-column { flex: 0 0 78vw; max-width: 300px; }
