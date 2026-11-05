@@ -54,3 +54,17 @@ export function duplicateWorkflow(id, name) {
 export function deleteWorkflow(id) {
   return request(`/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+export function listWorkflowRuns(id) { return request(`/workflows/${encodeURIComponent(id)}/runs`) }
+export function startWorkflowRun(id, expectedRevision) {
+  return request(`/workflows/${encodeURIComponent(id)}/runs`, {
+    method: 'POST',
+    body: JSON.stringify({ expectedRevision }),
+  })
+}
+export function getWorkflowRun(id) { return request(`/workflow-runs/${encodeURIComponent(id)}`) }
+export function cancelWorkflowRun(id) {
+  return request(`/workflow-runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+}
+export function retryWorkflowRun(id) {
+  return request(`/workflow-runs/${encodeURIComponent(id)}/retry`, { method: 'POST' })
+}

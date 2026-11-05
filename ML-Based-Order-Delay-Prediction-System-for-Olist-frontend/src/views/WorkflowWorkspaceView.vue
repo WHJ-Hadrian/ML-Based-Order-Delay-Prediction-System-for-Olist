@@ -5,11 +5,11 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { Handle, Position, VueFlow, useVueFlow } from '@vue-flow/core'
 import {
-  CopyDocument, Delete, DocumentChecked, Expand, FolderAdd, FullScreen, Plus, Refresh,
+  CircleCheck, CircleClose, CopyDocument, Delete, DocumentChecked, Expand, FullScreen, Loading, Plus, Refresh, VideoPlay,
   SetUp, Sort, DataAnalysis, Connection, Cpu, Histogram, Files, Filter, Operation,
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { createWorkflow, deleteWorkflow, duplicateWorkflow, getWorkflow, listWorkflows, updateWorkflow } from '@/api/workflows'
+import { cancelWorkflowRun, createWorkflow, deleteWorkflow, duplicateWorkflow, getWorkflow, listWorkflowRuns, listWorkflows, retryWorkflowRun, startWorkflowRun, updateWorkflow } from '@/api/workflows'
 import { getDatasetVersionCatalog, getDatasetVersions, listDatasets } from '@/api/datasets'
 import { listPublishedRuleVersions } from '@/api/ruleLibrary'
 
@@ -29,6 +29,8 @@ const nodeCatalog = [
 ]
 
 const workflows = ref([])
+const runs = ref([])
+const selectedRunId = ref('')
 const activeId = ref('')
 const name = ref('')
 const revision = ref(0)
@@ -38,6 +40,8 @@ const selectedNodeId = ref('')
 const selectedEdgeId = ref('')
 const dirty = ref(false)
 const busy = ref(false)
+const runBusy = ref(false)
+const loadingRuns = ref(false)
 const loading = ref(true)
 const error = ref('')
 const message = ref('')
@@ -53,11 +57,102 @@ const ruleLoading = ref(false)
 const ruleError = ref('')
 const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeId.value) || null)
 const selectedEdge = computed(() => edges.value.find((edge) => edge.id === selectedEdgeId.value) || null)
+const selectedRun = computed(() => runs.value.find((run) => run.id === selectedRunId.value) || null)
 const { addEdges, fitView } = useVueFlow()
 let saveTimer
 let applyingDocument = false
 let sourceLoadSequence = 0
 let ruleLoadSequence = 0
+let runPollTimer
+
+function runIsActive(run) { return ['QUEUED', 'RUNNING', 'CANCELLING'].includes(run?.status) }
+
+function scheduleRunPoll() {
+  clearTimeout(runPollTimer)
+  if (activeId.value && runs.value.some(runIsActive)) {
+    runPollTimer = setTimeout(refreshRuns, 1800)
+  }
+}
+
+async function refreshRuns() {
+  const workflowId = activeId.value
+  if (!workflowId) return
+  loadingRuns.value = true
+  try {
+    const latest = await listWorkflowRuns(workflowId)
+    if (activeId.value !== workflowId) return
+    runs.value = latest || []
+    if (!selectedRunId.value || !runs.value.some((run) => run.id === selectedRunId.value)) {
+      selectedRunId.value = runs.value[0]?.id || ''
+    } else if (runs.value.some((run) => run.id === selectedRunId.value)) {
+      const current = runs.value.find((run) => run.id === selectedRunId.value)
+      if (current) runs.value = runs.value.map((run) => run.id === current.id ? current : run)
+    }
+  } catch (cause) {
+    error.value = cause.message || '运行记录载入失败'
+  } finally {
+    if (activeId.value === workflowId) loadingRuns.value = false
+    scheduleRunPoll()
+  }
+}
+
+async function startRun() {
+  if (!activeId.value || runBusy.value || !(await saveWorkflow())) return
+  runBusy.value = true
+  error.value = ''
+  try {
+    const run = await startWorkflowRun(activeId.value, revision.value)
+    runs.value = [run, ...runs.value.filter((item) => item.id !== run.id)]
+    selectedRunId.value = run.id
+    message.value = '运行已提交，关闭页面后任务仍会继续'
+    scheduleRunPoll()
+  } catch (cause) {
+    error.value = cause.message || '无法启动工作流运行'
+  } finally {
+    runBusy.value = false
+  }
+}
+
+async function cancelRun() {
+  if (!selectedRun.value || !runIsActive(selectedRun.value)) return
+  runBusy.value = true
+  try {
+    const updated = await cancelWorkflowRun(selectedRun.value.id)
+    runs.value = runs.value.map((run) => run.id === updated.id ? updated : run)
+    scheduleRunPoll()
+  } catch (cause) {
+    error.value = cause.message || '取消运行失败'
+  } finally {
+    runBusy.value = false
+  }
+}
+
+async function retryRun() {
+  if (!selectedRun.value || runBusy.value) return
+  runBusy.value = true
+  try {
+    const retry = await retryWorkflowRun(selectedRun.value.id)
+    runs.value = [retry, ...runs.value]
+    selectedRunId.value = retry.id
+    scheduleRunPoll()
+  } catch (cause) {
+    error.value = cause.message || '重试运行失败'
+  } finally {
+    runBusy.value = false
+  }
+}
+
+function runStatusLabel(status) {
+  return ({ QUEUED: '排队中', RUNNING: '运行中', CANCELLING: '正在取消', SUCCEEDED: '已完成', FAILED: '失败', CANCELED: '已取消' })[status] || status
+}
+
+function nodeStatusLabel(status) {
+  return ({ QUEUED: '排队中', RUNNING: '运行中', SUCCEEDED: '完成', FAILED: '失败' })[status] || status
+}
+
+function formatRunTime(value) {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '等待 Worker'
+}
 
 function nodeType(type) { return nodeCatalog.find((item) => item.type === type) || nodeCatalog[0] }
 
@@ -131,6 +226,9 @@ async function selectWorkflow(id, skipSave = false) {
     name.value = loaded.name
     revision.value = loaded.revision
     applyDocument(loaded.document)
+    runs.value = []
+    selectedRunId.value = ''
+    await refreshRuns()
     message.value = ''
     return true
   } catch (cause) {
@@ -152,6 +250,8 @@ async function createNewWorkflow() {
     name.value = created.name
     revision.value = created.revision
     applyDocument(created.document)
+    runs.value = []
+    selectedRunId.value = ''
     message.value = '工作流已创建'
   } catch (cause) {
     error.value = cause.message || '创建工作流失败'
@@ -425,6 +525,8 @@ async function removeActive() {
     await deleteWorkflow(activeId.value)
     workflows.value = workflows.value.filter((item) => item.id !== activeId.value)
     activeId.value = ''
+    runs.value = []
+    selectedRunId.value = ''
     name.value = ''
     revision.value = 0
     applyDocument({ nodes: [], edges: [] })
@@ -474,6 +576,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearTimeout(saveTimer)
+  clearTimeout(runPollTimer)
   document.removeEventListener('fullscreenchange', syncFullscreen)
   if (dirty.value && activeId.value) saveWorkflow()
 })
@@ -498,6 +601,7 @@ onBeforeUnmount(() => {
             <span class="save-state" :class="{ 'is-dirty': dirty, 'is-error': error }">{{ error || (busy ? '同步中' : dirty ? '有未保存修改' : message || (activeId ? '已保存' : '定义草稿')) }}</span>
           </div>
           <div class="toolbar-actions">
+            <el-button type="primary" :icon="VideoPlay" :loading="runBusy" :disabled="!activeId || busy || dirty || !nodes.length" @click="startRun">运行</el-button>
             <el-button circle aria-label="复制画布" title="复制画布" :icon="CopyDocument" :disabled="!activeId || busy" @click="duplicateActive" />
             <el-button circle aria-label="保存工作流" title="保存工作流" :icon="DocumentChecked" :loading="busy" :disabled="!dirty" @click="saveWorkflow" />
             <el-button circle aria-label="聚焦画布" title="聚焦画布" :icon="nativeFullscreen ? Expand : FullScreen" :disabled="!activeId" @click="toggleFullscreen" />
@@ -603,6 +707,43 @@ onBeforeUnmount(() => {
           <div v-else class="inspector-empty"><el-icon><Operation /></el-icon><span>选择节点或连接查看属性</span></div>
         </aside>
       </div>
+
+      <section v-if="activeId" class="run-monitor" aria-label="工作流运行记录">
+        <header class="run-monitor-heading">
+          <div><strong>运行记录</strong><span>{{ runs.length }} 次</span></div>
+          <div class="run-monitor-actions">
+            <el-button circle aria-label="刷新运行记录" title="刷新运行记录" :icon="Refresh" :loading="loadingRuns" @click="refreshRuns" />
+            <el-button v-if="selectedRun && runIsActive(selectedRun)" plain type="danger" :icon="CircleClose" :loading="runBusy" @click="cancelRun">取消运行</el-button>
+            <el-button v-if="selectedRun && ['FAILED', 'CANCELED'].includes(selectedRun.status)" plain :icon="Refresh" :loading="runBusy" @click="retryRun">重试</el-button>
+          </div>
+        </header>
+        <div v-if="runs.length" class="run-monitor-body">
+          <nav class="run-list" aria-label="运行列表">
+            <button v-for="run in runs" :key="run.id" type="button" class="run-item" :class="{ 'is-active': selectedRunId === run.id }" :title="`${run.id} · ${runStatusLabel(run.status)}`" @click="selectedRunId = run.id">
+              <span class="run-status-icon" :class="`status-${run.status.toLowerCase()}`"><el-icon><Loading v-if="runIsActive(run)" /><CircleCheck v-else-if="run.status === 'SUCCEEDED'" /><CircleClose v-else /></el-icon></span>
+              <span class="run-item-copy"><strong>{{ runStatusLabel(run.status) }} · 修订 {{ run.workflowRevision }}</strong><small>{{ formatRunTime(run.createdAt) }}</small></span>
+              <span class="run-progress">{{ run.progress }}%</span>
+            </button>
+          </nav>
+          <div v-if="selectedRun" class="run-detail">
+            <div class="run-detail-summary"><strong>{{ runStatusLabel(selectedRun.status) }}</strong><span>创建于 {{ formatRunTime(selectedRun.createdAt) }}</span><span>开始于 {{ formatRunTime(selectedRun.startedAt) }}</span><span>修订 {{ selectedRun.workflowRevision }}</span></div>
+            <el-progress :percentage="selectedRun.progress" :status="selectedRun.status === 'FAILED' ? 'exception' : selectedRun.status === 'SUCCEEDED' ? 'success' : undefined" :stroke-width="6" :show-text="false" />
+            <p v-if="selectedRun.errorMessage" class="run-error" role="alert">{{ selectedRun.errorMessage }}</p>
+            <div v-if="selectedRun.nodes?.length" class="run-node-results">
+              <article v-for="node in selectedRun.nodes" :key="node.nodeId" class="run-node-result">
+                <header><strong :title="node.nodeId">{{ nodes.find((item) => item.id === node.nodeId)?.data.label || node.nodeId }}</strong><span>{{ nodeStatusLabel(node.status) }}</span></header>
+                <p v-if="node.errorMessage" class="run-error">{{ node.errorMessage }}</p>
+                <template v-if="node.result">
+                  <div class="run-result-stats"><span>{{ node.result.tableName }}</span><span>{{ Number(node.result.rowCount || 0).toLocaleString('zh-CN') }} 行</span><span>{{ node.result.columnCount }} 个字段</span><span>Schema {{ String(node.result.schemaHash || '').slice(0, 12) }}</span></div>
+                  <div class="run-columns"><span v-for="column in node.result.columns || []" :key="column.columnId" :title="`${column.name} · ${column.type}`">{{ column.name }}<small>{{ column.type }}</small></span></div>
+                </template>
+              </article>
+            </div>
+            <p v-else class="run-empty">{{ selectedRun.status === 'QUEUED' ? '等待 Temporal Worker 接收运行' : '暂无节点结果' }}</p>
+          </div>
+        </div>
+        <div v-else class="run-empty">此工作流还没有运行记录</div>
+      </section>
     </section>
   </main>
 </template>
@@ -683,6 +824,39 @@ onBeforeUnmount(() => {
 .workflow-workspace.is-fullscreen { width: 100vw; height: 100vh; height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
 .workflow-workspace.is-fullscreen .workflow-editor { flex-basis: 0; }
 .workflow-workspace.is-fullscreen .canvas-stage, .workflow-workspace.is-fullscreen .canvas-column { min-height: 0; }
+.run-monitor { display: grid; min-width: 0; border-top: 1px solid #e2eae5; background: #fff; }
+.run-monitor-heading { display: flex; min-width: 0; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 14px; }
+.run-monitor-heading > div:first-child, .run-monitor-actions { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.run-monitor-heading strong { color: #34483e; font-size: 12px; }
+.run-monitor-heading span { color: #839088; font-size: 10px; }
+.run-monitor-actions { flex: 0 0 auto; }
+.run-monitor-body { display: grid; min-width: 0; grid-template-columns: minmax(190px, 260px) minmax(0, 1fr); border-top: 1px solid #edf1ee; }
+.run-list { display: grid; align-content: start; max-height: 280px; overflow: auto; border-right: 1px solid #e7ece9; }
+.run-item { display: flex; min-width: 0; align-items: center; gap: 9px; padding: 10px 12px; color: #43564b; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #eef2ef; cursor: pointer; }
+.run-item:hover, .run-item.is-active { background: #f4f8f5; }
+.run-status-icon { display: grid; width: 25px; height: 25px; flex: 0 0 auto; place-items: center; color: #77857d; background: #f0f3f1; border-radius: 50%; }
+.run-status-icon.status-running, .run-status-icon.status-queued, .run-status-icon.status-cancelling { color: #347c5a; background: #eaf4ee; }
+.run-status-icon.status-succeeded { color: #2b8656; background: #e6f3eb; }
+.run-status-icon.status-failed, .run-status-icon.status-canceled { color: #a94b43; background: #fbefed; }
+.run-item-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.run-item-copy strong, .run-item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-item-copy strong { font-size: 10px; }
+.run-item-copy small { color: #8a9690; font-size: 9px; }
+.run-progress { flex: 0 0 auto; color: #748179; font-size: 10px; font-variant-numeric: tabular-nums; }
+.run-detail { display: grid; min-width: 0; align-content: start; gap: 12px; padding: 14px; }
+.run-detail-summary { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px 16px; color: #78857e; font-size: 10px; }
+.run-detail-summary strong { color: #34483e; font-size: 12px; }
+.run-node-results { display: grid; min-width: 0; gap: 8px; }
+.run-node-result { min-width: 0; padding: 10px; background: #f8faf8; border: 1px solid #e6ece8; border-radius: 6px; }
+.run-node-result > header { display: flex; min-width: 0; justify-content: space-between; gap: 8px; }
+.run-node-result > header strong { min-width: 0; overflow: hidden; color: #3b5045; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.run-node-result > header span { flex: 0 0 auto; color: #738078; font-size: 10px; }
+.run-result-stats { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; color: #718078; font-size: 10px; }
+.run-columns { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.run-columns > span { display: flex; max-width: 100%; min-width: 0; align-items: center; gap: 7px; padding: 4px 7px; overflow: hidden; color: #4b6255; background: #fff; border: 1px solid #e1e9e4; border-radius: 4px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.run-columns small { flex: 0 0 auto; color: #94a098; font-size: 9px; }
+.run-error { margin: 8px 0 0; color: #a3473e; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.run-empty { margin: 0; padding: 18px; color: #8b9790; text-align: center; font-size: 11px; }
 @media (max-width: 1000px) {
   .workflow-editor { grid-template-columns: 190px minmax(0, 1fr); }
   .node-inspector { grid-column: 1 / -1; border-top: 1px solid #e5ece8; border-left: 0; }
@@ -708,5 +882,7 @@ onBeforeUnmount(() => {
   .canvas-column { min-height: 380px; flex: 1; }
   .flow-canvas { min-height: 380px; }
   .node-inspector { min-height: 180px; flex: 0 0 auto; }
+  .run-monitor-body { grid-template-columns: minmax(0, 1fr); }
+  .run-list { max-height: 180px; border-right: 0; border-bottom: 1px solid #e7ece9; }
 }
 </style>
