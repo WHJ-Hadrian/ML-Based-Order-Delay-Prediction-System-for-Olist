@@ -17,6 +17,7 @@ import com.olist.datasets.vo.DatasetCatalogVO;
 import com.olist.datasets.vo.AnalysisWorkspaceVO;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AnalysisWorkspaceServiceImpl implements AnalysisWorkspaceService {
 
     private static final TypeReference<List<AnalysisWorkspaceRequest.CardRef>> CARD_LIST = new TypeReference<>() {};
+    private static final Set<String> DISPLAY_MODES = Set.of("chart", "table");
 
     private final AnalysisWorkspaceMapper mapper;
     private final DatasetOwnerProvider ownerProvider;
@@ -172,6 +174,9 @@ public class AnalysisWorkspaceServiceImpl implements AnalysisWorkspaceService {
 
     private void validateCards(List<AnalysisWorkspaceRequest.CardRef> cards) {
         for (AnalysisWorkspaceRequest.CardRef card : cards) {
+            if (card.displayMode() != null && !DISPLAY_MODES.contains(card.displayMode())) {
+                throw new InvalidLibraryRequestException("分析卡片视图只能是 chart 或 table");
+            }
             DatasetCatalogVO catalog = datasetService.catalog(card.datasetVersionId());
             DatasetCatalogVO.CatalogTableVO table = catalog.tables().stream()
                     .filter(candidate -> candidate.tableId().equals(card.tableId()))

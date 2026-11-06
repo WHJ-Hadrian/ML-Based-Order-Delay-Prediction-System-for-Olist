@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Check, Close, CopyDocument, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh, Share } from '@element-plus/icons-vue'
+import { ArrowRight, Check, Close, CopyDocument, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh, Search, Share } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { BarChart, ScatterChart } from 'echarts/charts'
@@ -20,6 +20,7 @@ import {
   updateAnalysisWorkspace,
 } from '@/api/datasets'
 import { useAuth } from '@/auth/keycloak'
+import AnalysisCardResult from '@/components/AnalysisCardResult.vue'
 import WorkflowSourceDialog from '@/components/WorkflowSourceDialog.vue'
 
 echarts.use([BarChart, ScatterChart, GridComponent, TooltipComponent, CanvasRenderer])
@@ -35,6 +36,9 @@ const analysis = ref(null)
 const selectedDatasetId = ref('')
 const selectedTableId = ref('')
 const selectedColumnId = ref('')
+const datasetSearch = ref('')
+const tableSearch = ref('')
+const fieldSearch = ref('')
 const analysisSelection = ref([])
 const relationColumnId = ref('')
 const relation = ref(null)
@@ -79,6 +83,20 @@ const selectedColumn = computed(() =>
   selectedTable.value?.columns?.find((column) => column.columnId === selectedColumnId.value) || null,
 )
 const selectedTableColumns = computed(() => selectedTable.value?.columns || [])
+const visibleDatasets = computed(() => {
+  const query = datasetSearch.value.trim().toLocaleLowerCase()
+  return datasets.value.filter((dataset) => !query || datasetLabel(dataset).toLocaleLowerCase().includes(query))
+})
+const visibleTables = computed(() => {
+  const query = tableSearch.value.trim().toLocaleLowerCase()
+  return (catalog.value?.tables || []).filter((table) => !query || table.tableName.toLocaleLowerCase().includes(query))
+})
+const visibleColumns = computed(() => {
+  const query = fieldSearch.value.trim().toLocaleLowerCase()
+  return selectedTableColumns.value.filter((column) => !query
+    || column.name.toLocaleLowerCase().includes(query)
+    || (column.logicalType || '').toLocaleLowerCase().includes(query))
+})
 const relationColumns = computed(() => selectedTableColumns.value.filter((column) => column.columnId !== selectedColumnId.value))
 const suggestedRelationColumn = computed(() => {
   const numericPattern = /INT|FLOAT|DECIMAL|NUMBER|DOUBLE|REAL/
@@ -198,6 +216,7 @@ async function addSelectedAnalyses() {
             tableId: reference.tableId,
             logicalType: result.logicalType,
             chartType: result.chartType,
+            displayMode: 'chart',
             points: result.points || [],
             rowCount: result.rowCount,
             uniqueCountEstimate: result.uniqueCountEstimate,
@@ -272,6 +291,7 @@ async function addCurrentAnalysis() {
       columnName: selectedColumn.value.name,
       logicalType: analysis.value.logicalType,
       chartType: analysis.value.chartType,
+      displayMode: 'chart',
       points: analysis.value.points || [],
       rowCount: analysis.value.rowCount,
       uniqueCountEstimate: analysis.value.uniqueCountEstimate,
@@ -304,9 +324,14 @@ function addCurrentRelation() {
     datasetName: datasetLabel(selectedDataset.value),
     tableName: selectedTable.value.tableName,
     columnName: `${relation.value.xColumnName} · ${relation.value.yColumnName}`,
+    xColumnName: relation.value.xColumnName,
+    yColumnName: relation.value.yColumnName,
+    groupColumnName: relation.value.groupColumnName,
+    valueColumnName: relation.value.valueColumnName,
     relationColumnName: relation.value.yColumnName,
     logicalType: relation.value.chartType,
     chartType: relation.value.chartType,
+    displayMode: 'chart',
     points: relation.value.points || [],
   }]
   markWorkspaceDirty()
@@ -331,7 +356,13 @@ function savedCardReference(card) {
     columnId: card.columnId,
   }
   if (card.relationColumnId) reference.relationColumnId = card.relationColumnId
+  reference.displayMode = card.displayMode === 'table' ? 'table' : 'chart'
   return reference
+}
+
+function setCardDisplayMode(card, mode) {
+  card.displayMode = mode === 'table' ? 'table' : 'chart'
+  markWorkspaceDirty()
 }
 
 function cardReferenceId(reference) {
@@ -362,9 +393,14 @@ async function loadAnalysisCard(reference) {
       tableId: reference.tableId,
       columnId: reference.columnId,
       relationColumnId: reference.relationColumnId || '',
+      displayMode: reference.displayMode || 'chart',
       datasetName: dataset ? datasetLabel(dataset) : `数据版本 ${reference.datasetVersionId}`,
       tableName: table.tableName,
       columnName: relationColumn ? `${column.name} · ${relationColumn.name}` : column.name,
+      xColumnName: result.xColumnName,
+      yColumnName: result.yColumnName,
+      groupColumnName: result.groupColumnName,
+      valueColumnName: result.valueColumnName,
       relationColumnName: relationColumn?.name || '',
       logicalType: reference.relationColumnId ? result.chartType : result.logicalType,
       chartType: result.chartType,
@@ -560,11 +596,6 @@ async function removeWorkspace() {
     if (error === 'cancel' || error === 'close') return
     workspaceError.value = error.message || '分析方案删除失败'
   }
-}
-
-function pointWidth(points, value) {
-  const max = Math.max(1, ...points.map((point) => Number(point.value) || 0))
-  return `${Math.max(2, ((Number(value) || 0) / max) * 100)}%`
 }
 
 async function loadDatasets() {
@@ -931,31 +962,33 @@ onBeforeUnmount(() => {
           @input="markWorkspaceDirty"
         />
       </label>
-      <el-button :icon="FolderOpened" :disabled="!selectedWorkspaceId || workspaceState === 'loading'" @click="openSelectedWorkspace">打开</el-button>
-      <el-button :icon="Plus" @click="startNewWorkspace">新建</el-button>
-      <el-button
-        v-if="activeWorkspaceId"
-        :icon="CopyDocument"
-        :loading="copyingWorkspace"
-        :disabled="copyingWorkspace || !['saved', 'warning'].includes(workspaceState)"
-        @click="copyWorkspace"
-      >复制</el-button>
-      <el-button
-        type="primary"
-        :icon="Check"
-        :loading="workspaceState === 'saving'"
-        :disabled="workspaceState === 'loading'"
-        @click="saveWorkspace"
-      >保存</el-button>
-      <el-button
-        v-if="activeWorkspaceId"
-        circle
-        aria-label="删除分析方案"
-        title="删除分析方案"
-        :icon="Delete"
-        :disabled="workspaceState === 'saving' || workspaceState === 'loading'"
-        @click="removeWorkspace"
-      />
+      <div class="workspace-actions" aria-label="方案操作">
+        <el-button :icon="FolderOpened" :disabled="!selectedWorkspaceId || workspaceState === 'loading'" @click="openSelectedWorkspace">打开</el-button>
+        <el-button :icon="Plus" @click="startNewWorkspace">新建</el-button>
+        <el-button
+          v-if="activeWorkspaceId"
+          :icon="CopyDocument"
+          :loading="copyingWorkspace"
+          :disabled="copyingWorkspace || !['saved', 'warning'].includes(workspaceState)"
+          @click="copyWorkspace"
+        >复制</el-button>
+        <el-button
+          type="primary"
+          :icon="Check"
+          :loading="workspaceState === 'saving'"
+          :disabled="workspaceState === 'loading'"
+          @click="saveWorkspace"
+        >保存</el-button>
+        <el-button
+          v-if="activeWorkspaceId"
+          circle
+          aria-label="删除分析方案"
+          title="删除分析方案"
+          :icon="Delete"
+          :disabled="workspaceState === 'saving' || workspaceState === 'loading'"
+          @click="removeWorkspace"
+        />
+      </div>
       <span class="workspace-state" :class="`is-${workspaceState}`" role="status">{{ workspaceStateLabel }}</span>
     </section>
     <div v-if="workspaceError" class="analysis-message is-error" role="alert">
@@ -982,12 +1015,16 @@ onBeforeUnmount(() => {
       </header>
       <div class="explorer-grid">
         <section class="asset-column" aria-label="数据集">
-          <div class="asset-column-heading"><strong>数据集</strong><span>{{ datasets.length }}</span></div>
+          <div class="asset-column-toolbar">
+            <div class="asset-column-heading"><strong>数据集</strong><span>{{ visibleDatasets.length }} / {{ datasets.length }}<i v-if="datasetHasMore">+</i></span></div>
+            <el-input v-model="datasetSearch" class="asset-search" size="small" clearable :prefix-icon="Search" placeholder="搜索数据集" aria-label="搜索数据集" />
+          </div>
           <el-skeleton v-if="loadingDatasets" :rows="5" animated />
           <el-empty v-else-if="!datasets.length" description="暂无已就绪数据集" :image-size="58" />
+          <el-empty v-else-if="!visibleDatasets.length" description="没有匹配的数据集" :image-size="58" />
           <template v-else>
             <button
-              v-for="dataset in datasets"
+              v-for="dataset in visibleDatasets"
               :key="dataset.id"
               type="button"
               class="asset-item"
@@ -998,16 +1035,20 @@ onBeforeUnmount(() => {
               <span class="asset-item-copy"><strong>{{ datasetLabel(dataset) }}</strong><small>{{ dataset.tableCount || 0 }} 张表 · {{ formatNumber(dataset.rowCount) }} 行</small></span>
               <el-icon><ArrowRight /></el-icon>
             </button>
-            <el-button v-if="datasetHasMore" class="load-more-assets" text :loading="loadingMoreDatasets" @click="loadMoreDatasets">加载更多数据集</el-button>
           </template>
+          <el-button v-if="datasetHasMore" class="load-more-assets" text :loading="loadingMoreDatasets" @click="loadMoreDatasets">加载更多数据集</el-button>
         </section>
         <section class="asset-column" aria-label="数据表">
-          <div class="asset-column-heading"><strong>数据表</strong><span>{{ catalog?.tables?.length || 0 }}</span></div>
+          <div class="asset-column-toolbar">
+            <div class="asset-column-heading"><strong>数据表</strong><span>{{ visibleTables.length }} / {{ catalog?.tables?.length || 0 }}</span></div>
+            <el-input v-model="tableSearch" class="asset-search" size="small" clearable :prefix-icon="Search" placeholder="搜索数据表" aria-label="搜索数据表" :disabled="!catalog?.tables?.length" />
+          </div>
           <el-skeleton v-if="loadingCatalog" :rows="5" animated />
           <el-empty v-else-if="!catalog?.tables?.length" description="选择数据集查看表" :image-size="58" />
+          <el-empty v-else-if="!visibleTables.length" description="没有匹配的数据表" :image-size="58" />
           <template v-else>
             <button
-              v-for="table in catalog?.tables || []"
+              v-for="table in visibleTables"
               :key="table.tableId"
               type="button"
               class="asset-item"
@@ -1021,11 +1062,15 @@ onBeforeUnmount(() => {
           </template>
         </section>
         <section class="asset-column field-column" aria-label="字段">
-          <div class="asset-column-heading"><strong>字段</strong><span>{{ selectedTableColumns.length }}</span></div>
+          <div class="asset-column-toolbar">
+            <div class="asset-column-heading"><strong>字段</strong><span>{{ visibleColumns.length }} / {{ selectedTableColumns.length }}</span></div>
+            <el-input v-model="fieldSearch" class="asset-search" size="small" clearable :prefix-icon="Search" placeholder="搜索字段名或类型" aria-label="搜索字段" :disabled="!selectedTableColumns.length" />
+          </div>
           <el-empty v-if="!selectedTableColumns.length" description="选择数据表查看字段" :image-size="58" />
+          <el-empty v-else-if="!visibleColumns.length" description="没有匹配的字段" :image-size="58" />
           <template v-else>
             <div
-              v-for="column in selectedTableColumns"
+              v-for="column in visibleColumns"
               :key="column.columnId"
               class="asset-item"
               :class="{ 'is-active': column.columnId === selectedColumnId }"
@@ -1181,23 +1226,11 @@ onBeforeUnmount(() => {
               <span>{{ card.logicalType || '字段' }}</span>
             </template>
           </div>
-          <div v-if="!card.relationColumnId && card.points.length" class="board-bars">
-            <div v-for="point in card.points.slice(0, 8)" :key="point.label" class="board-bar-row" :title="`${point.label}: ${formatNumber(point.value)}`">
-              <span>{{ point.label }}</span>
-              <div class="board-bar-track"><i :style="{ width: pointWidth(card.points, point.value) }"></i></div>
-              <b>{{ formatNumber(point.value) }}</b>
-            </div>
-          </div>
-          <div v-else-if="card.relationColumnId && card.points.length" class="board-relation-points">
-            <div class="board-relation-head"><span>{{ card.chartType === 'scatter' ? card.columnName.split(' · ')[0] : '分组' }}</span><span>{{ card.chartType === 'scatter' ? card.relationColumnName : '数值' }}</span></div>
-            <div v-for="(point, index) in card.points.slice(0, 8)" :key="`${point.label || 'sample'}:${index}`" class="board-relation-row">
-              <span :title="point.label || formatNumber(point.x)">{{ point.label || formatNumber(point.x) }}</span>
-              <strong>{{ formatNumber(point.y) }}</strong>
-            </div>
-            <small v-if="card.chartType === 'scatter'">显示 {{ Math.min(card.points.length, 8) }} / {{ card.points.length }} 个确定性样本点</small>
-            <small v-else>显示前 {{ Math.min(card.points.length, 8) }} 个类别的均值</small>
-          </div>
-          <el-empty v-else :description="card.error || '没有可绘制的数据'" :image-size="56" />
+          <AnalysisCardResult
+            :card="card"
+            :disabled="['saving', 'loading'].includes(workspaceState)"
+            @display-mode-change="setCardDisplayMode(card, $event)"
+          />
         </article>
       </div>
     </section>
@@ -1233,7 +1266,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .analysis-page {
+  min-width: 0;
   padding-bottom: 30px;
+  padding: 18px 20px 30px;
+  color: #263a33;
+  background: #f4f7f5;
+  border: 1px solid rgba(221, 231, 225, 0.9);
+  border-radius: 12px;
+}
+
+.analysis-page :deep(.page-header::before) {
+  display: none;
 }
 
 .analysis-header {
@@ -1257,11 +1300,110 @@ onBeforeUnmount(() => {
   color: #64736d;
 }
 
+.analysis-workspace-toolbar {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(220px, 1.15fr) auto minmax(110px, auto);
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e1e9e4;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(27, 61, 50, 0.035);
+}
+
+.workspace-picker,
+.workspace-name-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #63736b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workspace-picker :deep(.el-select),
+.workspace-name-field :deep(.el-input) {
+  width: 100%;
+  min-width: 0;
+}
+
+.workspace-picker :deep(.el-select__wrapper),
+.workspace-name-field :deep(.el-input__wrapper) {
+  min-height: 36px;
+  background: #fbfcfb;
+  box-shadow: 0 0 0 1px #dce5df inset;
+}
+
+.workspace-picker :deep(.el-select__selected-item),
+.workspace-picker :deep(.el-select__placeholder),
+.workspace-name-field :deep(.el-input__inner) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-option {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.workspace-actions :deep(.el-button) {
+  height: 36px;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.workspace-state {
+  justify-self: end;
+  max-width: 150px;
+  overflow: hidden;
+  padding: 7px 9px;
+  color: #53675d;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #f1f5f2;
+  border-radius: 6px;
+}
+
+.workspace-state.is-dirty,
+.workspace-state.is-warning {
+  color: #8b5a17;
+  background: #fff6e8;
+}
+
+.workspace-state.is-error {
+  color: #9b3b32;
+  background: #fff0ed;
+}
+
+.workspace-state.is-saved {
+  color: #28654f;
+  background: #eaf5ef;
+}
+
 .analysis-explorer {
   min-width: 0;
   overflow: hidden;
-  background: rgba(250, 253, 251, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.88);
+  background: #fff;
+  border: 1px solid #e1e9e4;
   border-radius: 8px;
   box-shadow: 0 10px 28px rgba(27, 61, 50, 0.055);
 }
@@ -1288,8 +1430,8 @@ onBeforeUnmount(() => {
 .explorer-grid {
   display: grid;
   grid-template-columns: minmax(0, .95fr) minmax(0, .95fr) minmax(0, 1.1fr);
-  min-height: 250px;
-  max-height: 340px;
+  height: clamp(280px, 44vh, 520px);
+  min-height: 0;
 }
 
 .asset-column {
@@ -1298,25 +1440,41 @@ onBeforeUnmount(() => {
   padding: 10px;
   border-right: 1px solid #e4ebe7;
   scrollbar-width: thin;
+  scrollbar-color: #cad9d0 transparent;
 }
 
 .asset-column:last-child { border-right: 0; }
 
+.asset-column::-webkit-scrollbar { width: 8px; height: 8px; }
+.asset-column::-webkit-scrollbar-thumb { background: #cad9d0; border: 2px solid #fff; border-radius: 8px; }
+.asset-column::-webkit-scrollbar-thumb:hover { background: #a9c1b3; }
+
+.asset-column-toolbar {
+  position: sticky;
+  z-index: 2;
+  top: -10px;
+  margin: -10px -10px 7px;
+  padding: 10px 10px 8px;
+  background: #fff;
+  border-bottom: 1px solid #edf1ee;
+}
+
 .asset-column-heading {
   display: flex;
-  position: sticky;
-  z-index: 1;
-  top: -10px;
   align-items: center;
   justify-content: space-between;
-  margin: -10px -10px 7px;
-  padding: 11px 12px 8px;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding: 0 2px;
   color: #50655c;
-  background: rgba(250, 253, 251, 0.96);
   font-size: 10px;
 }
 
-.asset-column-heading span { color: #83918a; font-variant-numeric: tabular-nums; }
+.asset-column-heading span { color: #83918a; font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.asset-column-heading i { padding-left: 2px; color: #2f775e; font-style: normal; }
+.asset-search { width: 100%; }
+.asset-search :deep(.el-input__wrapper) { min-height: 30px; padding-inline: 8px; background: #f8faf9; box-shadow: 0 0 0 1px #e4ebe6 inset; }
+.asset-search :deep(.el-input__inner) { font-size: 10px; }
 
 .asset-item {
   display: flex;
@@ -1432,8 +1590,8 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-block: 15px;
   overflow: hidden;
-  background: rgba(250, 253, 251, 0.84);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: #fff;
+  border: 1px solid #e1e9e4;
   border-radius: 8px;
   box-shadow: 0 10px 28px rgba(27, 61, 50, 0.05);
 }
@@ -1475,8 +1633,8 @@ onBeforeUnmount(() => {
 
 .chart-panel {
   overflow: hidden;
-  background: rgba(250, 253, 251, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: #fff;
+  border: 1px solid #e1e9e4;
   border-radius: 8px;
   box-shadow: 0 14px 34px rgba(27, 61, 50, 0.065);
 }
@@ -1525,7 +1683,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   padding: 13px 14px 12px;
-  background: rgba(250, 253, 251, 0.86);
+  background: #fff;
   border: 1px solid #e1eae5;
   border-radius: 7px;
 }
@@ -1575,63 +1733,9 @@ onBeforeUnmount(() => {
   font-size: 10px;
 }
 
-.board-relation-points { display: grid; gap: 5px; padding: 4px 1px 0; }
-.board-relation-head, .board-relation-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); align-items: center; gap: 10px; }
-.board-relation-head { padding-bottom: 5px; color: #83918a; font-size: 9px; border-bottom: 1px solid #e8eeeb; }
-.board-relation-row > span { min-width: 0; overflow: hidden; color: #566a60; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.board-relation-row > strong { color: #345d4c; font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
-.board-relation-points > small { margin-top: 2px; color: #8b9891; font-size: 9px; }
-
 .board-card-stats > span {
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.board-bars {
-  display: grid;
-  gap: 8px;
-  margin-top: 13px;
-}
-
-.board-bar-row {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(50px, 0.9fr) minmax(30px, 1.4fr) minmax(28px, auto);
-  align-items: center;
-  gap: 8px;
-  color: #586b63;
-  font-size: 10px;
-}
-
-.board-bar-row > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.board-bar-track {
-  height: 7px;
-  overflow: hidden;
-  background: #edf2ef;
-  border-radius: 4px;
-}
-
-.board-bar-track i {
-  display: block;
-  height: 100%;
-  background: #43836d;
-  border-radius: inherit;
-}
-
-.board-bar-row b {
-  overflow: hidden;
-  color: #344d42;
-  font-size: 10px;
-  font-weight: 600;
-  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1640,8 +1744,8 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin-top: 15px;
   padding: 16px 19px 11px;
-  background: rgba(250, 253, 251, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: #fff;
+  border: 1px solid #e1e9e4;
   border-radius: 8px;
   box-shadow: 0 12px 30px rgba(27, 61, 50, 0.05);
 }
@@ -1777,8 +1881,8 @@ onBeforeUnmount(() => {
   margin-top: 15px;
   padding: 28px;
   text-align: center;
-  background: rgba(250, 253, 251, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: #fff;
+  border: 1px solid #e1e9e4;
   border-radius: 8px;
 }
 
@@ -1805,15 +1909,29 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .analysis-workspace-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .workspace-actions {
+    flex-wrap: wrap;
+  }
+  .workspace-state {
+    justify-self: start;
+  }
   .explorer-grid { grid-template-columns: repeat(3, minmax(210px, 1fr)); overflow-x: auto; }
   .asset-column { min-width: 210px; }
 }
 
 @media (max-width: 600px) {
+  .analysis-page { padding: 14px 11px 22px; }
+  .analysis-workspace-toolbar { grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 10px; }
+  .workspace-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace-actions :deep(.el-button) { width: 100%; margin: 0; }
+  .workspace-state { justify-self: start; }
   .explorer-heading { align-items: flex-start; padding: 11px 12px; }
   .explorer-actions { justify-content: flex-start; }
   .explorer-heading p { max-width: 230px; }
-  .explorer-grid { display: flex; min-height: 220px; max-height: 290px; }
+  .explorer-grid { display: flex; height: min(44vh, 340px); min-height: 240px; max-height: 340px; }
   .asset-column { flex: 0 0 78vw; max-width: 300px; }
   .explorer-suggestion { align-items: stretch; flex-wrap: wrap; }
   .explorer-suggestion > div { flex-basis: 100%; }
