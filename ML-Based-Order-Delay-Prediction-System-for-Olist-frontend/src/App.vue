@@ -8,6 +8,9 @@ import AppSidebar from '@/components/AppSidebar.vue'
 import AuthRequiredDialog from '@/components/AuthRequiredDialog.vue'
 import SoftTipHost from '@/components/SoftTipHost.vue'
 import WorkspaceDock from '@/components/WorkspaceDock.vue'
+import EditorTabs from '@/components/EditorTabs.vue'
+import WorkbenchBottomPanel from '@/components/WorkbenchBottomPanel.vue'
+import WorkbenchTopbar from '@/components/WorkbenchTopbar.vue'
 import liquidGlassBackdrop from '@/assets/videos/liquid-wave.mp4'
 import { useAppearance } from '@/state/appearance'
 import { provideWorkspaceState } from '@/state/workspace'
@@ -146,7 +149,7 @@ onBeforeUnmount(() => {
       <AppSidebar v-model:collapsed="sidebarCollapsed" :total="datasetTotal" />
 
       <main class="app-main">
-        <div class="workspace-topbar">
+        <WorkbenchTopbar @open-runs="router.push('/workflow-runs')">
           <el-dropdown
             v-if="auth.state.authenticated"
             trigger="click"
@@ -183,13 +186,16 @@ onBeforeUnmount(() => {
             <span class="account-avatar"><el-icon><User /></el-icon></span>
             <span class="account-name">{{ auth.state.status === 'checking' ? '验证中' : '登录 / 注册' }}</span>
           </button>
+        </WorkbenchTopbar>
+        <EditorTabs />
+        <div class="workbench-content">
+          <RouterView v-slot="{ Component }">
+            <Transition name="page-fade" mode="out-in">
+              <component :is="Component" />
+            </Transition>
+          </RouterView>
         </div>
-
-        <RouterView v-slot="{ Component }">
-          <Transition name="page-fade" mode="out-in">
-            <component :is="Component" />
-          </Transition>
-        </RouterView>
+        <WorkbenchBottomPanel />
       </main>
 
       <SoftTipHost />
@@ -205,11 +211,30 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.workspace-topbar {
+.app-main {
   display: flex;
-  min-height: 38px;
-  justify-content: flex-end;
-  margin-bottom: 8px;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0;
+}
+
+.workbench-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 24px 30px 48px;
+}
+
+@media (max-width: 760px) {
+  .workbench-content {
+    padding: 18px 14px calc(112px + env(safe-area-inset-bottom));
+  }
+
+  .app-main {
+    height: 100dvh;
+  }
 }
 
 .account-trigger {
