@@ -926,15 +926,21 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .workflow-shell:fullscreen { display: flex; width: 100vw; height: 100vh; height: 100dvh; flex-direction: column; margin: 0; overflow: auto; background: #fff; border: 0; border-radius: 0; box-shadow: none; }
 .workflow-shell.is-focused .workflow-canvas, .workflow-shell:fullscreen .workflow-canvas { flex: 1 1 auto; overflow: auto; }
 .workflow-shell.is-focused .workflow-footer, .workflow-shell:fullscreen .workflow-footer { flex: 0 0 auto; }
-.workflow-canvas { min-width: 0; padding: 17px; background-color: #f6f9f7; background-image: radial-gradient(#d6e1db 0.8px, transparent 0.8px); background-size: 18px 18px; }
-.workflow-track { display: grid; grid-template-columns: minmax(230px, 0.82fr) 32px minmax(330px, 1.15fr) 32px minmax(300px, 1fr); align-items: start; gap: 0; }
-.flow-node { min-width: 0; align-self: start; padding: 14px; background: #fff; border: 1px solid #dfe7e2; border-radius: 7px; box-shadow: 0 3px 9px rgba(35, 58, 47, 0.045); }
+.workflow-canvas { min-width: 0; padding: 17px; container-type: inline-size; background-color: #f6f9f7; background-image: radial-gradient(#d6e1db 0.8px, transparent 0.8px); background-size: 18px 18px; }
+.workflow-track { display: grid; grid-template-columns: minmax(230px, 300px) minmax(48px, 1fr) minmax(300px, 360px) minmax(48px, 1fr) minmax(280px, 320px); align-items: start; gap: 0; }
+.flow-node { width: 100%; min-width: 0; align-self: start; padding: 14px; background: #fff; border: 1px solid #dfe7e2; border-radius: 7px; box-shadow: 0 3px 9px rgba(35, 58, 47, 0.045); }
+.models-node { display: flex; min-width: 0; flex-direction: column; align-items: stretch; }
+.models-node > .node-heading,
+.models-node > .model-branch-list,
+.models-node > .training-options { width: 100%; min-width: 0; flex: 0 0 auto; }
+.models-node > .node-heading > div { min-width: 0; flex: 1 1 auto; }
+.models-node > .node-heading p { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .node-heading { display: flex; min-width: 0; min-height: 38px; align-items: center; gap: 9px; margin-bottom: 13px; }
 .node-index { display: grid; width: 26px; height: 26px; flex: 0 0 26px; place-items: center; color: #216c5a; background: #e9f3ee; border: 1px solid #d6e8de; border-radius: 6px; font-size: 10px; font-weight: 700; }
 .node-heading > div { min-width: 0; flex: 1; }
 .node-heading h2 { margin: 0; overflow: hidden; color: #263b32; font-size: 13px; font-weight: 680; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .node-heading p { margin: 3px 0 0; color: #829089; font-size: 10px; line-height: 1.3; }
-.flow-connector { position: relative; display: flex; align-self: start; align-items: center; justify-content: center; min-height: 1px; margin-top: 47px; }
+.flow-connector { position: relative; display: flex; width: 100%; align-self: start; align-items: center; justify-content: center; min-height: 1px; margin-top: 47px; }
 .flow-connector::before { width: 100%; height: 1px; background: #a9c4b7; content: ''; }
 .flow-connector::after { position: absolute; right: 1px; width: 6px; height: 6px; border-top: 1px solid #6b9a83; border-right: 1px solid #6b9a83; content: ''; transform: rotate(45deg); }
 .flow-connector span { position: absolute; z-index: 1; width: 7px; height: 7px; background: #fff; border: 1px solid #90b39f; border-radius: 50%; }
@@ -980,7 +986,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .fields-empty { display: flex; min-height: 190px; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; color: #84928b; font-size: 11px; line-height: 1.6; text-align: center; }
 .fields-empty :deep(.el-icon) { color: #67917a; font-size: 24px; }
 .model-branch-list { display: grid; gap: 9px; }
-.model-branch { min-width: 0; padding: 9px; background: #fbfcfb; border: 1px solid #e4ebe6; border-radius: 6px; }
+.model-branch { width: 100%; min-width: 0; padding: 9px; background: #fbfcfb; border: 1px solid #e4ebe6; border-radius: 6px; }
 .branch-title { display: flex; min-height: 25px; align-items: center; gap: 6px; margin-bottom: 7px; }
 .branch-title strong { flex: 1; color: #4a5c53; font-size: 10px; font-weight: 650; }
 .branch-index { display: grid; width: 19px; height: 19px; place-items: center; color: #426f5a; background: #e8f1eb; border-radius: 4px; font-size: 9px; font-weight: 700; }
@@ -992,7 +998,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .algorithm-choice strong { font-size: 10px; font-weight: 660; }
 .algorithm-choice span { color: #839088; font-size: 9px; line-height: 1.35; }
 .branch-note { margin-top: 6px; color: #829089; font-size: 9px; line-height: 1.45; }
-.training-options { display: grid; gap: 9px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #e9efeb; }
+.training-options { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #e9efeb; }
 .option-field { display: grid; min-width: 0; gap: 5px; color: #66776e; font-size: 10px; font-weight: 600; }
 .option-field > span { display: flex; justify-content: space-between; gap: 8px; }
 .option-field small { color: #89968f; font-size: 9px; font-weight: 500; }
@@ -1046,8 +1052,16 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .registry-metrics { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px 10px; color: #586b63; font-size: 10px; }
 .registry-metrics span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+@container (max-width: 930px) {
+  .workflow-track { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .flow-node { max-width: none; }
+  .flow-connector { min-height: 25px; margin-top: 0; }
+  .flow-connector::before { width: 1px; height: 100%; }
+  .flow-connector::after { right: auto; bottom: 2px; transform: rotate(135deg); }
+  .branch-connector span { display: none; }
+}
+
 @media (max-width: 1120px) {
-  .workflow-track { grid-template-columns: minmax(230px, 0.8fr) 26px minmax(310px, 1fr) 26px minmax(290px, 0.95fr); }
   .workflow-canvas { padding: 12px; }
   .flow-node { padding: 12px; }
 }
@@ -1056,11 +1070,6 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
   .workflow-topline { align-items: flex-start; flex-direction: column; }
   .workflow-controls { width: 100%; justify-content: flex-end; }
   .workflow-name-input { width: min(240px, calc(100vw - 210px)); margin-right: auto; }
-  .workflow-track { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .flow-connector { min-height: 25px; margin-top: 0; }
-  .flow-connector::before { width: 1px; height: 100%; }
-  .flow-connector::after { right: auto; bottom: 2px; transform: rotate(135deg); }
-  .branch-connector span { display: none; }
   .field-list { max-height: 300px; }
   .workflow-footer { align-items: flex-start; flex-direction: column; }
   .run-actions { width: 100%; justify-content: space-between; }
