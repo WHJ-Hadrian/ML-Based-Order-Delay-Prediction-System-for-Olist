@@ -63,7 +63,7 @@ public class ModelTrainingService {
         List<String> selectedColumns = new ArrayList<>(request.featureColumns());
         selectedColumns.add(request.targetColumn());
         List<List<String>> sourceRows = datasetClient.rows(
-                request.datasetVersionId(), request.tableId(), table.rowCount(), selectedColumns, bearerToken);
+                catalog.datasetId(), request.tableId(), table.rowCount(), selectedColumns, bearerToken);
         List<Map<String, Object>> rows = toTrainingRows(sourceRows, request, table);
         TrainingResult result = pythonClient.train(ownerId, request, rows);
         if (result == null || result.artifactId() == null || result.artifactId().isBlank()) {

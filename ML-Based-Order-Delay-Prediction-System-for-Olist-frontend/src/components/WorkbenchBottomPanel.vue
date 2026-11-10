@@ -89,31 +89,30 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.bottom-panel { flex: 0 0 32px; min-width: 0; background: #f8faf9; border-top: 1px solid #dce3df; }
-.bottom-panel.is-open { flex-basis: 150px; }
-.bottom-panel-bar { display: flex; height: 32px; align-items: center; gap: 4px; padding: 0 8px; }
-.panel-tab, .panel-refresh, .panel-toggle { height: 26px; color: #65736c; font-size: 10px; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
-.panel-tab { position: relative; padding: 0 9px; }
-.panel-tab.is-active { color: #214d3e; font-weight: 650; }
-.panel-tab.is-active::after { position: absolute; right: 7px; bottom: -3px; left: 7px; height: 2px; background: #28775f; content: ''; }
-.panel-tab span { min-width: 16px; margin-left: 4px; padding: 1px 4px; color: #fff; background: #28775f; border-radius: 8px; }
+.bottom-panel { flex: 0 0 30px; min-width: 0; background: #fff; border-top: 1px solid #e3e5e8; }
+.bottom-panel.is-open { flex-basis: 188px; }
+.bottom-panel-bar { display: flex; height: 29px; align-items: center; gap: 4px; padding: 0 8px; }
+.panel-tab, .panel-refresh, .panel-toggle { height: 26px; color: #50545a; font-size: 12px; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+.panel-tab { position: relative; padding: 0 8px; }
+.panel-tab.is-active { color: #0f6cbd; font-weight: 640; }
+.panel-tab span { min-width: 16px; margin-left: 5px; padding: 2px 5px; color: #0f6cbd; font-size: 10px; font-variant-numeric: tabular-nums; background: #ebf3fc; border-radius: 3px; }
 .panel-refresh { margin-left: auto; }
 .panel-toggle { width: 28px; }
-.panel-refresh:hover, .panel-toggle:hover { color: #265c49; background: #e8eeeb; }
-.bottom-panel-body { display: grid; height: 118px; align-content: start; overflow: auto; padding: 4px 8px 8px; border-top: 1px solid #edf1ef; }
-.task-row { display: grid; min-width: 0; grid-template-columns: 18px minmax(120px, 1fr) 70px 150px; align-items: center; gap: 7px; min-height: 27px; padding: 0 7px; color: #526159; font-size: 10px; text-align: left; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
-.task-row:hover { background: #edf3ef; }
+.panel-refresh:hover, .panel-toggle:hover { color: #0f6cbd; background: #f0f0f0; }
+.bottom-panel-body { display: grid; height: 158px; align-content: start; overflow: auto; padding: 4px 8px 8px; border-top: 1px solid #eceef0; }
+.task-row { display: grid; min-width: 0; grid-template-columns: 18px minmax(120px, 1fr) 70px minmax(120px, 180px); align-items: center; gap: 8px; min-height: 31px; padding: 0 8px; color: #50545a; font-size: 11px; text-align: left; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+.task-row:hover { background: #f0f4f1; }
 .task-row strong, .task-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-row strong { color: #34483f; font-weight: 600; }
-.task-row small { color: #89938e; }
-.task-empty { min-height: 56px; color: #87928d; font-size: 10px; background: transparent; border: 0; cursor: pointer; }
+.task-row strong { color: #242424; font-weight: 600; }
+.task-row small { color: #70777e; }
+.task-empty { min-height: 56px; color: #70777e; font-size: 12px; background: transparent; border: 0; cursor: pointer; }
 .task-empty.is-error { color: #9a4940; }
 .is-spinning { animation: panel-spin 1s linear infinite; }
 @keyframes panel-spin { to { transform: rotate(360deg); } }
 @media (max-width: 760px) {
-  .bottom-panel { position: fixed; right: 8px; bottom: calc(88px + env(safe-area-inset-bottom)); left: 8px; z-index: 15; max-width: 560px; margin-inline: auto; border: 1px solid #dce3df; border-radius: 7px; box-shadow: 0 8px 28px rgba(26, 48, 39, .14); }
-  .bottom-panel.is-open { max-height: min(34dvh, 220px); }
-  .bottom-panel-body { height: auto; max-height: calc(min(34dvh, 220px) - 33px); }
+  .bottom-panel { position: fixed; right: 10px; bottom: calc(88px + env(safe-area-inset-bottom)); left: 10px; z-index: 15; max-width: 560px; margin-inline: auto; border: 1px solid #e0e6e2; border-radius: 8px; box-shadow: 0 8px 28px rgba(26, 48, 39, .12); }
+  .bottom-panel.is-open { max-height: min(38dvh, 280px); }
+  .bottom-panel-body { height: auto; max-height: calc(min(38dvh, 280px) - 34px); }
   .task-row { grid-template-columns: 18px minmax(0, 1fr) 60px; }
   .task-row small { display: none; }
 }

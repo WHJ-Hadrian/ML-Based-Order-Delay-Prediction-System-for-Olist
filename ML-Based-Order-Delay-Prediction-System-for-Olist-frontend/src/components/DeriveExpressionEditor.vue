@@ -365,7 +365,7 @@ function removeBranch(index) {
 }
 
 .expression-editor.is-nested {
-  background: rgba(23, 107, 87, 0.025);
+  background: rgba(15, 108, 189, 0.025);
 }
 
 .expression-toolbar,
@@ -464,15 +464,15 @@ function removeBranch(index) {
   flex: 0 0 22px;
   place-items: center;
   margin-top: 8px;
-  color: #176b57;
+  color: var(--accent);
   font-size: 11px;
-  background: rgba(23, 107, 87, 0.09);
+  background: rgba(15, 108, 189, 0.09);
   border-radius: 50%;
 }
 
 .branch-card {
   padding: 10px;
-  background: rgba(23, 107, 87, 0.025);
+  background: rgba(15, 108, 189, 0.025);
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
 }

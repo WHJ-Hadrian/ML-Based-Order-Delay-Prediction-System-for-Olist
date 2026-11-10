@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { FolderAdd, Lock, Refresh, Search } from '@element-plus/icons-vue'
+import { FolderAdd, Loading, Lock, Refresh, Search } from '@element-plus/icons-vue'
 import {
   AuthenticationRequiredError,
   useAuth,
@@ -189,6 +189,14 @@ function handleExtractFields(item) {
     tab: activeTab.value !== DATASET_TAB_KEYS.ALL ? activeTab.value : undefined,
   }
   router.push({ path: '/fields', query })
+}
+
+function handleAnalyzeDataset(item) {
+  router.push({ path: '/analysis', query: { datasetId: item.id } })
+}
+
+function handleTrainDataset(item) {
+  router.push({ path: '/models', query: { datasetId: item.id } })
 }
 
 function handleSignIn() {
@@ -618,9 +626,9 @@ function syncRowFromDetail(id, detail) {
           </div>
         </header>
 
-        <el-card v-if="!authReady || authRequired" class="auth-required-card" shadow="never">
+        <div v-if="!authReady || authRequired" class="auth-required-state" :class="{ 'is-checking': !authReady }" role="status" aria-live="polite">
           <div class="auth-required-content">
-            <span class="auth-required-icon"><el-icon><Lock /></el-icon></span>
+            <span class="auth-required-icon"><el-icon><Loading v-if="!authReady" /><Lock v-else /></el-icon></span>
             <template v-if="authReady">
               <h2>登录后查看你的数据集</h2>
               <p>登录后可安全访问和管理属于你的数据资产。</p>
@@ -630,10 +638,10 @@ function syncRowFromDetail(id, detail) {
             </template>
             <template v-else>
               <h2>正在确认账户状态</h2>
-              <el-skeleton animated :rows="2" />
+              <p>正在连接账户服务…</p>
             </template>
           </div>
-        </el-card>
+        </div>
 
         <template v-else>
         <el-card class="toolbar-card" shadow="never">
@@ -728,6 +736,8 @@ function syncRowFromDetail(id, detail) {
               @retry-detail="loadDetail($event, true)"
               @retry-versions="loadDatasetVersions($event, true)"
               @extract-fields="handleExtractFields"
+              @analyze="handleAnalyzeDataset"
+              @train="handleTrainDataset"
             />
 
             <el-empty
@@ -761,42 +771,53 @@ function syncRowFromDetail(id, detail) {
 </template>
 
 <style scoped>
-.auth-required-card {
-  min-height: 340px;
+.auth-required-state {
+  display: grid;
+  min-height: 160px;
+  place-items: center;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e7ece9;
+  border-radius: 4px;
 }
 
 .auth-required-content {
   display: flex;
-  min-height: 290px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 28px 18px;
+  padding: 8px 18px;
   text-align: center;
 }
 
 .auth-required-icon {
   display: grid;
-  width: 54px;
-  height: 54px;
-  margin-bottom: 18px;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 12px;
   place-items: center;
-  color: #176b57;
-  font-size: 23px;
+  color: var(--accent);
+  font-size: 18px;
   background: rgba(219, 241, 233, 0.9);
-  border-radius: 16px;
+  border-radius: 8px;
 }
 
 .auth-required-content h2 {
   margin: 0;
   color: #192521;
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 650;
 }
 
 .auth-required-content p {
-  margin: 9px 0 22px;
+  margin: 7px 0 16px;
   color: #68766f;
   font-size: 13px;
 }
+
+.auth-required-state.is-checking { min-height: 132px; }
+.auth-required-state.is-checking .auth-required-content { display: grid; grid-template-columns: 32px minmax(0, 1fr); column-gap: 12px; text-align: left; }
+.auth-required-state.is-checking .auth-required-icon { grid-row: span 2; width: 32px; height: 32px; margin: 0; font-size: 15px; }
+.auth-required-state.is-checking .auth-required-content h2 { font-size: 13px; }
+.auth-required-state.is-checking .auth-required-content p { margin: 3px 0 0; font-size: 11px; }
 </style>

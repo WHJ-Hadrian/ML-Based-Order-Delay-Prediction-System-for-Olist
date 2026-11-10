@@ -23,35 +23,45 @@ function close(event, path) {
 
 <template>
   <nav class="editor-tabs" role="tablist" aria-label="打开的工作区文档">
-    <button
+    <div
       v-for="document in documents"
       :key="document.path"
-      type="button"
-      class="editor-tab"
+      class="editor-tab-shell"
+      role="presentation"
       :class="{ 'is-active': route.path === document.path }"
-      role="tab"
-      :aria-current="route.path === document.path ? 'page' : undefined"
-      :aria-selected="route.path === document.path"
-      :title="document.title"
-      @click="activate(document.path)"
     >
-      <el-icon><component :is="document.icon" /></el-icon>
-      <span>{{ document.title }}</span>
-      <span class="tab-close" :aria-label="`关闭 ${document.title}`" role="button" tabindex="0" @click="close($event, document.path)" @keydown.enter.prevent="close($event, document.path)"><el-icon><Close /></el-icon></span>
-    </button>
+      <button
+        type="button"
+        class="editor-tab"
+        role="tab"
+        :aria-current="route.path === document.path ? 'page' : undefined"
+        :aria-selected="route.path === document.path"
+        :title="document.title"
+        @click="activate(document.path)"
+      >
+        <el-icon><component :is="document.icon" /></el-icon>
+        <span>{{ document.title }}</span>
+      </button>
+      <button type="button" class="tab-close" :aria-label="`关闭 ${document.title}`" :title="`关闭 ${document.title}`" @click="close($event, document.path)"><el-icon><Close /></el-icon></button>
+    </div>
   </nav>
 </template>
 
 <style scoped>
-.editor-tabs { display: flex; min-width: 0; height: 38px; flex: 0 0 38px; align-items: stretch; overflow-x: auto; overflow-y: hidden; background: #f1f4f2; border-bottom: 1px solid #dce3df; scrollbar-width: none; }
+.editor-tabs { display: flex; min-width: 0; height: 32px; flex: 0 0 32px; align-items: stretch; overflow-x: auto; overflow-y: hidden; padding: 0; background: #f3f4f5; border-bottom: 1px solid #e3e5e8; scrollbar-width: none; }
 .editor-tabs::-webkit-scrollbar { display: none; }
-.editor-tab { position: relative; display: flex; min-width: 132px; max-width: 210px; align-items: center; gap: 7px; padding: 0 9px 0 12px; overflow: hidden; color: #637169; font-size: 11px; background: #edf1ef; border: 0; border-right: 1px solid #dce3df; cursor: pointer; }
-.editor-tab::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: transparent; content: ''; }
-.editor-tab:hover { color: #29483d; background: #f7f9f8; }
-.editor-tab.is-active { color: #193d31; background: #fff; }
-.editor-tab.is-active::after { background: #28775f; }
-.editor-tab > .el-icon:first-child { flex: 0 0 auto; font-size: 13px; }
-.editor-tab > span { min-width: 0; flex: 1; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.tab-close { flex: 0 0 auto; padding: 2px; color: #85918b; font-size: 11px; border-radius: 3px; }
-.tab-close:hover { color: #32483f; background: #e2e8e4; }
+.editor-tab-shell { position: relative; display: flex; width: max-content; max-width: 240px; flex: 0 0 auto; align-items: center; border-right: 1px solid transparent; }
+.editor-tab-shell::before { position: absolute; top: 0; right: 0; left: 0; height: 2px; background: transparent; content: ''; }
+.editor-tab-shell:hover { background: #ebedef; }
+.editor-tab-shell.is-active { background: #fff; border-right-color: #e3e5e8; }
+.editor-tab-shell.is-active::before { background: #0f6cbd; }
+.editor-tab { display: flex; min-width: 0; height: 31px; flex: 0 1 auto; align-items: center; gap: 7px; padding: 0 0 0 9px; overflow: hidden; color: #50545a; font-size: 12px; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.editor-tab-shell.is-active .editor-tab { color: #242424; }
+.editor-tab > .el-icon:first-child { flex: 0 0 auto; color: #70777e; font-size: 14px; }
+.editor-tab-shell.is-active .editor-tab > .el-icon:first-child { color: #0f6cbd; }
+.editor-tab > span { min-width: 0; max-width: 180px; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-close { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; margin: 0 4px 0 2px; color: #70777e; font-size: 12px; background: transparent; border: 0; border-radius: 4px; opacity: 0; cursor: pointer; }
+.editor-tab-shell:hover .tab-close, .editor-tab-shell.is-active .tab-close, .tab-close:focus-visible { opacity: 1; }
+.tab-close:hover { color: #344a40; background: #e8eeeb; }
+@media (max-width: 760px) { .editor-tab-shell { max-width: 210px; } .editor-tab > span { max-width: 150px; } .tab-close { opacity: 1; } }
 </style>

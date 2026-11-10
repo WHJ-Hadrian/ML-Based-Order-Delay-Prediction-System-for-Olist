@@ -49,7 +49,7 @@ function closeDocument(path, activePath) {
   state.openPaths.splice(index, 1)
   persist()
   if (path !== activePath) return activePath
-  return state.openPaths[index] || state.openPaths[index - 1] || '/datasets'
+      return state.openPaths[index] || state.openPaths[index - 1] || '/analysis'
 }
 
 function toggleBottomPanel() {

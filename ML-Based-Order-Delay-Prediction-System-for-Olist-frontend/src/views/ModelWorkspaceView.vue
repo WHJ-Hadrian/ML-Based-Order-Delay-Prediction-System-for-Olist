@@ -1,11 +1,21 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '@/auth/keycloak'
 import { getDatasetCatalog, getDatasetVersions, listDatasets } from '@/api/datasets'
 import { createModelWorkflow, duplicateModelWorkflow, getModelWorkflow, listModelVersions, listModelWorkflows, trainModel, updateModelWorkflow } from '@/api/models'
 import { Aim, CircleCheck, CopyDocument, Cpu, DataAnalysis, DocumentChecked, FullScreen, FolderAdd, Plus, Refresh, Remove, Warning } from '@element-plus/icons-vue'
 
 const auth = useAuth()
+const route = useRoute()
+const router = useRouter()
+const entryContext = {
+  datasetId: String(route.query.datasetId || ''),
+  versionId: String(route.query.versionId || ''),
+  tableId: String(route.query.tableId || ''),
+  targetColumn: String(route.query.targetColumn || ''),
+  task: String(route.query.task || ''),
+}
 const datasets = ref([])
 const versions = ref([])
 const catalog = ref(null)
@@ -34,6 +44,7 @@ const trainingError = ref('')
 const modelsError = ref('')
 const trainingResults = ref([])
 const trainingFailures = ref([])
+const trainingBranchStates = ref({})
 const workflows = ref([])
 const activeWorkflowId = ref('')
 const activeWorkflowName = ref('')
@@ -342,9 +353,12 @@ async function loadDatasets() {
     const result = await listDatasets({ status: 'READY', page: 0, size: 100 })
     if (requestId !== datasetsRequest) return
     datasets.value = result.items || []
-    if (!datasetGroups.value.some((item) => item.datasetId === selectedDatasetId.value)) {
-      selectedDatasetId.value = datasetGroups.value[0]?.datasetId || ''
-    }
+    const requestedDatasetId = entryContext.datasetId
+    selectedDatasetId.value = datasetGroups.value.some((item) => item.datasetId === requestedDatasetId)
+      ? requestedDatasetId
+      : datasetGroups.value.some((item) => item.datasetId === selectedDatasetId.value)
+        ? selectedDatasetId.value
+        : datasetGroups.value[0]?.datasetId || ''
   } catch (error) {
     if (requestId === datasetsRequest) listError.value = error.message || '数据集加载失败'
   } finally {
@@ -367,7 +381,7 @@ async function loadVersions(datasetId, preferredVersion = '') {
     const result = await getDatasetVersions(datasetId)
     if (requestId !== versionsRequest) return
     versions.value = result || []
-    const preferred = preferredVersion || selectedDataset.value?.datasetVersionId
+    const preferred = preferredVersion || (selectedDatasetId.value === entryContext.datasetId ? entryContext.versionId : '') || selectedDataset.value?.datasetVersionId
     selectedVersionId.value = readyVersions.value.some((item) => item.datasetVersionId === preferred)
       ? preferred
       : readyVersions.value[0]?.datasetVersionId || ''
@@ -391,8 +405,26 @@ async function loadCatalog(versionId) {
     const result = await getDatasetCatalog(versionId)
     if (requestId !== catalogRequest) return
     catalog.value = result
-    selectedTableId.value = result.tables?.[0]?.tableId || ''
+    const requestedTableId = selectedDatasetId.value === entryContext.datasetId
+      ? entryContext.tableId
+      : ''
+    const hasRequestedTable = result.tables?.some((table) => table.tableId === requestedTableId)
+    const nextTable = result.tables?.find((table) => table.tableId === requestedTableId)
+      || result.tables?.[0]
+    const requestedTarget = nextTable?.columns?.some((column) => column.name === entryContext.targetColumn)
+      ? entryContext.targetColumn
+      : ''
+    const requestedTask = entryContext.task
+    applyingWorkflow.value = true
+    selectedTableId.value = hasRequestedTable ? requestedTableId : nextTable?.tableId || ''
+    if (['classification', 'regression'].includes(requestedTask)) task.value = requestedTask
+    targetColumn.value = requestedTarget
+    featureColumns.value = (nextTable?.columns || []).map((column) => column.name).filter((name) => name !== requestedTarget)
+    await nextTick()
+    applyingWorkflow.value = false
+    if (entryContext.datasetId && route.query.datasetId) router.replace({ path: route.path })
   } catch (error) {
+    applyingWorkflow.value = false
     if (requestId === catalogRequest) catalogError.value = error.message || '数据表目录加载失败'
   } finally {
     if (requestId === catalogRequest) loadingCatalog.value = false
@@ -413,7 +445,19 @@ async function loadModels() {
 
 async function initializeWorkspace() {
   await loadDatasets()
-  await Promise.all([loadModels(), loadWorkflows()])
+  const hasEntryDataset = entryContext.datasetId
+    && datasetGroups.value.some((item) => item.datasetId === entryContext.datasetId)
+  await Promise.all([
+    loadModels(),
+    hasEntryDataset ? createWorkflow() : loadWorkflows(),
+  ])
+  if (hasEntryDataset) {
+    applyingWorkflow.value = true
+    selectedDatasetId.value = entryContext.datasetId
+    await loadVersions(entryContext.datasetId, entryContext.versionId)
+    if (selectedVersionId.value) await loadCatalog(selectedVersionId.value)
+    applyingWorkflow.value = false
+  }
 }
 
 function chooseTarget(name) {
@@ -489,22 +533,33 @@ async function submitTraining() {
   trainingError.value = ''
   trainingResults.value = []
   trainingFailures.value = []
-  for (const [index, candidate] of candidates.entries()) {
-    trainingIndex.value = index + 1
-    const label = algorithmLabel(candidate.algorithm)
+  trainingBranchStates.value = Object.fromEntries(candidates.map((candidate) => [candidate.id, 'running']))
+  await Promise.all(candidates.map(async (candidate) => {
+    const label = availableAlgorithms.value.find((option) => option.value === candidate.algorithm)?.label || candidate.algorithm
     const name = baseName ? `${baseName} · ${label}`.slice(0, 255) : null
     try {
       const result = await trainModel({ ...commonPayload, name, algorithm: candidate.algorithm })
       trainingResults.value.push({ ...result, candidateId: candidate.id, algorithmLabel: label })
+      trainingBranchStates.value[candidate.id] = 'success'
     } catch (error) {
       trainingFailures.value.push({ candidateId: candidate.id, algorithmLabel: label, message: error.message || '训练失败' })
+      trainingBranchStates.value[candidate.id] = 'failed'
+    } finally {
+      trainingIndex.value += 1
     }
-  }
+  }))
+  const branchOrder = new Map(candidates.map((candidate, index) => [candidate.id, index]))
+  trainingResults.value.sort((left, right) => branchOrder.get(left.candidateId) - branchOrder.get(right.candidateId))
+  trainingFailures.value.sort((left, right) => branchOrder.get(left.candidateId) - branchOrder.get(right.candidateId))
   training.value = false
   if (trainingFailures.value.length) {
     trainingError.value = `${trainingFailures.value.length} 个模型分支未完成；已成功的模型仍已登记，可在下方查看。`
   }
   await loadModels()
+}
+
+function openTrial(modelId) {
+  router.push({ path: '/model-trials', query: { modelId } })
 }
 
 watch(selectedDatasetId, (id) => { if (!applyingWorkflow.value) loadVersions(id) })
@@ -766,6 +821,9 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
             <div class="model-branch-list">
               <article v-for="(candidate, index) in candidateModels" :key="candidate.id" class="model-branch">
                 <div class="branch-title"><span class="branch-index">{{ String.fromCharCode(65 + index) }}</span><strong>模型 {{ index + 1 }}</strong>
+                  <el-tag v-if="trainingBranchStates[candidate.id] === 'running'" size="small" effect="plain">运行中</el-tag>
+                  <el-tag v-else-if="trainingBranchStates[candidate.id] === 'success'" size="small" type="success" effect="plain">完成</el-tag>
+                  <el-tag v-else-if="trainingBranchStates[candidate.id] === 'failed'" size="small" type="danger" effect="plain">失败</el-tag>
                   <el-button v-if="candidateModels.length > 1" text circle size="small" :icon="Remove" :aria-label="`移除模型分支 ${index + 1}`" :disabled="training" @click="removeCandidate(candidate.id)" />
                 </div>
                 <div class="algorithm-choices">
@@ -825,7 +883,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
           <span v-else>等待连接数据源</span>
         </div>
         <div class="run-actions">
-          <span v-if="training" class="running-status"><el-icon class="is-spinning"><Refresh /></el-icon>正在执行模型 {{ trainingIndex }} / {{ candidateModels.length }}</span>
+          <span v-if="training" class="running-status"><el-icon class="is-spinning"><Refresh /></el-icon>并行训练中 · {{ trainingIndex }} / {{ candidateModels.length }} 个分支已完成</span>
           <span v-else class="form-footnote">每个分支使用相同数据划分并分别登记模型版本</span>
           <el-button type="primary" :icon="Cpu" :loading="training" :disabled="!canTrain || training" @click="submitTraining">
             {{ training ? '运行中' : `运行 ${candidateModels.length} 个分支` }}
@@ -855,6 +913,9 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
               <el-table-column prop="predicted" label="预测值" min-width="110" show-overflow-tooltip />
             </el-table>
           </div>
+          <footer class="branch-actions">
+            <el-button size="small" :icon="Aim" @click="openTrial(run.id)">拿新数据试用</el-button>
+          </footer>
         </article>
         <article v-for="failure in trainingFailures" :key="`failed-${failure.candidateId}`" class="branch-result is-failed">
           <header><span><el-icon><Warning /></el-icon>{{ failure.algorithmLabel }}</span><el-tag type="danger" effect="plain" size="small">失败</el-tag></header>
@@ -898,8 +959,8 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .model-kicker { display: inline-block; margin-bottom: 5px; color: #568374; font-size: 10px; font-weight: 700; line-height: 1.2; }
 .model-header h1 { letter-spacing: 0; }
 .model-header p { color: #64736d; }
-.workflow-shell, .result-panel { min-width: 0; margin-bottom: 18px; overflow: hidden; background: #fff; border: 1px solid #dfe8e3; border-radius: 8px; box-shadow: 0 8px 22px rgba(27, 61, 50, 0.045); }
-.workflow-bar { display: grid; min-width: 0; gap: 8px; padding: 9px 14px 0; border-bottom: 1px solid #e7eeea; }
+.workflow-shell, .result-panel { min-width: 0; margin-bottom: 12px; overflow: hidden; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); box-shadow: none; }
+.workflow-bar { display: grid; min-width: 0; gap: 5px; padding: 6px 10px 0; border-bottom: 1px solid #e1e1e1; }
 .workflow-topline, .workflow-title-group, .workflow-title, .workflow-controls { display: flex; min-width: 0; align-items: center; }
 .workflow-topline { justify-content: space-between; gap: 12px; }
 .workflow-title-group { flex-wrap: wrap; gap: 5px 16px; }
@@ -914,10 +975,10 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .workflow-controls { flex: 0 0 auto; gap: 6px; }
 .workflow-name-input { width: min(220px, 25vw); }
 .workflow-tabs { display: flex; min-width: 0; gap: 2px; overflow-x: auto; scrollbar-width: thin; }
-.workflow-tab { display: flex; min-width: 110px; max-width: 210px; height: 34px; flex: 0 0 auto; align-items: center; gap: 7px; padding: 0 10px; overflow: hidden; color: #68776f; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
+.workflow-tab { display: flex; width: max-content; min-width: 0; max-width: 220px; height: 32px; flex: 0 0 auto; align-items: center; gap: 7px; padding: 0 9px; overflow: hidden; color: #50545a; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
 .workflow-tab > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-tab:hover { color: #275d4b; background: #f7faf8; }
-.workflow-tab.is-active { color: #205b47; border-bottom-color: #388263; font-weight: 650; }
+.workflow-tab.is-active { color: #0f6cbd; border-bottom-color: #0f6cbd; font-weight: 650; }
 .workflow-tab:disabled { cursor: wait; }
 .workflow-feedback { display: flex; min-width: 0; min-height: 24px; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0 6px; color: #68776f; font-size: 10px; }
 .workflow-feedback.is-error { color: #9a4139; }
@@ -926,9 +987,9 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .workflow-shell:fullscreen { display: flex; width: 100vw; height: 100vh; height: 100dvh; flex-direction: column; margin: 0; overflow: auto; background: #fff; border: 0; border-radius: 0; box-shadow: none; }
 .workflow-shell.is-focused .workflow-canvas, .workflow-shell:fullscreen .workflow-canvas { flex: 1 1 auto; overflow: auto; }
 .workflow-shell.is-focused .workflow-footer, .workflow-shell:fullscreen .workflow-footer { flex: 0 0 auto; }
-.workflow-canvas { min-width: 0; padding: 17px; container-type: inline-size; background-color: #f6f9f7; background-image: radial-gradient(#d6e1db 0.8px, transparent 0.8px); background-size: 18px 18px; }
+.workflow-canvas { min-width: 0; padding: 10px; container-type: inline-size; background-color: #f3f4f5; background-image: radial-gradient(#d5d9de 0.7px, transparent 0.7px); background-size: 16px 16px; }
 .workflow-track { display: grid; grid-template-columns: minmax(230px, 300px) minmax(48px, 1fr) minmax(300px, 360px) minmax(48px, 1fr) minmax(280px, 320px); align-items: start; gap: 0; }
-.flow-node { width: 100%; min-width: 0; align-self: start; padding: 14px; background: #fff; border: 1px solid #dfe7e2; border-radius: 7px; box-shadow: 0 3px 9px rgba(35, 58, 47, 0.045); }
+.flow-node { width: 100%; min-width: 0; align-self: start; padding: 10px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); box-shadow: none; }
 .models-node { display: flex; min-width: 0; flex-direction: column; align-items: stretch; }
 .models-node > .node-heading,
 .models-node > .model-branch-list,
@@ -976,7 +1037,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .field-row.is-target { background: #fff9ed; border-color: #e7cd99; }
 .field-row.is-feature { border-color: #cbded2; }
 .field-target-button { display: flex; min-width: 0; flex: 1; align-items: center; gap: 6px; padding: 0; color: #43574d; background: none; border: 0; text-align: left; cursor: pointer; }
-.field-target-button:hover .field-name { color: #176b57; }
+.field-target-button:hover .field-name { color: var(--accent); }
 .field-target-mark { display: grid; width: 19px; height: 19px; flex: 0 0 19px; place-items: center; color: #819087; border: 1px solid #d6e0da; border-radius: 4px; font-size: 9px; }
 .field-row.is-target .field-target-mark { color: #8b5c13; background: #f9e9c5; border-color: #e6c982; font-weight: 700; }
 .field-name { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1013,10 +1074,10 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .run-context span { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-actions { display: flex; min-width: 0; align-items: center; gap: 12px; }
 .form-footnote, .running-status { min-width: 0; color: #829089; font-size: 10px; }
-.running-status { display: inline-flex; align-items: center; gap: 7px; color: #176b57; }
+.running-status { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); }
 .is-spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.result-panel { padding: 16px; }
+.result-panel { padding: 12px; }
 .result-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .result-heading h2 { margin: 0; color: #263c32; font-size: 16px; line-height: 1.35; }
 .result-heading p { margin: 4px 0 0; color: #7d8b84; font-size: 10px; }
@@ -1037,6 +1098,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .result-metrics span { overflow: hidden; color: #7c8a82; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .result-metrics strong { overflow: hidden; color: #244536; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .sample-table { margin-top: 10px; }
+.branch-actions { display: flex; justify-content: flex-end; margin-top: 10px; padding-top: 8px; border-top: 1px solid #e7eeea; }
 .sample-heading { display: flex; min-height: 28px; align-items: center; gap: 6px; color: #72827a; }
 .sample-heading h3 { margin: 0; color: #40534b; font-size: 10px; font-weight: 650; }
 .sample-heading > span { margin-left: auto; font-size: 9px; }

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { ArrowRight, Check, Close, CopyDocument, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh, Search, Share } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowRight, Check, Close, CopyDocument, Cpu, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh, Search, Share } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { BarChart, ScatterChart } from 'echarts/charts'
@@ -26,6 +26,7 @@ import WorkflowSourceDialog from '@/components/WorkflowSourceDialog.vue'
 echarts.use([BarChart, ScatterChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuth()
 const datasets = ref([])
 const datasetNextPage = ref(0)
@@ -606,9 +607,12 @@ async function loadDatasets() {
     datasets.value = result.items || []
     datasetNextPage.value = 1
     datasetHasMore.value = datasetNextPage.value < (result.totalPages || 0)
-    if (!datasets.value.some((dataset) => dataset.id === selectedDatasetId.value)) {
-      selectedDatasetId.value = datasets.value[0]?.id || ''
-    }
+    const requestedDatasetId = String(route.query.datasetId || '')
+    selectedDatasetId.value = datasets.value.some((dataset) => dataset.id === requestedDatasetId)
+      ? requestedDatasetId
+      : datasets.value.some((dataset) => dataset.id === selectedDatasetId.value)
+        ? selectedDatasetId.value
+        : datasets.value[0]?.id || ''
   } catch (error) {
     datasets.value = []
     datasetError.value = error.message || '数据集加载失败'
@@ -685,6 +689,7 @@ async function loadCatalog(datasetId) {
     if (requestId !== catalogRequest) return
     catalog.value = result
     selectedTableId.value = result.tables?.[0]?.tableId || ''
+    if (route.query.datasetId === datasetId) router.replace({ path: route.path })
   } catch (error) {
     if (requestId === catalogRequest) {
       catalogError.value = error.message || '数据目录加载失败'
@@ -776,7 +781,7 @@ function renderChart() {
       data: points.map((point) => point.value),
       barMaxWidth: 22,
       showBackground: true,
-      backgroundStyle: { color: 'rgba(23, 107, 87, 0.055)', borderRadius: [0, 4, 4, 0] },
+      backgroundStyle: { color: 'rgba(15, 108, 189, 0.055)', borderRadius: [0, 4, 4, 0] },
       itemStyle: { borderRadius: [0, 4, 4, 0] },
       emphasis: { focus: 'self' },
     }],
@@ -822,6 +827,18 @@ function refreshCurrentAnalysis() {
 
 function openDatasets() {
   router.push('/datasets')
+}
+
+function openModelTraining() {
+  if (!catalog.value?.datasetId || !catalog.value?.datasetVersionId || !selectedTableId.value) return
+  router.push({
+    path: '/models',
+    query: {
+      datasetId: catalog.value.datasetId,
+      versionId: catalog.value.datasetVersionId,
+      tableId: selectedTableId.value,
+    },
+  })
 }
 
 watch(
@@ -1005,6 +1022,13 @@ onBeforeUnmount(() => {
           <p>跨数据集与数据表收集字段，再组合成一张分析画布。</p>
         </div>
         <div class="explorer-actions">
+          <el-button
+            type="primary"
+            plain
+            :icon="Cpu"
+            :disabled="!selectedDataset || !selectedTable || !catalog?.datasetId || !catalog?.datasetVersionId"
+            @click="openModelTraining"
+          >用此数据训练模型</el-button>
           <el-button
             :icon="Share"
             :disabled="!selectedDataset || !selectedTable || !catalog?.datasetVersionId"
@@ -1267,12 +1291,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .analysis-page {
   min-width: 0;
-  padding-bottom: 30px;
-  padding: 18px 20px 30px;
+  padding: 0 0 8px;
   color: #263a33;
-  background: #f4f7f5;
-  border: 1px solid rgba(221, 231, 225, 0.9);
-  border-radius: 12px;
 }
 
 .analysis-page :deep(.page-header::before) {
@@ -1305,20 +1325,21 @@ onBeforeUnmount(() => {
   min-width: 0;
   grid-template-columns: minmax(180px, 0.85fr) minmax(220px, 1.15fr) auto minmax(110px, auto);
   align-items: end;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 12px;
-  background: #fff;
-  border: 1px solid #e1e9e4;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(27, 61, 50, 0.035);
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 0 8px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #d1d1d1;
+  border-radius: var(--radius-panel);
+  box-shadow: none;
 }
 
 .workspace-picker,
 .workspace-name-field {
   display: grid;
   min-width: 0;
-  gap: 6px;
+  gap: 4px;
   color: #63736b;
   font-size: 11px;
   font-weight: 600;
@@ -1332,7 +1353,7 @@ onBeforeUnmount(() => {
 
 .workspace-picker :deep(.el-select__wrapper),
 .workspace-name-field :deep(.el-input__wrapper) {
-  min-height: 36px;
+  min-height: 32px;
   background: #fbfcfb;
   box-shadow: 0 0 0 1px #dce5df inset;
 }
@@ -1374,13 +1395,13 @@ onBeforeUnmount(() => {
   justify-self: end;
   max-width: 150px;
   overflow: hidden;
-  padding: 7px 9px;
+  padding: 5px 7px;
   color: #53675d;
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
   background: #f1f5f2;
-  border-radius: 6px;
+  border-radius: 3px;
 }
 
 .workspace-state.is-dirty,
@@ -1403,9 +1424,10 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   background: #fff;
-  border: 1px solid #e1e9e4;
-  border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(27, 61, 50, 0.055);
+  border-top: 1px solid #d1d1d1;
+  border-bottom: 1px solid #d1d1d1;
+  border-radius: 0;
+  box-shadow: none;
 }
 .explorer-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .board-heading-actions, .board-card-actions { display: flex; min-width: 0; align-items: center; gap: 4px; }
@@ -1414,11 +1436,11 @@ onBeforeUnmount(() => {
 
 .explorer-heading {
   display: flex;
-  min-height: 70px;
+  min-height: 54px;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 13px 16px;
+  gap: 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid #e4ebe7;
 }
 
@@ -1429,7 +1451,7 @@ onBeforeUnmount(() => {
 
 .explorer-grid {
   display: grid;
-  grid-template-columns: minmax(0, .95fr) minmax(0, .95fr) minmax(0, 1.1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   height: clamp(280px, 44vh, 520px);
   min-height: 0;
 }
@@ -1437,7 +1459,7 @@ onBeforeUnmount(() => {
 .asset-column {
   min-width: 0;
   overflow: auto;
-  padding: 10px;
+  padding: 7px;
   border-right: 1px solid #e4ebe7;
   scrollbar-width: thin;
   scrollbar-color: #cad9d0 transparent;
@@ -1490,7 +1512,7 @@ onBeforeUnmount(() => {
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   cursor: pointer;
 }
 
@@ -1791,8 +1813,8 @@ onBeforeUnmount(() => {
   width: 34px;
   height: 34px;
   place-items: center;
-  color: #176b57;
-  background: #e4f1eb;
+  color: var(--accent);
+  background: var(--accent-subtle);
   border-radius: 7px;
 }
 
@@ -1923,7 +1945,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 600px) {
-  .analysis-page { padding: 14px 11px 22px; }
+  .analysis-page { padding: 0 0 12px; }
   .analysis-workspace-toolbar { grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 10px; }
   .workspace-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-actions :deep(.el-button) { width: 100%; margin: 0; }

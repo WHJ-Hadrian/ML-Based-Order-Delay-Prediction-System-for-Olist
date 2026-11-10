@@ -203,7 +203,7 @@ onBeforeUnmount(() => {
 
     <div v-if="error" class="run-center-error" role="alert"><span>{{ error }}</span><el-button text :icon="Refresh" @click="retryList">重试</el-button></div>
 
-    <section class="run-center-workspace" aria-label="工作流运行中心">
+    <section class="run-center-workspace" :class="{ 'is-list-loading': loading && !runs.length }" aria-label="工作流运行中心">
       <aside class="run-center-list-panel">
         <div class="run-center-tools">
           <el-input v-model="search" clearable :maxlength="100" :prefix-icon="Search" placeholder="按工作流名称搜索" aria-label="按工作流名称搜索" @input="queueSearch" />
@@ -240,7 +240,7 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="run-center-detail" aria-label="运行详情">
-        <div v-if="detailLoading" class="run-center-empty">正在读取运行快照与节点结果</div>
+        <div v-if="detailLoading || (loading && !runs.length)" class="run-center-empty run-center-loading"><el-icon><Loading /></el-icon><span>正在读取运行记录</span></div>
         <template v-else-if="selectedRun">
           <header class="run-detail-top">
             <div class="run-detail-title">
@@ -282,6 +282,7 @@ onBeforeUnmount(() => {
             <p v-if="!selectedRun.nodes?.length" class="run-center-empty">{{ selectedRun.status === 'QUEUED' ? '等待 Worker 接收运行' : '此运行没有节点结果' }}</p>
           </section>
         </template>
+        <div v-else-if="!runs.length" class="run-center-empty run-center-welcome"><el-icon><Share /></el-icon><strong>还没有运行记录</strong><span>创建或运行工作流后，状态、节点日志和结果会显示在这里。</span><el-button size="small" :icon="VideoPlay" @click="router.push('/workflows')">打开工作流</el-button></div>
         <div v-else class="run-center-empty run-center-welcome"><el-icon><Share /></el-icon><strong>选择一次运行</strong><span>查看状态、节点日志和本次运行保存的结果。</span></div>
       </section>
     </section>
@@ -289,26 +290,26 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.run-center { display: grid; min-width: 0; gap: 14px; color: #263a31; }
+.run-center { display: grid; min-width: 0; gap: 10px; color: #242424; }
 .run-center-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; }
 .run-center-heading h1 { margin: 0; font-size: 20px; line-height: 1.3; }
 .run-center-heading p { margin: 5px 0 0; color: #718078; font-size: 12px; }
 .run-center-health { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; color: #5f7067; font-size: 11px; }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; background: #41936b; box-shadow: 0 0 0 3px #e5f2ea; }
-.run-center-workspace { display: grid; min-width: 0; min-height: 660px; grid-template-columns: minmax(270px, 340px) minmax(0, 1fr); overflow: hidden; background: #fff; border: 1px solid #dfe8e3; border-radius: 7px; }
-.run-center-list-panel { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid #e5ece8; }
-.run-center-tools { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid #e5ece8; }
-.run-center-tools :deep(.el-select) { width: 100%; }
-.run-center-list-heading { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 9px 12px; color: #354a3f; }
+.run-center-workspace { display: grid; min-width: 0; min-height: max(420px, calc(100dvh - 190px)); grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); overflow: hidden; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); }
+.run-center-list-panel { display: flex; min-width: 0; flex-direction: column; background: #fff; border-right: 1px solid #e5ece8; }
+.run-center-tools { display: grid; gap: 6px; padding: 8px 9px; border-bottom: 1px solid #e1e1e1; }
+.run-center-tools > *, .run-center-tools :deep(.el-input), .run-center-tools :deep(.el-select), .run-center-tools :deep(.el-select__wrapper) { width: 100%; min-width: 0; }
+.run-center-list-heading { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 6px 9px; color: #354a3f; }
 .run-center-list-heading strong { font-size: 12px; }
 .run-center-list-heading > span { flex: 1; color: #87938c; font-size: 10px; }
 .global-run-list { display: grid; align-content: start; max-height: calc(100vh - 255px); overflow: auto; }
 .run-center-pagination { flex: 0 0 auto; justify-content: center; padding: 10px 6px; border-top: 1px solid #edf1ee; }
 .run-center-pagination :deep(.el-pager li), .run-center-pagination :deep(button) { min-width: 24px; height: 24px; font-size: 10px; }
-.global-run-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: 9px; padding: 11px 12px; color: #405149; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #edf1ee; cursor: pointer; }
+.global-run-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; padding: 8px 9px; color: #405149; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #edf1ee; cursor: pointer; }
 .global-run-item:hover { background: #f7faf8; }
-.global-run-item.is-selected { background: #eef6f1; box-shadow: inset 3px 0 #31835f; }
-.global-run-status { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; color: #839188; background: #f2f5f3; border-radius: 50%; }
+.global-run-item.is-selected { background: #e7f1fb; }
+.global-run-status { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; color: #70777e; background: #f2f3f4; border-radius: 4px; }
 .status-running, .status-queued, .status-cancelling { color: #2c8061; background: #e5f3eb; }
 .status-succeeded { color: #27784d; background: #e6f4e9; }
 .status-failed { color: #b53e37; background: #f9eae8; }
@@ -318,7 +319,7 @@ onBeforeUnmount(() => {
 .global-run-copy strong { color: #354a3f; font-size: 11px; }
 .global-run-copy small { color: #87938c; font-size: 9px; }
 .global-run-progress { flex: 0 0 auto; color: #4c7562; font-size: 10px; }
-.run-center-detail { display: grid; min-width: 0; align-content: start; gap: 12px; padding: 18px; }
+.run-center-detail { display: grid; min-width: 0; align-content: start; gap: 9px; padding: 12px 14px; background: #fff; }
 .run-detail-top { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .run-detail-title { display: grid; min-width: 0; gap: 4px; }
 .run-detail-kicker { color: #87938c; font-size: 10px; }
@@ -356,9 +357,14 @@ onBeforeUnmount(() => {
 .global-sample-scroll th, .global-sample-scroll td { min-width: 90px; max-width: 240px; padding: 6px 8px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid #edf1ee; }
 .global-sample-scroll th { color: #5c6f63; background: #f4f7f5; }
 .run-center-empty { display: grid; min-height: 120px; place-items: center; padding: 20px; color: #87938c; font-size: 11px; text-align: center; }
-.run-center-welcome { align-content: center; gap: 8px; }
+.run-center-welcome { align-content: center; justify-items: center; gap: 9px; }
 .run-center-welcome .el-icon { color: #598c70; font-size: 26px; }
 .run-center-welcome strong { color: #44564d; }
+.run-center-welcome span { max-width: 360px; line-height: 1.6; }
+.run-center-welcome :deep(.el-button) { margin-top: 5px; }
+.run-center-loading { align-content: center; gap: 9px; }
+.run-center-loading .el-icon { color: #328064; font-size: 18px; animation: run-center-spin 1s linear infinite; }
+@keyframes run-center-spin { to { transform: rotate(360deg); } }
 .run-center-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; color: #a13d37; font-size: 11px; overflow-wrap: anywhere; background: #fbefee; border-left: 3px solid #ca6b60; }
 @media (max-width: 900px) {
   .run-center-workspace { grid-template-columns: minmax(230px, 34%) minmax(0, 1fr); }
@@ -366,10 +372,12 @@ onBeforeUnmount(() => {
   .run-detail-commands { justify-content: flex-start; }
   .run-detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (max-width: 680px) {
+@media (max-width: 760px) {
   .run-center-heading { align-items: flex-start; flex-direction: column; }
   .run-center-heading p { line-height: 1.5; }
   .run-center-workspace { min-height: 0; grid-template-columns: minmax(0, 1fr); }
+  .run-center-workspace.is-list-loading { min-height: 0; }
+  .run-center-workspace.is-list-loading .run-center-detail { display: none; }
   .run-center-list-panel { max-height: 380px; border-right: 0; border-bottom: 1px solid #e5ece8; }
   .global-run-list { max-height: 250px; }
   .run-center-detail { padding: 13px; }

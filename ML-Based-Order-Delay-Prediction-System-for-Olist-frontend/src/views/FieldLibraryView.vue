@@ -1952,7 +1952,7 @@ async function applyPaste() {
   background: #fff;
   filter: none;
   opacity: 1;
-  box-shadow: inset 4px 0 0 #176b57, 0 8px 20px rgba(23, 107, 87, 0.14);
+  box-shadow: inset 4px 0 0 var(--accent), 0 8px 20px rgba(15, 108, 189, 0.14);
 }
 
 .library-list.is-picking .library-summary {
@@ -1966,9 +1966,9 @@ async function applyPaste() {
   gap: 16px;
   margin-bottom: 16px;
   padding: 14px 18px;
-  background: linear-gradient(90deg, rgba(23, 107, 87, 0.12), rgba(23, 107, 87, 0.03));
-  border: 1px solid rgba(23, 107, 87, 0.22);
-  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(15, 108, 189, 0.12), rgba(15, 108, 189, 0.03));
+  border: 1px solid rgba(15, 108, 189, 0.22);
+  border-radius: var(--radius-panel);
   flex-wrap: wrap;
 }
 
@@ -1996,7 +1996,7 @@ async function applyPaste() {
 
 .extract-row-hint {
   margin-left: auto;
-  color: #176b57;
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
 }
@@ -2008,8 +2008,8 @@ async function applyPaste() {
   margin-bottom: 16px;
   padding: 14px 18px;
   background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(23, 107, 87, 0.18);
-  border-radius: 14px;
+  border: 1px solid rgba(15, 108, 189, 0.18);
+  border-radius: var(--radius-panel);
   box-shadow: 0 10px 26px rgba(10, 45, 37, 0.06);
   flex-wrap: wrap;
 }
@@ -2052,8 +2052,8 @@ async function applyPaste() {
 }
 
 .library-item.is-guide-target .library-summary {
-  background: rgba(23, 107, 87, 0.06);
-  box-shadow: inset 4px 0 0 #176b57;
+  background: rgba(15, 108, 189, 0.06);
+  box-shadow: inset 4px 0 0 var(--accent);
 }
 
 .extract-guide-layer {
@@ -2066,11 +2066,11 @@ async function applyPaste() {
 
 .guide-spotlight {
   position: fixed;
-  border: 1px solid rgba(23, 107, 87, 0.55);
-  border-radius: 14px;
+  border: 1px solid rgba(15, 108, 189, 0.55);
+  border-radius: var(--radius-panel);
   box-shadow:
-    0 0 0 2px rgba(23, 107, 87, 0.12),
-    0 0 34px 8px rgba(23, 107, 87, 0.2),
+    0 0 0 2px rgba(15, 108, 189, 0.12),
+    0 0 34px 8px rgba(15, 108, 189, 0.2),
     0 0 0 9999px rgba(10, 24, 20, 0.16);
   transition:
     top 0.55s cubic-bezier(0.22, 0.8, 0.24, 1),
@@ -2083,8 +2083,8 @@ async function applyPaste() {
 .guide-spotlight::after {
   position: absolute;
   inset: -7px;
-  border: 1px solid rgba(23, 107, 87, 0.18);
-  border-radius: 20px;
+  border: 1px solid rgba(15, 108, 189, 0.18);
+  border-radius: 8px;
   content: '';
   animation: guidePulse 2.2s ease-in-out infinite;
 }
@@ -2099,8 +2099,8 @@ async function applyPaste() {
   padding: 12px 14px;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.98);
-  border: 1px solid rgba(23, 107, 87, 0.18);
-  border-radius: 12px;
+  border: 1px solid rgba(15, 108, 189, 0.18);
+  border-radius: var(--radius-panel);
   box-shadow: 0 18px 40px rgba(8, 21, 18, 0.18);
   animation: guideFadeIn 0.22s ease-out;
 }
@@ -2112,8 +2112,8 @@ async function applyPaste() {
   width: 11px;
   height: 11px;
   background: #fff;
-  border-top: 1px solid rgba(23, 107, 87, 0.18);
-  border-left: 1px solid rgba(23, 107, 87, 0.18);
+  border-top: 1px solid rgba(15, 108, 189, 0.18);
+  border-left: 1px solid rgba(15, 108, 189, 0.18);
   content: '';
   transform: rotate(45deg);
 }
@@ -2126,7 +2126,7 @@ async function applyPaste() {
 
 .guide-bubble-icon {
   margin-top: 1px;
-  color: #176b57;
+  color: var(--accent);
   font-size: 16px;
 }
 
@@ -2156,8 +2156,8 @@ async function applyPaste() {
   padding: 16px 18px;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.985);
-  border: 1px solid rgba(23, 107, 87, 0.2);
-  border-radius: 14px;
+  border: 1px solid rgba(15, 108, 189, 0.2);
+  border-radius: var(--radius-panel);
   box-shadow: 0 20px 50px rgba(8, 21, 18, 0.22);
   animation: guideFadeIn 0.24s ease-out;
 }
@@ -2171,7 +2171,7 @@ async function applyPaste() {
 }
 
 .guide-card-title .el-icon {
-  color: #176b57;
+  color: var(--accent);
 }
 
 .guide-card-text {
@@ -2192,7 +2192,7 @@ async function applyPaste() {
 .guide-card-hint {
   display: block;
   margin-top: 10px;
-  color: #176b57;
+  color: var(--accent);
   font-size: 11px;
 }
 
@@ -2250,7 +2250,7 @@ async function applyPaste() {
 }
 
 .library-summary:hover {
-  background: rgba(23, 107, 87, 0.04);
+  background: rgba(15, 108, 189, 0.04);
 }
 
 .row-chevron {
@@ -2296,7 +2296,7 @@ async function applyPaste() {
 }
 
 .name-link:hover {
-  color: #176b57;
+  color: var(--accent);
 }
 
 .name-input {
@@ -2325,7 +2325,7 @@ async function applyPaste() {
   padding: 3px 8px;
   color: var(--ink-soft);
   font-size: 11px;
-  background: rgba(23, 107, 87, 0.06);
+  background: rgba(15, 108, 189, 0.06);
   border-radius: 8px;
 }
 
@@ -2344,7 +2344,7 @@ async function applyPaste() {
 
 .library-expanded {
   padding: 0 20px 18px 44px;
-  background: rgba(23, 107, 87, 0.02);
+  background: rgba(15, 108, 189, 0.02);
 }
 
 .expanded-inner {
@@ -2384,9 +2384,9 @@ async function applyPaste() {
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
-  border-radius: 999px;
-  background: rgba(23, 107, 87, 0.1);
-  color: #176b57;
+  border-radius: var(--radius-control);
+  background: rgba(15, 108, 189, 0.1);
+  color: var(--accent);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
@@ -2402,14 +2402,14 @@ async function applyPaste() {
 .dataset-groups {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .dataset-group {
   overflow: hidden;
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
 }
 
 .group-summary,
@@ -2424,11 +2424,11 @@ async function applyPaste() {
 
 .group-summary:hover,
 .table-summary:hover {
-  background: rgba(23, 107, 87, 0.04);
+  background: rgba(15, 108, 189, 0.04);
 }
 
 .group-icon {
-  color: #176b57;
+  color: var(--accent);
 }
 
 .group-name {
@@ -2465,7 +2465,7 @@ async function applyPaste() {
 .table-group {
   margin-top: 8px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
 }
 
 .table-icon {
@@ -2501,7 +2501,7 @@ async function applyPaste() {
   font-weight: 600;
   background: #fff;
   border: 1px dashed #bfd6ce;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease;
 }
@@ -2528,11 +2528,11 @@ async function applyPaste() {
 }
 
 .table-fields :deep(.is-draft-row > td.el-table__cell) {
-  background: rgba(23, 107, 87, 0.055);
+  background: rgba(15, 108, 189, 0.055);
 }
 
 .table-fields :deep(.is-draft-row:hover > td.el-table__cell) {
-  background: rgba(23, 107, 87, 0.08) !important;
+  background: rgba(15, 108, 189, 0.08) !important;
 }
 
 .group-pagination {

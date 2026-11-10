@@ -726,7 +726,7 @@ function returnToLoginAfterRegistration() {
   gap: 48px;
   padding: 36px;
   border: 1px solid rgba(255, 255, 255, 0.85);
-  border-radius: 28px;
+  border-radius: 6px;
   overflow: hidden;
   background: #fff;
   box-shadow: 0 1px 2px rgba(60, 64, 67, 0.03);
@@ -748,7 +748,7 @@ function returnToLoginAfterRegistration() {
   width: 36%;
   height: 100%;
   border-radius: inherit;
-  background: #0b57d0;
+  background: var(--accent);
   animation: auth-progress-slide 0.8s ease-in-out infinite;
 }
 
@@ -908,7 +908,7 @@ function returnToLoginAfterRegistration() {
 }
 
 .auth-field > input:focus {
-  border: 2px solid #0b57d0;
+  border: 2px solid var(--accent);
   padding: 0 15px;
 }
 
@@ -935,7 +935,7 @@ function returnToLoginAfterRegistration() {
 }
 
 .auth-field > select:focus {
-  border: 2px solid #0b57d0;
+  border: 2px solid var(--accent);
   padding: 0 39px 0 15px;
 }
 
@@ -946,7 +946,7 @@ function returnToLoginAfterRegistration() {
 }
 
 .auth-select-field > select:focus + label {
-  color: #0b57d0;
+  color: var(--accent);
 }
 
 .select-chevron {
@@ -963,7 +963,7 @@ function returnToLoginAfterRegistration() {
 }
 
 .auth-select-field > select:focus ~ .select-chevron {
-  border-top-color: #0b57d0;
+  border-top-color: var(--accent);
 }
 
 .auth-field > label {
@@ -996,7 +996,7 @@ function returnToLoginAfterRegistration() {
 }
 
 .auth-field > input:focus + label {
-  color: #0b57d0;
+  color: var(--accent);
 }
 
 .form-link-row {
@@ -1012,7 +1012,7 @@ function returnToLoginAfterRegistration() {
   padding: 0;
   border: 0;
   background: none;
-  color: #0b57d0;
+  color: var(--accent);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.45;
@@ -1051,7 +1051,7 @@ function returnToLoginAfterRegistration() {
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: #0b57d0;
+  accent-color: var(--accent);
 }
 
 .remember-account label {
@@ -1094,8 +1094,8 @@ function returnToLoginAfterRegistration() {
   justify-content: center;
   padding: 0 20px;
   border: 0;
-  border-radius: 20px;
-  background: #0b57d0;
+  border-radius: 4px;
+  background: var(--accent);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -1104,7 +1104,7 @@ function returnToLoginAfterRegistration() {
 }
 
 .primary-action:hover {
-  background: #0842a0;
+  background: var(--accent-hover);
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.3);
 }
 
@@ -1119,7 +1119,7 @@ function returnToLoginAfterRegistration() {
 .account-choice:focus-visible,
 .remove-account:focus-visible,
 .change-account:focus-visible {
-  outline: 2px solid #0b57d0;
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 
@@ -1266,7 +1266,7 @@ function returnToLoginAfterRegistration() {
   padding: 8px;
   border: 0;
   background: transparent;
-  color: #0b57d0;
+  color: var(--accent);
   font-size: 14px;
   cursor: pointer;
 }
@@ -1285,7 +1285,7 @@ function returnToLoginAfterRegistration() {
   margin-bottom: 22px;
   padding: 4px 10px;
   border: 1px solid #dadce0;
-  border-radius: 25px;
+  border-radius: 6px;
 }
 
 .selected-identity {
@@ -1321,7 +1321,7 @@ function returnToLoginAfterRegistration() {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: #0b57d0;
+  color: var(--accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -1462,7 +1462,7 @@ function returnToLoginAfterRegistration() {
     grid-template-columns: minmax(0, 1fr);
     gap: 18px;
     padding: 32px 28px 28px;
-    border-radius: 28px;
+    border-radius: 6px;
   }
 
   .auth-progress {
@@ -1535,7 +1535,7 @@ function returnToLoginAfterRegistration() {
   .auth-card {
     gap: 16px;
     padding: 28px 20px 24px;
-    border-radius: 24px;
+    border-radius: 6px;
   }
 
   .auth-progress {

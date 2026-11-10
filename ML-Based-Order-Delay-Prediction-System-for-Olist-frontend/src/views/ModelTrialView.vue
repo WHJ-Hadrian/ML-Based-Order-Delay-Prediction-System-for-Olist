@@ -1,11 +1,14 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '@/auth/keycloak'
 import { getDatasetCatalog, getDatasetVersions, listDatasets } from '@/api/datasets'
-import { compareModelTrials, getModelTrialComparison, listModelTrials, listModelVersions } from '@/api/models'
+import { compareModelTrials, getModelTrialComparison, listModelTrials, listModelVersions, runModelTrial } from '@/api/models'
 import { Close, DataAnalysis, MagicStick, Plus, Refresh, Warning } from '@element-plus/icons-vue'
 
 const auth = useAuth()
+const route = useRoute()
+const router = useRouter()
 const models = ref([])
 const datasets = ref([])
 const versions = ref([])
@@ -42,9 +45,10 @@ const selectedModels = computed(() => selectedModelIds.value
   .map((id) => models.value.find((item) => item.id === id))
   .filter(Boolean))
 const selectedModel = computed(() => selectedModels.value[0])
-const compatibleSelection = computed(() => selectedModels.value.length >= 2
+const compatibleSelection = computed(() => selectedModels.value.length >= 1
   && selectedModels.value.every((model) => model.task === selectedModel.value?.task
     && model.targetColumn === selectedModel.value?.targetColumn))
+const comparisonMode = computed(() => selectedModelIds.value.length > 1)
 const metricKeys = computed(() => [...new Set(lastTrials.value.flatMap((trial) => Object.keys(trial.metrics || {})))])
 const trialGroups = computed(() => {
   const groups = new Map()
@@ -91,6 +95,8 @@ const sourceCompatibility = computed(() => testSources.value.map((source) => {
   const targetMissing = evaluate.value && selectedModel.value && !available.has(selectedModel.value.targetColumn)
   return { key: sourceKey(source), source, missing, overlap, targetMissing }
 }))
+const availableTrialDatasets = computed(() => datasetGroups.value.filter((dataset) =>
+  !selectedModels.value.some((model) => model.datasetId === dataset.datasetId)))
 const currentSourceKey = computed(() => currentSource.value ? sourceKey(currentSource.value) : '')
 const currentSourceAdded = computed(() => testSources.value.some((source) => sourceKey(source) === currentSourceKey.value))
 const sourcesReady = computed(() => testSources.value.length > 0 && sourceCompatibility.value.every((item) =>
@@ -126,8 +132,23 @@ async function loadModels() {
   try {
     models.value = await listModelVersions() || []
     selectedModelIds.value = selectedModelIds.value.filter((id) => models.value.some((item) => item.id === id))
-    if (!selectedModelIds.value.length && models.value.length) selectedModelIds.value = [models.value[0].id]
+    const requestedModelId = String(route.query.modelId || '')
+    if (requestedModelId && models.value.some((item) => item.id === requestedModelId)) {
+      selectedModelIds.value = [requestedModelId]
+    } else if (!selectedModelIds.value.length && models.value.length) selectedModelIds.value = [models.value[0].id]
+    selectIndependentDataset()
   } catch (e) { error.value = e.message || '模型版本加载失败' } finally { loadingModels.value = false }
+}
+
+function selectIndependentDataset() {
+  if (!selectedModel.value || !datasetGroups.value.length) return
+  const currentIsTrainingData = selectedModels.value.some((model) => model.datasetId === selectedDatasetId.value)
+  if (!selectedDatasetId.value || currentIsTrainingData) {
+    selectedDatasetId.value = availableTrialDatasets.value[0]?.datasetId || ''
+  }
+  if (!availableTrialDatasets.value.length) {
+    error.value = '没有可用于试炼的独立数据集。请先添加一份不同于训练数据的新数据。'
+  }
 }
 async function loadDatasets() {
   const requestId = ++datasetRequest
@@ -137,7 +158,8 @@ async function loadDatasets() {
     const result = await listDatasets({ status: 'READY', page: 0, size: 100 })
     if (requestId !== datasetRequest) return
     datasets.value = result.items || []
-    if (!datasetGroups.value.some((item) => item.datasetId === selectedDatasetId.value)) selectedDatasetId.value = datasetGroups.value[0]?.datasetId || ''
+    if (!datasetGroups.value.some((item) => item.datasetId === selectedDatasetId.value)) selectedDatasetId.value = ''
+    selectIndependentDataset()
   } catch (e) { if (requestId === datasetRequest) error.value = e.message || '测试数据集加载失败' } finally { if (requestId === datasetRequest) loadingDatasets.value = false }
 }
 async function loadVersions(datasetId) {
@@ -163,6 +185,8 @@ async function loadCatalog(versionId) {
     if (requestId !== catalogRequest) return
     catalog.value = result
     selectedTableId.value = result.tables?.[0]?.tableId || ''
+    const firstTable = result.tables?.find((table) => table.tableId === selectedTableId.value)
+    evaluate.value = Boolean(firstTable?.columns?.some((column) => column.name === selectedModel.value?.targetColumn))
   } catch (e) { if (requestId === catalogRequest) error.value = e.message || '测试数据表加载失败' } finally { if (requestId === catalogRequest) loadingCatalog.value = false }
 }
 async function loadTrials() {
@@ -175,19 +199,31 @@ async function loadTrials() {
 }
 async function submitTrial() {
   error.value = ''
-  if (!compatibleSelection.value || !sourcesReady.value) {
-    error.value = '请选择 2 到 5 个兼容模型，并加入至少一个满足特征、目标字段和训练数据隔离要求的测试数据源'
+  if (!compatibleSelection.value || !sourcesReady.value || selectedModelIds.value.length > 5) {
+    error.value = '请选择 1 个模型进行试用，或选择 2 到 5 个兼容模型进行比较，并加入满足字段与训练数据隔离要求的测试数据源'
     return
   }
   running.value = true
   lastTrials.value = []
   activeTrial.value = null
   try {
-    lastTrials.value = await compareModelTrials({
-      testSources: testSources.value.map(({ datasetId, datasetVersionId, tableId }) => ({ datasetId, datasetVersionId, tableId })),
-      modelIds: [...selectedModelIds.value],
-      targetColumn: evaluate.value ? selectedModel.value.targetColumn : null,
-    })
+    if (comparisonMode.value) {
+      lastTrials.value = await compareModelTrials({
+        testSources: testSources.value.map(({ datasetId, datasetVersionId, tableId }) => ({ datasetId, datasetVersionId, tableId })),
+        modelIds: [...selectedModelIds.value],
+        targetColumn: evaluate.value ? selectedModel.value.targetColumn : null,
+      })
+    } else {
+      const results = await Promise.allSettled(testSources.value.map(({ datasetId, datasetVersionId, tableId }) => runModelTrial(selectedModelIds.value[0], {
+        datasetId,
+        datasetVersionId,
+        tableId,
+        targetColumn: evaluate.value ? selectedModel.value.targetColumn : null,
+      })))
+      lastTrials.value = results.filter((result) => result.status === 'fulfilled').map((result) => result.value)
+      const failures = results.filter((result) => result.status === 'rejected')
+      if (failures.length) error.value = `${lastTrials.value.length} 份数据试用成功，${failures.length} 份失败：${failures[0].reason?.message || '运行失败'}`
+    }
     activeTrial.value = lastTrials.value[0] || null
     const resultIds = new Set(lastTrials.value.map((item) => item.id))
     trials.value = [...lastTrials.value, ...trials.value.filter((item) => !resultIds.has(item.id))]
@@ -196,11 +232,16 @@ async function submitTrial() {
 
 watch(selectedDatasetId, loadVersions)
 watch(selectedVersionId, loadCatalog)
+watch(selectedTableId, (tableId) => {
+  if (!tableId || !selectedModel.value) return
+  evaluate.value = columns.value.some((column) => column.name === selectedModel.value.targetColumn)
+})
 watch(() => [...selectedModelIds.value], () => {
   lastTrials.value = []
   activeTrial.value = null
   loadTrials()
-  evaluate.value = true
+  selectIndependentDataset()
+  evaluate.value = Boolean(targetAvailable.value)
 })
 watch(() => auth.state.status, (status) => {
   if (status === 'authenticated') { loadModels(); loadDatasets() }
@@ -228,11 +269,16 @@ onBeforeUnmount(() => { datasetRequest += 1; versionsRequest += 1; catalogReques
 <section class="trial-panel" aria-label="试炼配置">
       <div class="section-heading"><div class="section-title"><span class="section-icon"><el-icon><MagicStick /></el-icon></span><div><h2>试炼配置</h2><span>训练数据不会被修改</span></div></div><el-tag v-if="selectedModel" type="success" effect="plain" size="small">{{ selectedModel.task === 'classification' ? '分类' : '回归' }}</el-tag></div>
       <div class="trial-form">
-        <label class="form-field form-field-wide"><span>登记模型（可多选）</span><el-select v-model="selectedModelIds" multiple :multiple-limit="5" collapse-tags :max-collapse-tags="2" filterable :loading="loadingModels" placeholder="选择 2–5 个兼容模型"><el-option v-for="model in models" :key="model.id" :value="model.id" :label="modelLabel(model)" :disabled="selectedModels.length > 0 && (model.task !== selectedModel.task || model.targetColumn !== selectedModel.targetColumn)"><span class="option-label" :title="modelLabel(model)">{{ modelLabel(model) }}</span><small class="option-meta">{{ formatTime(model.createdAt) }}</small></el-option></el-select></label>
-        <label class="form-field"><span>测试数据集</span><el-select v-model="selectedDatasetId" filterable :loading="loadingDatasets" placeholder="选择 READY 数据集"><el-option v-for="dataset in datasetGroups" :key="dataset.datasetId" :value="dataset.datasetId" :label="datasetLabel(dataset)"><span class="option-label" :title="datasetLabel(dataset)">{{ datasetLabel(dataset) }}</span></el-option></el-select></label>
+        <label class="form-field form-field-wide"><span>登记模型</span><el-select v-model="selectedModelIds" multiple :multiple-limit="5" collapse-tags :max-collapse-tags="2" filterable :loading="loadingModels" placeholder="选 1 个试用，或选 2–5 个比较"><el-option v-for="model in models" :key="model.id" :value="model.id" :label="modelLabel(model)" :disabled="selectedModels.length > 0 && (model.task !== selectedModel.task || model.targetColumn !== selectedModel.targetColumn)"><span class="option-label" :title="modelLabel(model)">{{ modelLabel(model) }}</span><small class="option-meta">{{ formatTime(model.createdAt) }}</small></el-option></el-select></label>
+        <label class="form-field"><span>独立测试数据</span><el-select v-model="selectedDatasetId" filterable :loading="loadingDatasets" placeholder="选择与训练数据不同的数据集"><el-option v-for="dataset in availableTrialDatasets" :key="dataset.datasetId" :value="dataset.datasetId" :label="datasetLabel(dataset)"><span class="option-label" :title="datasetLabel(dataset)">{{ datasetLabel(dataset) }}</span></el-option></el-select></label>
         <label class="form-field"><span>数据集版本</span><el-select v-model="selectedVersionId" :disabled="!selectedDatasetId" placeholder="选择 READY 版本"><el-option v-for="version in readyVersions" :key="version.datasetVersionId" :value="version.datasetVersionId" :label="`v${version.versionNo} · ${version.rowCount} 行`"><span class="option-label">v{{ version.versionNo }} · {{ formatNumber(version.rowCount, 0) }} 行</span></el-option></el-select></label>
         <label class="form-field"><span>数据表</span><el-select v-model="selectedTableId" :disabled="!catalog?.tables?.length" :loading="loadingCatalog" placeholder="选择数据表"><el-option v-for="table in catalog?.tables || []" :key="table.tableId" :value="table.tableId" :label="table.tableName"><span class="option-label" :title="table.tableName">{{ table.tableName }}</span><small class="option-meta">{{ formatNumber(table.rowCount, 0) }} 行</small></el-option></el-select></label>
         <label class="trial-switch"><span>评估模式</span><el-switch v-model="evaluate" active-text="带标签评估" inactive-text="只生成预测" /></label>
+      </div>
+      <div v-if="selectedModel && !loadingDatasets && !availableTrialDatasets.length" class="trial-message is-warning">
+        <el-icon><Warning /></el-icon>
+        <span>试炼必须使用不同于训练来源的数据集，避免把训练数据当成新数据验证。</span>
+        <el-button text @click="router.push('/datasets')">添加测试数据</el-button>
       </div>
       <div class="source-actions"><span>测试数据源（{{ testSources.length }}/5）</span><el-button size="small" :icon="Plus" :disabled="!currentSource || currentSourceAdded || testSources.length >= 5" @click="addCurrentSource">加入清单</el-button></div>
       <ul v-if="testSources.length" class="source-list" aria-label="已加入的测试数据源">
@@ -243,14 +289,14 @@ onBeforeUnmount(() => { datasetRequest += 1; versionsRequest += 1; catalogReques
         </li>
       </ul>
       <div v-if="selectedModel" class="trial-context"><span>已选模型 {{ selectedModels.length }} 个</span><span>共同任务：{{ selectedModel.task === 'classification' ? '分类' : '回归' }}</span><span v-if="evaluate">目标：{{ selectedModel.targetColumn }} · {{ targetAvailable ? '已找到' : '测试表未提供' }}</span><span v-else>不会读取目标字段</span></div>
-      <div v-if="selectedModelIds.length > 0 && !compatibleSelection" class="trial-message is-warning"><el-icon><Warning /></el-icon><span>请选择 2 到 5 个任务类型及目标字段相同的模型进行比较。</span></div>
+      <div v-if="selectedModelIds.length > 0 && !compatibleSelection" class="trial-message is-warning"><el-icon><Warning /></el-icon><span>比较时请选择任务类型及目标字段相同的模型。</span></div>
       <div v-if="evaluate && selectedModel && currentSource && !targetAvailable" class="trial-message is-warning"><el-icon><Warning /></el-icon><span>当前表没有目标字段。只预测模式可以加入该数据源。</span></div>
       <div v-if="sourceCompatibility.some((item) => item.missing.length || item.overlap || item.targetMissing)" class="trial-message is-warning"><el-icon><Warning /></el-icon><span>清单中有不兼容数据源，请移除或修复后再运行。</span></div>
-      <div class="form-actions"><span class="form-footnote">最多 5 个模型 × 5 个数据源 · 每个数据源最多 100,000 行</span><el-button type="primary" :icon="MagicStick" :loading="running" :disabled="!compatibleSelection || !sourcesReady" @click="submitTrial">{{ running ? '比较中' : '开始比较' }}</el-button></div>
+      <div class="form-actions"><span class="form-footnote">{{ comparisonMode ? '最多 5 个模型 × 5 个数据源' : '单模型预测或评估' }} · 每个数据源最多 100,000 行</span><el-button type="primary" :icon="MagicStick" :loading="running" :disabled="!compatibleSelection || !sourcesReady" @click="submitTrial">{{ running ? (comparisonMode ? '比较中' : '试用中') : (comparisonMode ? '开始比较' : '运行试用') }}</el-button></div>
     </section>
 
-    <section v-if="lastTrials.length" class="result-panel" aria-label="模型比较结果">
-      <div class="section-heading"><div class="section-title"><span class="section-icon is-success"><el-icon><DataAnalysis /></el-icon></span><div><h2>本次比较</h2><span>{{ lastTrials.length }} 个模型 · {{ formatNumber(lastTrials[0]?.predictedRows, 0) }} 条预测 / 模型</span></div></div><el-tag type="success" effect="plain">{{ lastTrials[0]?.evaluatedRows ? '已评估' : '仅预测' }}</el-tag></div>
+    <section v-if="lastTrials.length" class="result-panel" aria-label="模型试用结果">
+      <div class="section-heading"><div class="section-title"><span class="section-icon is-success"><el-icon><DataAnalysis /></el-icon></span><div><h2>{{ comparisonMode ? '本次比较' : '本次试用' }}</h2><span>{{ new Set(lastTrials.map((trial) => trial.modelId)).size }} 个模型 · {{ formatNumber(lastTrials[0]?.predictedRows, 0) }} 条预测 / 模型</span></div></div><el-tag type="success" effect="plain">{{ lastTrials[0]?.evaluatedRows ? '已评估' : '仅预测' }}</el-tag></div>
       <el-table :data="lastTrials" row-key="id" size="small" table-layout="fixed" class="comparison-table" @row-click="activeTrial = $event">
         <el-table-column label="测试数据源" min-width="190"><template #default="{ row }"><div class="lineage-cell"><strong>{{ trialDatasetLabel(row.datasetId) }}</strong><span>版本 {{ row.datasetVersionNo }} · {{ testSources.find((source) => source.datasetVersionId === row.datasetVersionId && source.tableId === row.tableId)?.tableName || row.tableId }}</span></div></template></el-table-column>
         <el-table-column label="模型版本" min-width="210"><template #default="{ row }"><div class="lineage-cell"><strong :title="models.find((model) => model.id === row.modelId)?.name">{{ models.find((model) => model.id === row.modelId)?.name || row.modelId }}</strong><span>{{ models.find((model) => model.id === row.modelId)?.algorithm }}</span></div></template></el-table-column>
@@ -270,10 +316,10 @@ onBeforeUnmount(() => { datasetRequest += 1; versionsRequest += 1; catalogReques
 .trial-kicker { display: inline-block; margin-bottom: 5px; color: #438573; font-size: 10px; font-weight: 700; line-height: 1.2; }
 .trial-header h1 { letter-spacing: 0; }
 .trial-header p { color: #756f67; }
-.trial-panel, .result-panel { margin-bottom: 16px; padding: 18px 20px 16px; background: rgba(250, 253, 251, .88); border: 1px solid rgba(255, 255, 255, .9); border-radius: 8px; box-shadow: 0 10px 28px rgba(27, 61, 50, .055); }
+.trial-panel, .result-panel { margin-bottom: 12px; padding: 14px 16px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); box-shadow: none; }
 .section-heading, .section-title, .registry-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; }
 .section-title { justify-content: flex-start; }
-.section-icon { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; color: #176b57; background: #e4f1eb; border-radius: 7px; }
+.section-icon { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; color: var(--accent); background: var(--accent-subtle); border-radius: var(--radius-control); }
 .section-icon.is-success { color: #46735e; background: #e4efe7; }
 .section-title > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .section-title h2, .registry-heading h2 { max-width: 700px; margin: 0; overflow: hidden; color: #20372f; font-size: 15px; font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
@@ -329,5 +375,5 @@ onBeforeUnmount(() => { datasetRequest += 1; versionsRequest += 1; catalogReques
 .registry-metrics { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px 10px; color: #586b63; font-size: 10px; }
 .registry-metrics span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 900px) { .trial-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .form-field-wide { grid-column: span 2; } .metric-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 600px) { .trial-panel, .result-panel { padding: 14px 12px 12px; } .trial-form { grid-template-columns: minmax(0, 1fr); gap: 13px; margin-top: 16px; } .form-field-wide { grid-column: auto; } .form-actions { align-items: flex-start; flex-direction: column; padding-top: 11px; } .form-actions .el-button { width: 100%; } .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric-item { min-height: 65px; } .metric-item:nth-child(2n) { border-right: 0; } .registry-heading > div { align-items: flex-start; flex-direction: column; gap: 3px; } .source-item { grid-template-columns: minmax(0, 1fr) 32px; } .source-status { grid-column: 1; grid-row: 2; } .source-item > .el-button { grid-column: 2; grid-row: 1 / span 2; } }
+@media (max-width: 760px) { .trial-panel, .result-panel { padding: 14px 12px 12px; } .trial-form { grid-template-columns: minmax(0, 1fr); gap: 13px; margin-top: 16px; } .form-field-wide { grid-column: auto; } .form-actions { align-items: flex-start; flex-direction: column; padding-top: 11px; } .form-actions .el-button { width: 100%; } .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric-item { min-height: 65px; } .metric-item:nth-child(2n) { border-right: 0; } .registry-heading > div { align-items: flex-start; flex-direction: column; gap: 3px; } .source-item { grid-template-columns: minmax(0, 1fr) 32px; } .source-status { grid-column: 1; grid-row: 2; } .source-item > .el-button { grid-column: 2; grid-row: 1 / span 2; } }
 </style>

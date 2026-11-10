@@ -700,10 +700,10 @@ onBeforeUnmount(() => {
               <div class="settings-row">
                 <span class="settings-row-icon"><el-icon><Monitor /></el-icon></span>
                 <span class="settings-row-body">
-                  <strong>背景动效</strong>
-                  <span>在工作台背景播放流动光波视频；关闭后使用静态渐变。</span>
+                  <strong>工作区背景</strong>
+                  <span>使用稳定的浅色画布，保证表格、图表和流程节点始终清晰可读。</span>
                 </span>
-                <el-switch v-model="appearanceDraft.backgroundMotion" />
+                <span class="settings-row-meta">Fluent 浅色</span>
               </div>
               <div class="settings-row">
                 <span class="settings-row-icon"><el-icon><Postcard /></el-icon></span>
@@ -1172,7 +1172,7 @@ onBeforeUnmount(() => {
 }
 
 .settings-nav-orb.is-account {
-  color: #176b57;
+  color: var(--accent);
   background: #dff2ea;
 }
 
@@ -1188,7 +1188,7 @@ onBeforeUnmount(() => {
 
 .settings-nav-item.is-active .settings-nav-orb {
   color: #fff;
-  background: #176b57;
+  background: var(--accent);
 }
 
 .settings-nav-copy {
@@ -1313,7 +1313,7 @@ onBeforeUnmount(() => {
 
 .settings-row-body .settings-row-meta {
   margin-top: 1px;
-  color: #176b57;
+  color: var(--accent);
   font-size: 12.5px;
   font-weight: 500;
 }
@@ -1352,7 +1352,7 @@ onBeforeUnmount(() => {
 }
 
 .settings-row-button:focus-visible {
-  outline: 2px solid #176b57;
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
@@ -1434,7 +1434,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 4px 2px;
-  color: #176b57;
+  color: var(--accent);
   font-size: 13.5px;
   font-weight: 500;
   background: transparent;
@@ -1449,7 +1449,7 @@ onBeforeUnmount(() => {
 }
 
 .settings-link-button:focus-visible {
-  outline: 2px solid #176b57;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1545,7 +1545,7 @@ onBeforeUnmount(() => {
 }
 
 .settings-outline-button {
-  color: #176b57;
+  color: var(--accent);
   background: transparent;
   border: 1px solid #747775;
 }
@@ -1556,8 +1556,8 @@ onBeforeUnmount(() => {
 
 .settings-primary-button {
   color: #fff;
-  background: #176b57;
-  border: 1px solid #176b57;
+  background: var(--accent);
+  border: 1px solid var(--accent);
 }
 
 .settings-primary-button:hover:not(:disabled) {
@@ -1573,7 +1573,7 @@ onBeforeUnmount(() => {
 
 .settings-outline-button:focus-visible,
 .settings-primary-button:focus-visible {
-  outline: 2px solid #176b57;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1610,7 +1610,7 @@ onBeforeUnmount(() => {
 }
 
 .settings-footer button:hover {
-  color: #176b57;
+  color: var(--accent);
   text-decoration: underline;
 }
 
@@ -1620,7 +1620,7 @@ onBeforeUnmount(() => {
 }
 
 .settings-eyebrow {
-  color: #176b57;
+  color: var(--accent);
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -1647,7 +1647,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   background:
     linear-gradient(130deg, rgba(230, 246, 239, 0.94), rgba(220, 239, 232, 0.94) 46%, rgba(248, 252, 250, 0.97));
-  border: 1px solid rgba(23, 107, 87, 0.1);
+  border: 1px solid rgba(15, 108, 189, 0.1);
   border-radius: 16px;
 }
 
@@ -1772,7 +1772,7 @@ onBeforeUnmount(() => {
 }
 
 .settings-preview-menu-item.is-active {
-  background: rgba(23, 107, 87, 0.12);
+  background: rgba(15, 108, 189, 0.12);
 }
 
 .settings-preview-sidebar.is-collapsed .settings-preview-menu-item {
@@ -1784,12 +1784,12 @@ onBeforeUnmount(() => {
   width: 7px;
   height: 7px;
   flex: 0 0 7px;
-  background: rgba(23, 107, 87, 0.4);
+  background: rgba(15, 108, 189, 0.4);
   border-radius: 2px;
 }
 
 .settings-preview-menu-item.is-active .settings-preview-menu-icon {
-  background: #176b57;
+  background: var(--accent);
 }
 
 .settings-preview-menu-label {
@@ -1803,7 +1803,7 @@ onBeforeUnmount(() => {
   width: 12px;
   height: 6px;
   margin-left: auto;
-  background: rgba(23, 107, 87, 0.16);
+  background: rgba(15, 108, 189, 0.16);
   border-radius: 3px;
 }
 
@@ -1813,7 +1813,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   margin-top: auto;
   padding: 5px 5px 0;
-  border-top: 1px solid rgba(23, 107, 87, 0.12);
+  border-top: 1px solid rgba(15, 108, 189, 0.12);
 }
 
 .settings-preview-sidebar.is-collapsed .settings-preview-sidebar-footer {
@@ -1851,7 +1851,7 @@ onBeforeUnmount(() => {
 .settings-preview-avatar {
   width: 7px;
   height: 7px;
-  background: rgba(23, 107, 87, 0.34);
+  background: rgba(15, 108, 189, 0.34);
   border-radius: 50%;
 }
 
@@ -1919,7 +1919,7 @@ onBeforeUnmount(() => {
 .settings-preview-hero-action {
   width: 34px;
   height: 10px;
-  background: rgba(23, 107, 87, 0.72);
+  background: rgba(15, 108, 189, 0.72);
   border-radius: 3px;
 }
 
@@ -1940,7 +1940,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding-bottom: 5px;
-  border-bottom: 1px solid rgba(23, 107, 87, 0.12);
+  border-bottom: 1px solid rgba(15, 108, 189, 0.12);
 }
 
 .settings-preview-card-head i {
@@ -1971,7 +1971,7 @@ onBeforeUnmount(() => {
   width: 6px;
   height: 6px;
   flex: 0 0 6px;
-  background: rgba(23, 107, 87, 0.3);
+  background: rgba(15, 108, 189, 0.3);
   border-radius: 2px;
 }
 
@@ -1994,7 +1994,7 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 6px;
   bottom: 4px;
-  color: rgba(23, 107, 87, 0.22);
+  color: rgba(15, 108, 189, 0.22);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -2055,7 +2055,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 22px 22px 16px;
-  border-bottom: 1px solid rgba(23, 107, 87, 0.1);
+  border-bottom: 1px solid rgba(15, 108, 189, 0.1);
 }
 
 .tip-drawer-heading {
@@ -2084,7 +2084,7 @@ onBeforeUnmount(() => {
   place-items: center;
   color: #5f6368;
   background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(23, 107, 87, 0.1);
+  border: 1px solid rgba(15, 108, 189, 0.1);
   border-radius: 50%;
   cursor: pointer;
 }
@@ -2127,7 +2127,7 @@ onBeforeUnmount(() => {
   gap: 16px;
   padding: 14px;
   background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(23, 107, 87, 0.1);
+  border: 1px solid rgba(15, 108, 189, 0.1);
   border-radius: 13px;
 }
 
@@ -2170,7 +2170,7 @@ onBeforeUnmount(() => {
   align-items: start;
   margin: 0 -10px;
   padding: 12px 10px;
-  border-top: 1px dashed rgba(23, 107, 87, 0.1);
+  border-top: 1px dashed rgba(15, 108, 189, 0.1);
   border-radius: 10px;
   transition: background 0.2s ease;
 }
@@ -2180,7 +2180,7 @@ onBeforeUnmount(() => {
 }
 
 .tip-detail-row.is-highlighted {
-  background: rgba(23, 107, 87, 0.08);
+  background: rgba(15, 108, 189, 0.08);
   animation: tipHighlight 1.8s ease;
 }
 
@@ -2223,7 +2223,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   padding: 13px 22px 18px;
   background: rgba(255, 255, 255, 0.9);
-  border-top: 1px solid rgba(23, 107, 87, 0.1);
+  border-top: 1px solid rgba(15, 108, 189, 0.1);
   box-shadow: 0 -10px 24px rgba(15, 52, 43, 0.04);
   backdrop-filter: blur(14px);
 }
@@ -2248,11 +2248,11 @@ onBeforeUnmount(() => {
 
 @keyframes tipHighlight {
   0% {
-    background: rgba(23, 107, 87, 0.16);
+    background: rgba(15, 108, 189, 0.16);
   }
 
   100% {
-    background: rgba(23, 107, 87, 0.08);
+    background: rgba(15, 108, 189, 0.08);
   }
 }
 
@@ -2468,4 +2468,53 @@ onBeforeUnmount(() => {
   .settings-nav-orb {
     transition: none;
   }
-}</style>
+}
+
+.settings-shell { color: var(--ink); background: var(--canvas); }
+.settings-topbar { height: 56px; padding-inline: 20px; background: var(--paper); border-bottom: 1px solid var(--line); backdrop-filter: none; }
+.settings-back-button, .settings-round-button { width: 32px; height: 32px; flex-basis: 32px; border-radius: var(--radius-control); }
+.settings-brand, .settings-brand-suffix { font-size: 16px; letter-spacing: 0; }
+.settings-searchbox :deep(.el-input__wrapper) { height: 34px; padding-inline: 10px; background: #f3f4f5; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.settings-searchbox :deep(.el-input__wrapper:hover), .settings-searchbox :deep(.el-input__wrapper.is-focus) { background: #fff; box-shadow: 0 0 0 1px var(--accent) inset; }
+.settings-searchbox :deep(.el-input__inner) { font-size: 12px; }
+.settings-body { width: min(1320px, 100%); grid-template-columns: 220px minmax(0, 1fr); gap: 24px; padding: 12px 20px 32px; }
+.settings-nav { top: 68px; }
+.settings-nav-item { min-height: 40px; gap: 10px; padding: 4px 8px; border-radius: var(--radius-control); }
+.settings-nav-orb { width: 28px; height: 28px; flex-basis: 28px; border-radius: var(--radius-control); font-size: 15px; }
+.settings-nav-caption { margin-left: 8px; }
+.settings-nav-divider { margin: 8px; }
+.settings-main { max-width: 900px; padding-top: 4px; }
+.settings-page-head { margin-bottom: 14px; }
+.settings-page-head h1 { font-size: 21px; letter-spacing: 0; }
+.settings-page-head p, .settings-row-body span { color: var(--ink-soft); }
+.settings-panel, .settings-empty, .settings-preview, .settings-actions { border: 1px solid var(--line); border-radius: var(--radius-panel); box-shadow: none; }
+.settings-row { min-height: 58px; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; padding: 11px 16px; border-color: var(--line-subtle); }
+.settings-row-body strong { font-size: 13px; }
+.settings-row-body span { font-size: 12px; }
+.settings-group { margin: 20px 0 8px; }
+.settings-group h2 { font-size: 15px; }
+.settings-preview { gap: 9px; margin-top: 18px; padding: 12px; }
+.settings-preview-stage { height: 210px; background: var(--canvas); border-color: var(--line); border-radius: var(--radius-panel); }
+.settings-actions { bottom: 12px; gap: 10px; margin-top: 20px; padding: 10px 12px; }
+.settings-outline-button, .settings-primary-button { min-height: 32px; border-radius: var(--radius-control); }
+.settings-primary-button { background: var(--accent); border-color: var(--accent); }
+.settings-outline-button { color: var(--accent); }
+.settings-nav-item.is-active { background: var(--accent-subtle); }
+.settings-nav-item.is-active .settings-nav-copy strong { color: var(--accent); }
+.settings-link-button:hover { color: var(--accent-hover); }
+.settings-status-chip, .settings-status-chip.is-online { border-radius: var(--radius-control); }
+.settings-status-chip.is-online { color: var(--success); background: #edf7ed; }
+.settings-row-button:focus-visible, .settings-link-button:focus-visible { outline-color: var(--accent); }
+
+@media (max-width: 1100px) {
+  .settings-body { grid-template-columns: 190px minmax(0, 1fr); gap: 18px; }
+}
+
+@media (max-width: 760px) {
+  .settings-topbar { padding: 10px 14px 12px; }
+  .settings-body { gap: 10px; padding: 8px 14px 28px; }
+  .settings-nav { position: static; }
+  .settings-panel, .settings-empty, .settings-preview, .settings-actions { border-radius: var(--radius-panel); }
+  .settings-actions { position: static; }
+}
+</style>

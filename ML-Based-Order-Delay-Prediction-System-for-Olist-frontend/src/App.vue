@@ -7,11 +7,9 @@ import { ArrowDown, Setting, SwitchButton, User } from '@element-plus/icons-vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import AuthRequiredDialog from '@/components/AuthRequiredDialog.vue'
 import SoftTipHost from '@/components/SoftTipHost.vue'
-import WorkspaceDock from '@/components/WorkspaceDock.vue'
 import EditorTabs from '@/components/EditorTabs.vue'
 import WorkbenchBottomPanel from '@/components/WorkbenchBottomPanel.vue'
 import WorkbenchTopbar from '@/components/WorkbenchTopbar.vue'
-import liquidGlassBackdrop from '@/assets/videos/liquid-wave.mp4'
 import { useAppearance } from '@/state/appearance'
 import { provideWorkspaceState } from '@/state/workspace'
 import {
@@ -54,7 +52,7 @@ function createWatermarkImage(text, options) {
     '"': '&quot;',
     "'": '&apos;',
   })[character])
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><text x="${centerX}" y="${centerY}" fill="#176b57" fill-opacity="${opacity}" font-family="Roboto,Microsoft YaHei,sans-serif" font-size="${fontSize}" font-weight="500" text-anchor="middle" dominant-baseline="central" transform="rotate(${rotation} ${centerX} ${centerY})">${safeText}</text></svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><text x="${centerX}" y="${centerY}" fill="#0f6cbd" fill-opacity="${opacity}" font-family="Roboto,Microsoft YaHei,sans-serif" font-size="${fontSize}" font-weight="500" text-anchor="middle" dominant-baseline="central" transform="rotate(${rotation} ${centerX} ${centerY})">${safeText}</text></svg>`
 
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
 }
@@ -132,24 +130,10 @@ onBeforeUnmount(() => {
 <template>
   <el-config-provider :locale="locale">
     <div v-if="!isFullscreenRoute" class="app-frame" :style="watermarkStyle">
-      <div class="app-backdrop" aria-hidden="true">
-        <video
-          v-if="appearance.backgroundMotion"
-          class="app-backdrop-media"
-          :src="liquidGlassBackdrop"
-          autoplay
-          muted
-          loop
-          playsinline
-          draggable="false"
-        ></video>
-        <span class="app-backdrop-wash"></span>
-      </div>
-
-      <AppSidebar v-model:collapsed="sidebarCollapsed" :total="datasetTotal" />
+      <AppSidebar v-model:collapsed="sidebarCollapsed" :total="datasetTotal" @open-settings="router.push('/settings')" />
 
       <main class="app-main">
-        <WorkbenchTopbar @open-runs="router.push('/workflow-runs')">
+        <WorkbenchTopbar>
           <el-dropdown
             v-if="auth.state.authenticated"
             trigger="click"
@@ -199,8 +183,6 @@ onBeforeUnmount(() => {
       </main>
 
       <SoftTipHost />
-      <WorkspaceDock />
-
       <AuthRequiredDialog
         v-model="authDialogVisible"
         @continue="startLogin"
@@ -212,49 +194,33 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .app-main {
-  display: flex;
-  height: 100vh;
-  min-height: 0;
-  flex-direction: column;
-  padding: 0;
-}
-
-.workbench-content {
-  min-width: 0;
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow: auto;
-  padding: 24px 30px 48px;
+  border-left: 0;
 }
 
 @media (max-width: 760px) {
   .workbench-content {
-    padding: 18px 14px calc(112px + env(safe-area-inset-bottom));
-  }
-
-  .app-main {
-    height: 100dvh;
+    padding: 12px 12px calc(116px + env(safe-area-inset-bottom));
   }
 }
 
 .account-trigger {
   display: inline-flex;
   min-width: 38px;
-  height: 38px;
+  height: 34px;
   align-items: center;
   gap: 9px;
-  padding: 3px 11px 3px 4px;
-  color: #29483e;
-  font-size: 12px;
-  background: rgba(255, 255, 255, 0.58);
-  border: 1px solid rgba(255, 255, 255, 0.78);
-  border-radius: 999px;
-  box-shadow: 0 4px 14px rgba(22, 48, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  padding: 2px 8px 2px 3px;
+  color: #43574d;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
   cursor: pointer;
 }
 
 .account-trigger:hover {
-  background: rgba(255, 255, 255, 0.82);
+  background: #eff3f0;
+  border-color: #e5ebe7;
 }
 
 .account-trigger:disabled {
@@ -264,15 +230,15 @@ onBeforeUnmount(() => {
 
 .account-avatar {
   display: grid;
-  width: 29px;
-  height: 29px;
-  flex: 0 0 29px;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
   place-items: center;
   color: #0c5c48;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 650;
   background: #dff2ea;
-  border-radius: 50%;
+  border-radius: 4px;
 }
 
 .account-name {

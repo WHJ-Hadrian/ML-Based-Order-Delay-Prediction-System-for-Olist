@@ -5,6 +5,8 @@ import {
   CircleCheck,
   Clock,
   Collection,
+  Cpu,
+  DataAnalysis,
   Delete,
   Document,
   EditPen,
@@ -48,6 +50,8 @@ const emit = defineEmits([
   'retry-detail',
   'retry-versions',
   'extract-fields',
+  'analyze',
+  'train',
 ])
 
 const TABLE_PREVIEW_LIMIT = 5
@@ -513,6 +517,12 @@ function selectFile(file) {
       </el-tag>
 
       <div class="row-actions" @click.stop>
+        <el-button v-if="item.status === 'READY'" link type="primary" :icon="DataAnalysis" @click="emit('analyze', item)">
+          开始分析
+        </el-button>
+        <el-button v-if="item.status === 'READY'" link type="primary" :icon="Cpu" @click="emit('train', item)">
+          训练模型
+        </el-button>
         <el-button link type="primary" :icon="Collection" @click="emit('extract-fields', item)">
           提取字段
         </el-button>

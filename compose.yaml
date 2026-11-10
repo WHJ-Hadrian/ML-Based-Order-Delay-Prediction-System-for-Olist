@@ -61,7 +61,7 @@ services:
       retries: 10
 
   localstack:
-    image: localstack/localstack:2026.10.2
+    image: localstack/localstack:4.14.0
     environment:
       SERVICES: s3
       AWS_DEFAULT_REGION: us-east-1
@@ -76,7 +76,7 @@ services:
       retries: 15
 
   object-store-init:
-    image: amazon/aws-cli:2
+    image: amazon/aws-cli:2.39.6
     depends_on:
       localstack:
         condition: service_healthy

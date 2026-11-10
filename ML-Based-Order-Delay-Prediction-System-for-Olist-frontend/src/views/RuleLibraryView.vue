@@ -2736,11 +2736,11 @@ onBeforeUnmount(() => {
 }
 
 .library-summary:hover {
-  background: rgba(23, 107, 87, 0.04);
+  background: rgba(15, 108, 189, 0.04);
 }
 
 .library-item.is-expanded .library-summary {
-  background: rgba(23, 107, 87, 0.055);
+  background: rgba(15, 108, 189, 0.055);
 }
 
 .row-chevron {
@@ -2780,7 +2780,7 @@ onBeforeUnmount(() => {
 }
 
 .name-link:hover {
-  color: #176b57;
+  color: var(--accent);
 }
 
 .name-input {
@@ -2809,7 +2809,7 @@ onBeforeUnmount(() => {
   padding: 3px 8px;
   color: var(--ink-soft);
   font-size: 11px;
-  background: rgba(23, 107, 87, 0.06);
+  background: rgba(15, 108, 189, 0.06);
   border-radius: 8px;
 }
 
@@ -2827,7 +2827,7 @@ onBeforeUnmount(() => {
 
 .library-expanded {
   padding: 0 20px 20px;
-  background: rgba(23, 107, 87, 0.018);
+  background: rgba(15, 108, 189, 0.018);
 }
 
 .expanded-inner {
@@ -3330,8 +3330,8 @@ onBeforeUnmount(() => {
 }
 
 .preview-node-item.is-active {
-  background: rgba(23, 107, 87, 0.06);
-  border-color: rgba(23, 107, 87, 0.34);
+  background: rgba(15, 108, 189, 0.06);
+  border-color: rgba(15, 108, 189, 0.34);
 }
 
 .preview-node-main {
@@ -3477,20 +3477,19 @@ onBeforeUnmount(() => {
 .rule-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .rule-item {
   overflow: hidden;
   background: #fff;
   border: 1px solid var(--line-strong);
-  border-radius: 14px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: var(--radius-panel);
+  transition: border-color 0.15s ease;
 }
 
 .rule-item:hover {
-  border-color: rgba(23, 107, 87, 0.24);
-  box-shadow: 0 6px 18px rgba(23, 107, 87, 0.06);
+  border-color: rgba(15, 108, 189, 0.24);
 }
 
 .rule-head {
@@ -3499,7 +3498,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  background: rgba(23, 107, 87, 0.045);
+  background: rgba(15, 108, 189, 0.045);
   border-bottom: 1px dashed var(--line-strong);
 }
 
@@ -3508,11 +3507,11 @@ onBeforeUnmount(() => {
   width: 26px;
   height: 26px;
   place-items: center;
-  color: #176b57;
+  color: var(--accent);
   font-size: 11px;
   font-weight: 700;
-  background: rgba(23, 107, 87, 0.1);
-  border-radius: 50%;
+  background: rgba(15, 108, 189, 0.1);
+  border-radius: var(--radius-control);
 }
 .rule-name-input {
   min-width: 0;
@@ -3579,19 +3578,19 @@ onBeforeUnmount(() => {
   gap: 8px;
   margin-top: 10px;
   padding: 14px 16px;
-  color: #176b57;
+  color: var(--accent);
   font-size: 13px;
   font-weight: 600;
-  background: rgba(23, 107, 87, 0.035);
-  border: 1px dashed rgba(23, 107, 87, 0.32);
-  border-radius: 14px;
+  background: rgba(15, 108, 189, 0.035);
+  border: 1px dashed rgba(15, 108, 189, 0.32);
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .rule-add-row:hover {
-  background: rgba(23, 107, 87, 0.075);
-  border-color: rgba(23, 107, 87, 0.5);
+  background: rgba(15, 108, 189, 0.075);
+  border-color: rgba(15, 108, 189, 0.5);
 }
 
 .rule-add-row small {

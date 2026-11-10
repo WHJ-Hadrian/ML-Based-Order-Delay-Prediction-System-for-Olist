@@ -178,7 +178,7 @@ function removeChild(index) {
 }
 
 .predicate-editor.is-nested {
-  background: rgba(23, 107, 87, 0.025);
+  background: rgba(15, 108, 189, 0.025);
 }
 
 .predicate-toolbar,
@@ -206,7 +206,7 @@ function removeChild(index) {
   gap: 8px;
   min-width: 0;
   padding-left: 10px;
-  border-left: 2px solid rgba(23, 107, 87, 0.15);
+  border-left: 2px solid rgba(15, 108, 189, 0.15);
 }
 
 .predicate-child,

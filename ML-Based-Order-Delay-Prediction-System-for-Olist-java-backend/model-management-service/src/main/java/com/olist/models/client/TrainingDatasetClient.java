@@ -33,7 +33,7 @@ public class TrainingDatasetClient {
         }
     }
 
-    public List<List<String>> rows(UUID datasetVersionId, UUID tableId, long expectedRows,
+    public List<List<String>> rows(UUID datasetId, UUID tableId, long expectedRows,
             List<String> selectedColumns, String bearerToken) {
         if (expectedRows < 0 || expectedRows > 100_000) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -48,7 +48,7 @@ public class TrainingDatasetClient {
                         .uri(uri -> uri.path("/api/v1/datasets/{datasetId}/tables/{tableId}/rows")
                                 .queryParam("offset", pageOffset)
                                 .queryParam("limit", (int) Math.min(PAGE_SIZE, expectedRows - pageOffset))
-                                .build(datasetVersionId, tableId))
+                                .build(datasetId, tableId))
                         .headers(headers -> headers.setBearerAuth(bearerToken))
                         .retrieve()
                         .body(DatasetRows.class);

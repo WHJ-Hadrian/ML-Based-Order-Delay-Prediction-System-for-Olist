@@ -331,8 +331,8 @@ onBeforeUnmount(() => {
   padding: 14px 16px 15px;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.965);
-  border: 1px solid rgba(23, 107, 87, 0.16);
-  border-radius: 16px;
+  border: 1px solid rgba(15, 108, 189, 0.16);
+  border-radius: var(--radius-panel);
   box-shadow:
     0 20px 48px rgba(8, 21, 18, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.92);
@@ -358,9 +358,9 @@ onBeforeUnmount(() => {
   flex: 0 0 28px;
   place-items: center;
   margin-top: 1px;
-  color: #176b57;
-  background: #e4f4ed;
-  border-radius: 9px;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border-radius: var(--radius-control);
 }
 
 .soft-tip-icon .el-icon {
@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
 }
 
 .soft-tip-label {
-  color: #176b57;
+  color: var(--accent);
   font-weight: 650;
 }
 

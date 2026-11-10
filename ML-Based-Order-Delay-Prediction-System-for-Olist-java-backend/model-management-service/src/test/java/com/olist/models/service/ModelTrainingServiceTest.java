@@ -59,7 +59,7 @@ class ModelTrainingServiceTest {
     void trainsOnlyRequestedFieldsAndRegistersOwnerScopedLineage() {
         DatasetCatalog catalog = catalog(datasetId, versionId, "READY", 1_200, tableId);
         when(datasetClient.catalog(versionId, "caller-token")).thenReturn(catalog);
-        when(datasetClient.rows(eq(versionId), eq(tableId), eq(1_200L), any(), eq("caller-token")))
+        when(datasetClient.rows(eq(datasetId), eq(tableId), eq(1_200L), any(), eq("caller-token")))
                 .thenReturn(List.of(List.of("4.25", "yes"), List.of("8.50", "no")));
         TrainingResult result = new TrainingResult(
                 "artifact-1", datasetId, versionId, tableId, "classification", "random_forest", "label",

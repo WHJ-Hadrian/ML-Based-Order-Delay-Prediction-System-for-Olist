@@ -1,4 +1,5 @@
 import {
+  HomeFilled,
   Collection,
   DataAnalysis,
   Grid,
@@ -6,13 +7,23 @@ import {
   MagicStick,
   SetUp,
   Share,
+  Timer,
 } from '@element-plus/icons-vue'
 
 export const NAVIGATION_ITEMS = Object.freeze([
   {
+    key: 'workspace',
+    path: '/workspace',
+    title: '工作区概览',
+    description: '查看最近使用的数据、分析方案、工作流与模型。',
+    emptyText: '工作区还没有资源',
+    icon: HomeFilled,
+    component: () => import('@/views/WorkspaceHomeView.vue'),
+  },
+  {
     key: 'datasets',
     path: '/datasets',
-    title: '数据集库',
+    title: '数据集',
     description: '管理原始数据文件，自动识别 CSV、TSV、ZIP 和 Excel 中的数据表。',
     emptyText: '这里还没有数据集',
     icon: Collection,
@@ -22,7 +33,7 @@ export const NAVIGATION_ITEMS = Object.freeze([
   {
     key: 'analysis',
     path: '/analysis',
-    title: '分析工作台',
+    title: '数据分析',
     description: '探索已就绪数据集中的字段分布与记录概况。',
     emptyText: '选择一个已就绪的数据集开始分析',
     icon: DataAnalysis,
@@ -61,7 +72,7 @@ export const NAVIGATION_ITEMS = Object.freeze([
     title: '运行中心',
     description: '跨工作流查看后台运行状态、节点日志与冻结结果。',
     emptyText: '还没有工作流运行',
-    icon: Share,
+    icon: Timer,
     component: () => import('@/views/WorkflowRunCenterView.vue'),
   },
   {
@@ -84,7 +95,8 @@ export const NAVIGATION_ITEMS = Object.freeze([
   },
 ])
 
-export const DEFAULT_NAVIGATION_PATH = NAVIGATION_ITEMS[0].path
+// Start in the project overview; data and experiments are project resources.
+export const DEFAULT_NAVIGATION_PATH = '/workspace'
 
 export function findNavigationItem(key) {
   return NAVIGATION_ITEMS.find((item) => item.key === key) || NAVIGATION_ITEMS[0]
