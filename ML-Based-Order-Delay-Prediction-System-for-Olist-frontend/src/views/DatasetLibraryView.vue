@@ -1,8 +1,8 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { FolderAdd, Loading, Lock, Refresh, Search } from '@element-plus/icons-vue'
+import { Refresh, Search } from '@element-plus/icons-vue'
 import {
   AuthenticationRequiredError,
   useAuth,
@@ -104,9 +104,16 @@ watch(
   { immediate: true },
 )
 
+function handleWorkbenchCommand(event) {
+  if (event.detail === 'dataset:create' && auth.state.authenticated) handleCreate()
+}
+
+onMounted(() => window.addEventListener('workbench:command', handleWorkbenchCommand))
+
 onBeforeUnmount(() => {
   datasetRequestSequence += 1
   uploadController.value?.abort()
+  window.removeEventListener('workbench:command', handleWorkbenchCommand)
 })
 
 async function loadDatasets() {
@@ -196,7 +203,7 @@ function handleAnalyzeDataset(item) {
 }
 
 function handleTrainDataset(item) {
-  router.push({ path: '/models', query: { datasetId: item.id } })
+  router.push({ path: '/experiments', query: { datasetId: item.id } })
 }
 
 function handleSignIn() {
@@ -602,43 +609,17 @@ function syncRowFromDetail(id, detail) {
 
 <template>
   <div class="page-content">
-        <el-breadcrumb separator="/" class="page-breadcrumb">
-          <el-breadcrumb-item>工作台</el-breadcrumb-item>
-          <el-breadcrumb-item>{{ section.title }}</el-breadcrumb-item>
-        </el-breadcrumb>
-
-        <header class="page-header">
-          <div>
-            <h1>{{ section.title }}</h1>
-            <p>{{ section.description }}</p>
-          </div>
-          <div class="header-actions">
-            <el-button
-              v-if="auth.state.authenticated"
-              type="primary"
-              size="large"
-              :icon="FolderAdd"
-              :loading="creating"
-              @click="handleCreate"
-            >
-              新建数据集
-            </el-button>
-          </div>
-        </header>
-
-        <div v-if="!authReady || authRequired" class="auth-required-state" :class="{ 'is-checking': !authReady }" role="status" aria-live="polite">
+        <h1 class="visually-hidden">{{ section.title }}</h1>
+        <div v-if="!authReady || authRequired" class="auth-required-state" role="status">
           <div class="auth-required-content">
-            <span class="auth-required-icon"><el-icon><Loading v-if="!authReady" /><Lock v-else /></el-icon></span>
             <template v-if="authReady">
-              <h2>登录后查看你的数据集</h2>
-              <p>登录后可安全访问和管理属于你的数据资产。</p>
+              <span>需要登录。</span>
               <el-button type="primary" size="large" @click="handleSignIn">
-                登录或创建账号
+                登录
               </el-button>
             </template>
             <template v-else>
-              <h2>正在确认账户状态</h2>
-              <p>正在连接账户服务…</p>
+              <span>正在验证账户</span>
             </template>
           </div>
         </div>
@@ -689,11 +670,11 @@ function syncRowFromDetail(id, detail) {
                 :name="tab.name"
               />
               </el-tabs>
-              <span class="list-hint">点击数据集展开，数据表也可以继续展开预览</span>
             </div>
           </template>
 
-          <div v-loading="loading" class="dataset-list">
+          <div class="dataset-list">
+            <p v-if="loading" class="plain-loading">正在读取数据集…</p>
             <el-alert
               v-if="loadError"
               class="list-load-error"
@@ -745,11 +726,7 @@ function syncRowFromDetail(id, detail) {
               class="empty-state"
               :image-size="104"
               :description="section.emptyText"
-            >
-              <el-button type="primary" :icon="FolderAdd" @click="handleCreate">
-                新建第一个数据集
-              </el-button>
-            </el-empty>
+            />
 
             <div v-if="totalElements > 0" class="pagination-row">
               <span class="pagination-hint">每页 {{ size }} 条，支持 CSV / TSV / ZIP / XLSX</span>
@@ -815,9 +792,4 @@ function syncRowFromDetail(id, detail) {
   font-size: 13px;
 }
 
-.auth-required-state.is-checking { min-height: 132px; }
-.auth-required-state.is-checking .auth-required-content { display: grid; grid-template-columns: 32px minmax(0, 1fr); column-gap: 12px; text-align: left; }
-.auth-required-state.is-checking .auth-required-icon { grid-row: span 2; width: 32px; height: 32px; margin: 0; font-size: 15px; }
-.auth-required-state.is-checking .auth-required-content h2 { font-size: 13px; }
-.auth-required-state.is-checking .auth-required-content p { margin: 3px 0 0; font-size: 11px; }
 </style>

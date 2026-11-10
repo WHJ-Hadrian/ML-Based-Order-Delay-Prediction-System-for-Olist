@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '@/auth/keycloak'
 import { getDatasetCatalog, getDatasetVersions, listDatasets } from '@/api/datasets'
-import { createModelWorkflow, duplicateModelWorkflow, getModelWorkflow, listModelVersions, listModelWorkflows, trainModel, updateModelWorkflow } from '@/api/models'
-import { Aim, CircleCheck, CopyDocument, Cpu, DataAnalysis, DocumentChecked, FullScreen, FolderAdd, Plus, Refresh, Remove, Warning } from '@element-plus/icons-vue'
+import { createModelWorkflow, duplicateModelWorkflow, getModelWorkflow, listModelWorkflows, trainModel, updateModelWorkflow } from '@/api/models'
+import { Aim, CircleCheck, CopyDocument, Cpu, DataAnalysis, DocumentChecked, FullScreen, Plus, Refresh, Remove, Warning } from '@element-plus/icons-vue'
 
 const auth = useAuth()
 const route = useRoute()
@@ -19,7 +19,6 @@ const entryContext = {
 const datasets = ref([])
 const versions = ref([])
 const catalog = ref(null)
-const models = ref([])
 const selectedDatasetId = ref('')
 const selectedVersionId = ref('')
 const selectedTableId = ref('')
@@ -35,13 +34,11 @@ const candidateModels = ref([{ id: 1, algorithm: 'random_forest' }])
 const loadingDatasets = ref(false)
 const loadingVersions = ref(false)
 const loadingCatalog = ref(false)
-const loadingModels = ref(false)
 const training = ref(false)
 const trainingIndex = ref(0)
 const listError = ref('')
 const catalogError = ref('')
 const trainingError = ref('')
-const modelsError = ref('')
 const trainingResults = ref([])
 const trainingFailures = ref([])
 const trainingBranchStates = ref({})
@@ -431,26 +428,11 @@ async function loadCatalog(versionId) {
   }
 }
 
-async function loadModels() {
-  loadingModels.value = true
-  modelsError.value = ''
-  try {
-    models.value = await listModelVersions() || []
-  } catch (error) {
-    modelsError.value = error.message || '模型版本加载失败'
-  } finally {
-    loadingModels.value = false
-  }
-}
-
 async function initializeWorkspace() {
   await loadDatasets()
   const hasEntryDataset = entryContext.datasetId
     && datasetGroups.value.some((item) => item.datasetId === entryContext.datasetId)
-  await Promise.all([
-    loadModels(),
-    hasEntryDataset ? createWorkflow() : loadWorkflows(),
-  ])
+  await (hasEntryDataset ? createWorkflow() : loadWorkflows())
   if (hasEntryDataset) {
     applyingWorkflow.value = true
     selectedDatasetId.value = entryContext.datasetId
@@ -555,11 +537,10 @@ async function submitTraining() {
   if (trainingFailures.value.length) {
     trainingError.value = `${trainingFailures.value.length} 个模型分支未完成；已成功的模型仍已登记，可在下方查看。`
   }
-  await loadModels()
 }
 
 function openTrial(modelId) {
-  router.push({ path: '/model-trials', query: { modelId } })
+  router.push({ path: '/evaluation', query: { modelId } })
 }
 
 watch(selectedDatasetId, (id) => { if (!applyingWorkflow.value) loadVersions(id) })
@@ -577,7 +558,6 @@ watch(() => auth.state.status, (status) => {
   } else if (status === 'anonymous') {
     datasets.value = []
     versions.value = []
-    models.value = []
     workflows.value = []
     activeWorkflowId.value = ''
     workflowRevision.value = 0
@@ -588,6 +568,10 @@ watch(() => auth.state.status, (status) => {
   }
 }, { immediate: true })
 
+function handleWorkbenchCommand(event) {
+  if (event.detail === 'experiment:create') createWorkflow()
+}
+
 onBeforeUnmount(() => {
   datasetsRequest += 1
   versionsRequest += 1
@@ -596,6 +580,7 @@ onBeforeUnmount(() => {
   if (workflowDirty.value && activeWorkflowId.value) saveWorkflow()
   document.removeEventListener('fullscreenchange', syncFullscreen)
   if (document.fullscreenElement === workflowShell.value) document.exitFullscreen()
+  window.removeEventListener('workbench:command', handleWorkbenchCommand)
 })
 
 watch(() => JSON.stringify([workflowDocument(), activeWorkflowName.value]), () => {
@@ -611,24 +596,23 @@ function scheduleWorkflowSave() {
   workflowSaveTimer = setTimeout(() => saveWorkflow(), 900)
 }
 
-onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
+onMounted(() => {
+  document.addEventListener('fullscreenchange', syncFullscreen)
+  window.addEventListener('workbench:command', handleWorkbenchCommand)
+})
 </script>
 
 <template>
   <main class="page-content model-page">
-    <header class="page-header model-header">
-      <div>
-        <span class="model-kicker">MODEL WORKSPACE</span>
-        <h1>建模工作流</h1>
-        <p>从数据字段出发，组合训练分支并比较真实运行结果</p>
-      </div>
+    <h1 class="visually-hidden">建模实验</h1>
+    <header class="page-header page-actions model-header">
       <el-button
         circle
-        aria-label="刷新数据集与模型版本"
-        title="刷新数据集与模型版本"
+        aria-label="刷新数据集"
+        title="刷新数据集"
         :icon="Refresh"
-        :loading="loadingDatasets || loadingVersions || loadingCatalog || loadingModels"
-        @click="loadDatasets(); loadModels()"
+        :loading="loadingDatasets || loadingVersions || loadingCatalog"
+        @click="loadDatasets"
       />
     </header>
 
@@ -641,12 +625,11 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
       <div class="workflow-bar">
         <div class="workflow-topline">
           <div class="workflow-title-group">
-            <div class="workflow-title"><span class="state-dot" :class="workflowDirty ? 'is-dirty' : 'is-saved'" /><strong>工作流画布</strong><span class="workflow-save-state">{{ workflowBusy ? '同步中' : workflowDirty ? '有未保存修改' : '已保存' }}</span></div>
+            <div class="workflow-title"><strong>实验配置</strong><span class="workflow-save-state">{{ workflowBusy ? '保存中' : workflowDirty ? '未保存' : '已保存' }}</span></div>
             <div class="workflow-count">{{ columns.length }} 个字段 <span>·</span> {{ selectedCandidateCount }} 个模型分支</div>
           </div>
           <div class="workflow-controls">
             <el-input v-model="activeWorkflowName" class="workflow-name-input" size="small" maxlength="255" aria-label="工作流名称" placeholder="工作流名称" :disabled="workflowBusy" />
-            <el-button circle size="small" aria-label="新建工作流画布" title="新建工作流画布" :icon="FolderAdd" :disabled="workflowBusy" @click="createWorkflow" />
             <el-button circle size="small" aria-label="复制当前画布" title="复制当前画布" :icon="CopyDocument" :disabled="workflowBusy || !activeWorkflowId" @click="duplicateWorkflow" />
             <el-button circle size="small" aria-label="保存工作流" title="保存工作流" :icon="DocumentChecked" :loading="workflowBusy" :disabled="!workflowDirty" @click="saveWorkflow" />
             <el-button circle size="small" :aria-label="focusMode ? '退出画布专注模式' : '专注画布'" :title="focusMode ? '退出画布专注模式' : '专注画布'" :icon="focusMode ? Aim : FullScreen" @click="toggleFocusMode" />
@@ -665,7 +648,6 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
             :disabled="workflowBusy"
             @click="selectWorkflow(workflow.id)"
           >
-            <span class="tab-dirty-dot" :class="activeWorkflowId === workflow.id && workflowDirty ? 'is-dirty' : 'is-saved'" />
             <span>{{ workflow.name }}</span>
           </button>
         </div>
@@ -679,13 +661,12 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
         <div class="workflow-track">
           <section class="flow-node source-node" aria-label="数据源节点">
             <header class="node-heading">
-              <span class="node-index">01</span>
-              <div><h2>数据源</h2><p>数据集 · 版本 · 数据表</p></div>
-              <el-tag v-if="selectedVersion" type="success" effect="plain" size="small">READY</el-tag>
+              <div><h2>数据源</h2></div>
+              <span v-if="selectedVersion" class="version-state">已发布版本</span>
             </header>
 
             <el-input v-model="datasetQuery" clearable size="small" placeholder="筛选数据集" aria-label="筛选数据集" :disabled="training" />
-            <div v-if="loadingDatasets" class="node-empty"><el-skeleton :rows="3" animated /></div>
+            <div v-if="loadingDatasets" class="node-empty">正在载入数据集…</div>
             <div v-else-if="!datasetGroups.length" class="node-empty">暂无可用数据集</div>
             <div v-else-if="!visibleDatasets.length" class="node-empty">没有匹配的数据集</div>
             <div v-else class="dataset-choices" role="list" aria-label="READY 数据集">
@@ -753,8 +734,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 
           <section class="flow-node fields-node" aria-label="目标与特征节点">
             <header class="node-heading">
-              <span class="node-index">02</span>
-              <div><h2>目标与特征</h2><p>从字段本身定义预测问题</p></div>
+              <div><h2>目标与特征</h2></div>
               <el-tag v-if="targetColumn" type="warning" effect="plain" size="small">目标已设</el-tag>
             </header>
 
@@ -805,8 +785,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 
           <section class="flow-node models-node" aria-label="模型训练分支">
             <header class="node-heading">
-              <span class="node-index">03</span>
-              <div><h2>训练分支</h2><p>同一份数据配置，比较不同模型</p></div>
+              <div><h2>训练分支</h2></div>
               <el-button
                 circle
                 size="small"
@@ -883,8 +862,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
           <span v-else>等待连接数据源</span>
         </div>
         <div class="run-actions">
-          <span v-if="training" class="running-status"><el-icon class="is-spinning"><Refresh /></el-icon>并行训练中 · {{ trainingIndex }} / {{ candidateModels.length }} 个分支已完成</span>
-          <span v-else class="form-footnote">每个分支使用相同数据划分并分别登记模型版本</span>
+          <span v-if="training" class="running-status">运行中 · {{ trainingIndex }} / {{ candidateModels.length }} 个分支已完成</span>
           <el-button type="primary" :icon="Cpu" :loading="training" :disabled="!canTrain || training" @click="submitTraining">
             {{ training ? '运行中' : `运行 ${candidateModels.length} 个分支` }}
           </el-button>
@@ -894,7 +872,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 
     <section v-if="trainingResults.length || trainingFailures.length" class="result-panel" aria-label="本次实验结果">
       <div class="result-heading">
-        <div><span class="model-kicker">EXPERIMENT OUTPUT</span><h2>本次运行</h2><p>{{ trainingResults.length }} 个模型完成并登记<span v-if="trainingFailures.length"> · {{ trainingFailures.length }} 个分支失败</span></p></div>
+        <div><h2>本次运行</h2><span>成功 {{ trainingResults.length }}<template v-if="trainingFailures.length"> · 失败 {{ trainingFailures.length }}</template></span></div>
         <el-tag :type="trainingFailures.length ? 'warning' : 'success'" effect="plain">{{ trainingFailures.length ? '部分完成' : '已完成' }}</el-tag>
       </div>
       <div class="result-grid">
@@ -914,7 +892,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
             </el-table>
           </div>
           <footer class="branch-actions">
-            <el-button size="small" :icon="Aim" @click="openTrial(run.id)">拿新数据试用</el-button>
+            <el-button size="small" :icon="Aim" @click="openTrial(run.id)">评估新数据</el-button>
           </footer>
         </article>
         <article v-for="failure in trainingFailures" :key="`failed-${failure.candidateId}`" class="branch-result is-failed">
@@ -924,42 +902,15 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
       </div>
     </section>
 
-    <section class="registry-section" aria-label="模型版本登记">
-      <div class="registry-heading">
-        <div><h2>模型注册表</h2><span>{{ models.length }} 个版本</span></div>
-        <el-button circle aria-label="刷新模型版本" title="刷新模型版本" :icon="Refresh" :loading="loadingModels" @click="loadModels" />
-      </div>
-      <div v-if="modelsError" class="model-message is-error" role="alert">
-        <el-icon><Warning /></el-icon><span>{{ modelsError }}</span>
-        <el-button text :icon="Refresh" @click="loadModels">重试</el-button>
-      </div>
-      <el-table v-else :data="models" row-key="id" table-layout="fixed" v-loading="loadingModels" class="model-table">
-        <el-table-column label="模型版本" min-width="210">
-          <template #default="{ row }"><div class="model-name-cell" :title="row.name"><strong>{{ row.name }}</strong><span>{{ row.task === 'classification' ? '分类' : '回归' }} · {{ row.algorithm }}</span></div></template>
-        </el-table-column>
-        <el-table-column label="数据血缘" min-width="180">
-          <template #default="{ row }"><div class="lineage-cell"><span>数据集 {{ row.datasetId }}</span><small>版本 {{ row.datasetVersionNo }} · 表 {{ row.tableId }}</small></div></template>
-        </el-table-column>
-        <el-table-column label="指标" min-width="180">
-          <template #default="{ row }"><div class="registry-metrics"><span v-for="(value, key) in row.metrics" :key="key">{{ key }} {{ formatNumber(value, 3) }}</span></div></template>
-        </el-table-column>
-        <el-table-column prop="targetColumn" label="目标字段" min-width="130" show-overflow-tooltip />
-        <el-table-column label="记录时间" width="165">
-          <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="!loadingModels && !modelsError && !models.length" description="暂无模型版本" :image-size="76" />
-    </section>
   </main>
 </template>
 
 <style scoped>
 .model-page { min-width: 0; padding-bottom: 32px; }
 .model-header { align-items: center; }
-.model-kicker { display: inline-block; margin-bottom: 5px; color: #568374; font-size: 10px; font-weight: 700; line-height: 1.2; }
 .model-header h1 { letter-spacing: 0; }
 .model-header p { color: #64736d; }
-.workflow-shell, .result-panel { min-width: 0; margin-bottom: 12px; overflow: hidden; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); box-shadow: none; }
+.workflow-shell, .result-panel { min-width: 0; margin-bottom: 20px; overflow: hidden; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; }
 .workflow-bar { display: grid; min-width: 0; gap: 5px; padding: 6px 10px 0; border-bottom: 1px solid #e1e1e1; }
 .workflow-topline, .workflow-title-group, .workflow-title, .workflow-controls { display: flex; min-width: 0; align-items: center; }
 .workflow-topline { justify-content: space-between; gap: 12px; }
@@ -967,9 +918,6 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .workflow-title { gap: 8px; color: #718079; font-size: 11px; }
 .workflow-title strong { color: #2b4037; font-size: 12px; }
 .workflow-save-state { color: #7c8983; font-size: 10px; }
-.state-dot, .tab-dirty-dot { width: 7px; height: 7px; flex: 0 0 7px; background: #d59b40; border-radius: 50%; }
-.state-dot.is-saved, .tab-dirty-dot.is-saved { background: #4f9a72; }
-.state-dot.is-dirty, .tab-dirty-dot.is-dirty { background: #d59b40; }
 .workflow-count { display: flex; min-width: 0; align-items: center; gap: 8px; color: #718079; font-size: 11px; }
 .workflow-count span { color: #b3beb8; }
 .workflow-controls { flex: 0 0 auto; gap: 6px; }
@@ -978,7 +926,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .workflow-tab { display: flex; width: max-content; min-width: 0; max-width: 220px; height: 32px; flex: 0 0 auto; align-items: center; gap: 7px; padding: 0 9px; overflow: hidden; color: #50545a; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
 .workflow-tab > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-tab:hover { color: #275d4b; background: #f7faf8; }
-.workflow-tab.is-active { color: #0f6cbd; border-bottom-color: #0f6cbd; font-weight: 650; }
+.workflow-tab.is-active { color: var(--accent-hover); border-bottom-color: var(--accent); font-weight: 650; }
 .workflow-tab:disabled { cursor: wait; }
 .workflow-feedback { display: flex; min-width: 0; min-height: 24px; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0 6px; color: #68776f; font-size: 10px; }
 .workflow-feedback.is-error { color: #9a4139; }
@@ -987,7 +935,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .workflow-shell:fullscreen { display: flex; width: 100vw; height: 100vh; height: 100dvh; flex-direction: column; margin: 0; overflow: auto; background: #fff; border: 0; border-radius: 0; box-shadow: none; }
 .workflow-shell.is-focused .workflow-canvas, .workflow-shell:fullscreen .workflow-canvas { flex: 1 1 auto; overflow: auto; }
 .workflow-shell.is-focused .workflow-footer, .workflow-shell:fullscreen .workflow-footer { flex: 0 0 auto; }
-.workflow-canvas { min-width: 0; padding: 10px; container-type: inline-size; background-color: #f3f4f5; background-image: radial-gradient(#d5d9de 0.7px, transparent 0.7px); background-size: 16px 16px; }
+.workflow-canvas { min-width: 0; padding: 10px; container-type: inline-size; background: #f3f4f5; }
 .workflow-track { display: grid; grid-template-columns: minmax(230px, 300px) minmax(48px, 1fr) minmax(300px, 360px) minmax(48px, 1fr) minmax(280px, 320px); align-items: start; gap: 0; }
 .flow-node { width: 100%; min-width: 0; align-self: start; padding: 10px; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); box-shadow: none; }
 .models-node { display: flex; min-width: 0; flex-direction: column; align-items: stretch; }
@@ -997,7 +945,6 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .models-node > .node-heading > div { min-width: 0; flex: 1 1 auto; }
 .models-node > .node-heading p { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .node-heading { display: flex; min-width: 0; min-height: 38px; align-items: center; gap: 9px; margin-bottom: 13px; }
-.node-index { display: grid; width: 26px; height: 26px; flex: 0 0 26px; place-items: center; color: #216c5a; background: #e9f3ee; border: 1px solid #d6e8de; border-radius: 6px; font-size: 10px; font-weight: 700; }
 .node-heading > div { min-width: 0; flex: 1; }
 .node-heading h2 { margin: 0; overflow: hidden; color: #263b32; font-size: 13px; font-weight: 680; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .node-heading p { margin: 3px 0 0; color: #829089; font-size: 10px; line-height: 1.3; }
@@ -1075,14 +1022,12 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .run-actions { display: flex; min-width: 0; align-items: center; gap: 12px; }
 .form-footnote, .running-status { min-width: 0; color: #829089; font-size: 10px; }
 .running-status { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); }
-.is-spinning { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.result-panel { padding: 12px; }
+.result-panel { padding: 14px 0; }
 .result-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .result-heading h2 { margin: 0; color: #263c32; font-size: 16px; line-height: 1.35; }
 .result-heading p { margin: 4px 0 0; color: #7d8b84; font-size: 10px; }
 .result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 10px; }
-.branch-result { min-width: 0; padding: 12px; background: #fbfdfb; border: 1px solid #e1eae4; border-radius: 6px; }
+.branch-result { min-width: 0; padding: 12px 0; background: transparent; border: 0; border-top: 1px solid #e1eae4; border-radius: 0; }
 .branch-result > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
 .branch-result > header > span { display: flex; min-width: 0; align-items: center; gap: 7px; color: #285d45; font-size: 11px; font-weight: 670; }
 .branch-result > header > span :deep(.el-icon) { flex: 0 0 auto; color: #31825a; }
@@ -1091,8 +1036,8 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .branch-result.is-failed > header > span { color: #87443b; }
 .branch-result.is-failed > p { margin: 8px 0 0; overflow-wrap: anywhere; font-size: 10px; line-height: 1.5; }
 .result-meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px 12px; margin-top: 9px; color: #839088; font-size: 9px; }
-.result-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 10px; overflow: hidden; border: 1px solid #e4ece6; border-radius: 5px; }
-.result-metrics > div { display: flex; min-width: 0; min-height: 50px; flex-direction: column; justify-content: center; gap: 4px; padding: 7px 9px; border-right: 1px solid #e4ece6; border-bottom: 1px solid #e4ece6; }
+.result-metrics { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 10px; padding-block: 8px; border-block: 1px solid #e4ece6; }
+.result-metrics > div { display: flex; min-width: 92px; flex-direction: column; justify-content: center; gap: 4px; padding: 0; }
 .result-metrics > div:nth-child(2n) { border-right: 0; }
 .result-metrics > div:nth-last-child(-n + 2) { border-bottom: 0; }
 .result-metrics span { overflow: hidden; color: #7c8a82; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1102,17 +1047,9 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
 .sample-heading { display: flex; min-height: 28px; align-items: center; gap: 6px; color: #72827a; }
 .sample-heading h3 { margin: 0; color: #40534b; font-size: 10px; font-weight: 650; }
 .sample-heading > span { margin-left: auto; font-size: 9px; }
-.registry-section { min-width: 0; }
-.registry-heading { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
-.registry-heading > div { display: flex; align-items: baseline; gap: 9px; }
-.registry-heading h2 { margin: 0; color: #20372f; font-size: 15px; font-weight: 650; }
-.registry-heading > div > span { color: #829089; font-size: 10px; }
-.model-table { width: 100%; overflow: hidden; border: 1px solid #e5ece8; border-radius: 7px; }
 .model-name-cell, .lineage-cell { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .model-name-cell strong, .lineage-cell span { overflow: hidden; color: #30463d; font-size: 11px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .model-name-cell span, .lineage-cell small { overflow: hidden; color: #84928b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.registry-metrics { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px 10px; color: #586b63; font-size: 10px; }
-.registry-metrics span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @container (max-width: 930px) {
   .workflow-track { grid-template-columns: minmax(0, 1fr); gap: 0; }
@@ -1151,7 +1088,7 @@ onMounted(() => document.addEventListener('fullscreenchange', syncFullscreen))
   .run-actions .el-button { width: 100%; }
   .algorithm-choices { grid-template-columns: minmax(0, 1fr); }
   .algorithm-choice { min-height: 48px; }
-  .result-panel { padding: 12px; }
+  .result-panel { padding: 12px 0; }
   .registry-heading > div { align-items: flex-start; flex-direction: column; gap: 2px; }
 }
 </style>

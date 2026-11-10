@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowRight, Check, Close, CopyDocument, Cpu, DataAnalysis, Delete, FolderOpened, MagicStick, Plus, Refresh, Search, Share } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
@@ -99,23 +99,9 @@ const visibleColumns = computed(() => {
     || (column.logicalType || '').toLocaleLowerCase().includes(query))
 })
 const relationColumns = computed(() => selectedTableColumns.value.filter((column) => column.columnId !== selectedColumnId.value))
-const suggestedRelationColumn = computed(() => {
-  const numericPattern = /INT|FLOAT|DECIMAL|NUMBER|DOUBLE|REAL/
-  const selectedIsNumeric = numericPattern.test((selectedColumn.value?.logicalType || '').toUpperCase())
-  return relationColumns.value.find((column) => numericPattern.test((column.logicalType || '').toUpperCase()))
-    || (selectedIsNumeric ? relationColumns.value[0] : null)
-    || null
-})
 const selectedDataset = computed(() =>
   datasets.value.find((dataset) => dataset.id === selectedDatasetId.value) || null,
 )
-const analysisSuggestion = computed(() => {
-  const logicalType = (selectedColumn.value?.logicalType || '').toUpperCase()
-  if (/INT|FLOAT|DECIMAL|NUMBER|DOUBLE|REAL/.test(logicalType)) {
-    return { label: '数值分布', detail: '查看范围、缺失和区间频数' }
-  }
-  return { label: '类别分布', detail: '查看高频类别和唯一值估算' }
-})
 const isHistogram = computed(() => analysis.value?.chartType === 'histogram')
 const relationColumn = computed(() =>
   selectedTable.value?.columns?.find((column) => column.columnId === relationColumnId.value) || null,
@@ -259,12 +245,6 @@ async function addSelectedAnalyses() {
   } finally {
     if (requestId === analysisBatchRequest.value) addingToBoard.value = false
   }
-}
-
-function useSuggestedRelation() {
-  if (!suggestedRelationColumn.value) return
-  relationColumnId.value = suggestedRelationColumn.value.columnId
-  nextTick(loadRelation)
 }
 
 function markWorkspaceDirty() {
@@ -660,7 +640,7 @@ function selectedTableReference() {
 }
 
 function openCreatedWorkflow(workflowId) {
-  router.push({ path: '/workflows', query: { workflow: workflowId } })
+  router.push({ path: '/pipelines', query: { workflow: workflowId } })
 }
 
 async function loadCatalog(datasetId) {
@@ -781,7 +761,7 @@ function renderChart() {
       data: points.map((point) => point.value),
       barMaxWidth: 22,
       showBackground: true,
-      backgroundStyle: { color: 'rgba(15, 108, 189, 0.055)', borderRadius: [0, 4, 4, 0] },
+      backgroundStyle: { color: 'rgba(53, 107, 88, 0.055)', borderRadius: [0, 4, 4, 0] },
       itemStyle: { borderRadius: [0, 4, 4, 0] },
       emphasis: { focus: 'self' },
     }],
@@ -832,7 +812,7 @@ function openDatasets() {
 function openModelTraining() {
   if (!catalog.value?.datasetId || !catalog.value?.datasetVersionId || !selectedTableId.value) return
   router.push({
-    path: '/models',
+    path: '/experiments',
     query: {
       datasetId: catalog.value.datasetId,
       versionId: catalog.value.datasetVersionId,
@@ -923,6 +903,12 @@ watch(relationChartElement, (element) => {
   relationResizeObserver.observe(element)
 })
 
+function handleWorkbenchCommand(event) {
+  if (event.detail === 'analysis:create') startNewWorkspace()
+}
+
+onMounted(() => window.addEventListener('workbench:command', handleWorkbenchCommand))
+
 onBeforeUnmount(() => {
   analysisBatchRequest.value += 1
   catalogRequest += 1
@@ -934,17 +920,14 @@ onBeforeUnmount(() => {
   relationChart?.dispose()
   chart = null
   relationChart = null
+  window.removeEventListener('workbench:command', handleWorkbenchCommand)
 })
 </script>
 
 <template>
   <main class="page-content analysis-page">
-    <header class="page-header analysis-header">
-      <div>
-        <span class="analysis-kicker">DATA WORKSPACE</span>
-        <h1>分析工作台</h1>
-        <p>结构化数据 · 多方案探索</p>
-      </div>
+    <h1 class="visually-hidden">可视化分析</h1>
+    <header class="page-header page-actions analysis-header">
       <el-button
         circle
         aria-label="刷新分析"
@@ -981,7 +964,6 @@ onBeforeUnmount(() => {
       </label>
       <div class="workspace-actions" aria-label="方案操作">
         <el-button :icon="FolderOpened" :disabled="!selectedWorkspaceId || workspaceState === 'loading'" @click="openSelectedWorkspace">打开</el-button>
-        <el-button :icon="Plus" @click="startNewWorkspace">新建</el-button>
         <el-button
           v-if="activeWorkspaceId"
           :icon="CopyDocument"
@@ -1017,9 +999,7 @@ onBeforeUnmount(() => {
     <section class="analysis-explorer" aria-label="数据资产浏览器">
       <header class="explorer-heading">
         <div>
-          <span class="explorer-kicker">ASSET EXPLORER</span>
-          <h2>从数据资产开始</h2>
-          <p>跨数据集与数据表收集字段，再组合成一张分析画布。</p>
+          <h2>数据</h2>
         </div>
         <div class="explorer-actions">
           <el-button
@@ -1043,7 +1023,7 @@ onBeforeUnmount(() => {
             <div class="asset-column-heading"><strong>数据集</strong><span>{{ visibleDatasets.length }} / {{ datasets.length }}<i v-if="datasetHasMore">+</i></span></div>
             <el-input v-model="datasetSearch" class="asset-search" size="small" clearable :prefix-icon="Search" placeholder="搜索数据集" aria-label="搜索数据集" />
           </div>
-          <el-skeleton v-if="loadingDatasets" :rows="5" animated />
+          <p v-if="loadingDatasets" class="analysis-loading">正在读取数据集</p>
           <el-empty v-else-if="!datasets.length" description="暂无已就绪数据集" :image-size="58" />
           <el-empty v-else-if="!visibleDatasets.length" description="没有匹配的数据集" :image-size="58" />
           <template v-else>
@@ -1067,7 +1047,7 @@ onBeforeUnmount(() => {
             <div class="asset-column-heading"><strong>数据表</strong><span>{{ visibleTables.length }} / {{ catalog?.tables?.length || 0 }}</span></div>
             <el-input v-model="tableSearch" class="asset-search" size="small" clearable :prefix-icon="Search" placeholder="搜索数据表" aria-label="搜索数据表" :disabled="!catalog?.tables?.length" />
           </div>
-          <el-skeleton v-if="loadingCatalog" :rows="5" animated />
+          <p v-if="loadingCatalog" class="analysis-loading">正在读取数据目录</p>
           <el-empty v-else-if="!catalog?.tables?.length" description="选择数据集查看表" :image-size="58" />
           <el-empty v-else-if="!visibleTables.length" description="没有匹配的数据表" :image-size="58" />
           <template v-else>
@@ -1114,11 +1094,6 @@ onBeforeUnmount(() => {
           </template>
         </section>
       </div>
-      <div v-if="selectedColumn" class="explorer-suggestion">
-        <div><span class="suggestion-mark"><el-icon><MagicStick /></el-icon></span><div><strong>推荐：{{ analysisSuggestion.label }}</strong><small>{{ analysisSuggestion.detail }} · {{ selectedColumn.name }}</small></div></div>
-        <el-button size="small" type="primary" plain @click="selectAssetColumn(selectedColumn.columnId)">查看字段分析</el-button>
-        <el-button v-if="suggestedRelationColumn" size="small" plain @click="useSuggestedRelation">比较 {{ suggestedRelationColumn.name }}</el-button>
-      </div>
       <div v-if="analysisSelection.length" class="analysis-selection-bar">
         <div class="selection-summary"><strong>已选 {{ analysisSelection.length }} / 8 个字段</strong><small>可跨数据集与数据表组合 · 画布最多 20 张卡片</small></div>
         <div class="selection-items">
@@ -1146,26 +1121,10 @@ onBeforeUnmount(() => {
     </div>
 
     <section v-if="datasets.length && selectedTable" class="analysis-metrics" aria-label="数据概况">
-      <div class="metric-cell">
-        <span>记录数</span>
-        <strong :title="formatNumber(analysis?.rowCount ?? selectedTable.rowCount)">{{ formatNumber(analysis?.rowCount ?? selectedTable.rowCount) }}</strong>
-        <small>当前数据表</small>
-      </div>
-      <div class="metric-cell">
-        <span>字段数</span>
-        <strong :title="formatNumber(selectedTable.columnCount)">{{ formatNumber(selectedTable.columnCount) }}</strong>
-        <small>当前数据表</small>
-      </div>
-      <div class="metric-cell">
-        <span>唯一值估算</span>
-        <strong :title="analysis ? formatNumber(analysis.uniqueCountEstimate) : ''">{{ loadingAnalysis ? '...' : analysis ? formatNumber(analysis.uniqueCountEstimate) : '—' }}</strong>
-        <small>当前字段</small>
-      </div>
-      <div class="metric-cell">
-        <span>缺失记录</span>
-        <strong :title="analysis ? formatNumber(analysis.missingCount) : ''">{{ loadingAnalysis ? '...' : analysis ? formatNumber(analysis.missingCount) : '—' }}</strong>
-        <small>当前字段</small>
-      </div>
+      <span>记录 <strong>{{ formatNumber(analysis?.rowCount ?? selectedTable.rowCount) }} 行</strong></span>
+      <span>字段 <strong>{{ formatNumber(selectedTable.columnCount) }}</strong></span>
+      <span>唯一值估算 <strong>{{ loadingAnalysis ? '读取中' : analysis ? formatNumber(analysis.uniqueCountEstimate) : '—' }}</strong></span>
+      <span>缺失记录 <strong>{{ loadingAnalysis ? '读取中' : analysis ? formatNumber(analysis.missingCount) : '—' }}</strong></span>
     </section>
 
     <section v-if="datasets.length && selectedTable" class="chart-panel" aria-label="字段分布图">
@@ -1192,7 +1151,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="chart-body" :class="{ 'is-loading': loadingAnalysis }">
-        <el-skeleton v-if="loadingAnalysis" :rows="7" animated />
+        <p v-if="loadingAnalysis" class="analysis-loading">正在读取分析结果</p>
         <div v-else-if="analysisError" class="chart-empty">
           <el-icon><DataAnalysis /></el-icon>
           <span>分析暂不可用</span>
@@ -1270,7 +1229,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div v-if="relationError" class="analysis-message is-error" role="alert"><span>{{ relationError }}</span><el-button text :icon="Refresh" @click="loadRelation">重试</el-button></div>
-      <el-skeleton v-else-if="loadingRelation" :rows="5" animated />
+      <p v-else-if="loadingRelation" class="analysis-loading">正在计算字段关系</p>
       <el-empty v-else-if="relation && !relation.points?.length" description="所选字段没有可用于关系分析的记录" :image-size="76" />
       <div v-else-if="relation" ref="relationChartElement" class="relation-chart"></div>
       <div v-if="relation" class="relation-board-action">
@@ -1607,58 +1566,16 @@ onBeforeUnmount(() => {
   border: 1px solid #f1d2c8;
 }
 
-.analysis-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-block: 15px;
-  overflow: hidden;
-  background: #fff;
-  border: 1px solid #e1e9e4;
-  border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(27, 61, 50, 0.05);
-}
-
-.metric-cell {
-  display: flex;
-  min-width: 0;
-  min-height: 94px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 5px;
-  padding: 13px 19px;
-  border-right: 1px solid #e7eeea;
-}
-
-.metric-cell:last-child {
-  border-right: 0;
-}
-
-.metric-cell > span {
-  color: #62736b;
-  font-size: 11px;
-}
-
-.metric-cell strong {
-  overflow: hidden;
-  color: #1a3e32;
-  font-size: 21px;
-  font-weight: 680;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.metric-cell small {
-  color: #91a099;
-  font-size: 10px;
-}
+.analysis-metrics { display: flex; min-width: 0; flex-wrap: wrap; gap: 8px 22px; margin-block: 12px; padding: 9px 0; border-block: 1px solid #e1e9e4; color: #62736b; font-size: 10px; }
+.analysis-metrics strong { margin-left: 4px; color: #303840; font-size: 11px; font-weight: 620; font-variant-numeric: tabular-nums; }
 
 .chart-panel {
   overflow: hidden;
-  background: #fff;
-  border: 1px solid #e1e9e4;
-  border-radius: 8px;
-  box-shadow: 0 14px 34px rgba(27, 61, 50, 0.065);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid #e1e9e4;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .analysis-board {
@@ -1698,16 +1615,17 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
   align-items: start;
-  gap: 12px;
+  gap: 0 20px;
 }
 
 .board-card {
   min-width: 0;
   overflow: hidden;
-  padding: 13px 14px 12px;
-  background: #fff;
-  border: 1px solid #e1eae5;
-  border-radius: 7px;
+  padding: 13px 0 12px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid #e1eae5;
+  border-radius: 0;
 }
 
 .board-card-heading {
@@ -1765,11 +1683,12 @@ onBeforeUnmount(() => {
 .relation-panel {
   min-width: 0;
   margin-top: 15px;
-  padding: 16px 19px 11px;
-  background: #fff;
-  border: 1px solid #e1e9e4;
-  border-radius: 8px;
-  box-shadow: 0 12px 30px rgba(27, 61, 50, 0.05);
+  padding: 16px 0 11px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid #e1e9e4;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .relation-heading {
@@ -1955,33 +1874,9 @@ onBeforeUnmount(() => {
   .explorer-heading p { max-width: 230px; }
   .explorer-grid { display: flex; height: min(44vh, 340px); min-height: 240px; max-height: 340px; }
   .asset-column { flex: 0 0 78vw; max-width: 300px; }
-  .explorer-suggestion { align-items: stretch; flex-wrap: wrap; }
-  .explorer-suggestion > div { flex-basis: 100%; }
-  .explorer-suggestion > .el-button { flex: 1 1 auto; margin-left: 0; }
   .analysis-selection-bar { grid-template-columns: minmax(0, 1fr) auto; }
   .selection-summary { grid-column: 1 / -1; }
   .selection-items { grid-column: 1 / -1; }
-
-  .analysis-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .metric-cell {
-    min-height: 84px;
-    padding: 11px 14px;
-  }
-
-  .metric-cell:nth-child(2) {
-    border-right: 0;
-  }
-
-  .metric-cell:nth-child(-n + 2) {
-    border-bottom: 1px solid #e7eeea;
-  }
-
-  .metric-cell strong {
-    font-size: 19px;
-  }
 
   .chart-heading {
     flex-wrap: wrap;

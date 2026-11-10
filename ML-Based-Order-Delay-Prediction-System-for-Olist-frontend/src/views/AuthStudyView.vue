@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import brandArtwork from '@/assets/img/chahua.png'
 import {
   createRegisteredAccount,
   requestRegistrationCode,
@@ -64,11 +63,11 @@ const genderOptions = [
 
 const currentTitle = computed(() => {
   if (stage.value === stages.code) return '验证您的邮箱'
-  if (stage.value === stages.name) return '创建您的 SeekDateSet 账号'
+  if (stage.value === stages.name) return '创建账号'
   if (stage.value === stages.birthday) return '基本信息'
   if (stage.value === stages.complete) return '账号已创建'
   if (stage.value === stages.password) {
-    return isRegistration.value ? '创建密码' : (loginProfile.value?.displayName || '欢迎')
+    return isRegistration.value ? '创建密码' : (loginProfile.value?.displayName || '登录')
   }
   return isRegistration.value ? '创建账号' : '登录'
 })
@@ -365,36 +364,8 @@ function returnToLoginAfterRegistration() {
   <main class="auth-study-page">
     <div class="auth-card-wrap">
       <section class="auth-card" aria-labelledby="auth-title">
-        <div v-if="isBusy" class="auth-progress" role="progressbar" :aria-label="isRegistration ? '正在处理注册' : '正在连接登录服务'">
-          <span class="auth-progress-indicator"></span>
-        </div>
         <div class="auth-copy">
-          <img class="brand-artwork" :src="brandArtwork" alt="SeekDateSet">
           <h1 id="auth-title">{{ currentTitle }}</h1>
-          <p v-if="stage === stages.identifier" class="auth-description">
-            <template v-if="!isRegistration">请使用您的 SeekDateSet 账号登录。该浏览器中的其他 SeekDateSet 应用都将可以访问此账号。</template>
-            <template v-else>创建您的 SeekDateSet 账号，开始管理数据资产。</template>
-          </p>
-
-          <p v-else-if="stage === stages.code" class="auth-description">
-            我们会向您的邮箱发送一次性验证码。
-          </p>
-          <p v-else-if="stage === stages.name" class="auth-description">
-            请输入您的姓名，它将显示在您的 SeekDateSet 账号中。
-          </p>
-          <p v-else-if="stage === stages.birthday" class="auth-description">
-            输入您的生日和性别。
-          </p>
-          <p v-else-if="stage === stages.complete" class="auth-description">
-            您的邮箱已验证，可以使用新账号登录。
-          </p>
-          <p v-else-if="isRegistration" class="auth-description">
-            设置一个至少 10 个字符的密码。
-          </p>
-          <p v-else class="auth-description">
-            输入密码以继续登录 SeekDateSet。
-          </p>
-
         </div>
 
         <div
@@ -609,7 +580,7 @@ function returnToLoginAfterRegistration() {
               <span class="account-avatar" aria-hidden="true">{{ isRegistration ? accountInitial : (loginProfile?.email || email).charAt(0).toUpperCase() }}</span>
               <span class="selected-identity">
                 <span class="selected-email">{{ isRegistration ? displayName : (loginProfile?.email || email) }}</span>
-                <span class="selected-caption">{{ isRegistration ? email : 'SeekDateSet 账号' }}</span>
+                <span class="selected-caption">{{ isRegistration ? email : '账号' }}</span>
               </span>
             </div>
             <div class="auth-field">
@@ -732,31 +703,6 @@ function returnToLoginAfterRegistration() {
   box-shadow: 0 1px 2px rgba(60, 64, 67, 0.03);
 }
 
-.auth-progress {
-  position: absolute;
-  top: 0;
-  right: 36px;
-  left: 36px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #f1f3f4;
-}
-
-.auth-progress-indicator {
-  display: block;
-  width: 36%;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-  animation: auth-progress-slide 0.8s ease-in-out infinite;
-}
-
-@keyframes auth-progress-slide {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(390%); }
-}
-
 .auth-copy {
   align-self: stretch;
   display: flex;
@@ -765,13 +711,6 @@ function returnToLoginAfterRegistration() {
   padding-top: 2px;
 }
 
-.brand-artwork {
-  display: block;
-  width: 96px;
-  height: 48px;
-  object-fit: contain;
-  object-position: left center;
-}
 
 .auth-copy h1 {
   margin: 24px 0 16px;

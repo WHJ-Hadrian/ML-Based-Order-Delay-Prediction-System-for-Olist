@@ -16,7 +16,7 @@ const emit = defineEmits(['update:modelValue', 'continue'])
   >
     <div class="auth-required-content">
       <h2>需要登录后继续</h2>
-      <p>请先使用 SeekDateSet 账号登录，登录后即可继续访问数据资产。</p>
+      <p>登录后继续访问数据资产。</p>
       <div class="auth-required-actions">
         <el-button @click="emit('update:modelValue', false)">取消</el-button>
         <el-button type="primary" @click="emit('continue')">继续登录</el-button>

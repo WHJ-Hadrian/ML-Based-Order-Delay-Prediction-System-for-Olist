@@ -115,7 +115,7 @@ watch(() => props.modelValue, (visible) => {
 <template>
   <el-dialog :model-value="modelValue" title="加入工作流" width="min(560px, calc(100vw - 24px))"
     :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :show-close="!submitting" @close="close">
-    <el-skeleton v-if="loading" :rows="4" animated />
+    <p v-if="loading" class="source-loading">正在读取工作流</p>
     <template v-else>
       <el-checkbox-group v-model="selectedKeys" class="source-list" aria-label="来源数据表">
         <div v-for="row in rows" :key="row.key" class="source-row">

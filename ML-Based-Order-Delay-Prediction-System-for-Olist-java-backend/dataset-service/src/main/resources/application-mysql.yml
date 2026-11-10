@@ -4,7 +4,7 @@ spring:
     exclude:
       - org.springframework.boot.autoconfigure.security.oauth2.resource.servlet.OAuth2ResourceServerAutoConfiguration
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3307/olist_datasets?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3308/olist_datasets?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
     username: ${SPRING_DATASOURCE_USERNAME:olist}
     password: ${SPRING_DATASOURCE_PASSWORD:local-only-change-me}
     driver-class-name: com.mysql.cj.jdbc.Driver

@@ -287,8 +287,9 @@ async function submit() {
         <el-button :icon="DocumentCopy" @click="copySelected">复制选中</el-button>
       </div>
 
+      <p v-if="loadingCatalog" class="plain-loading">正在读取字段目录…</p>
       <el-table
-        v-loading="loadingCatalog"
+        v-else
         :data="filteredCatalog"
         row-key="columnId"
         height="360"

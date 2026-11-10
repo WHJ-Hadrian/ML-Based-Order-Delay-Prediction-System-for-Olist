@@ -554,7 +554,7 @@ function selectFile(file) {
 
     <transition name="accordion">
       <section v-if="expanded" class="dataset-expanded" @click.stop>
-        <div v-loading="detailLoading" class="expanded-inner">
+        <div class="expanded-inner">
           <el-alert
             v-if="detailError"
             class="detail-error"
@@ -569,7 +569,7 @@ function selectFile(file) {
           </el-alert>
 
           <div v-else-if="!detail && detailLoading" class="detail-skeleton">
-            <el-skeleton :rows="4" animated />
+            <p class="detail-loading-text">正在读取数据集详情</p>
           </div>
 
           <template v-else-if="detail">
@@ -578,7 +578,7 @@ function selectFile(file) {
                 <strong>版本与来源</strong>
                 <span v-if="versions.length">{{ versions.length }} 个版本</span>
               </div>
-              <el-skeleton v-if="versionsLoading && !versions.length" :rows="1" animated />
+              <p v-if="versionsLoading && !versions.length" class="detail-loading-text">正在读取版本</p>
               <el-alert
                 v-else-if="versionsError"
                 type="error"
@@ -737,7 +737,7 @@ function selectFile(file) {
                           v-if="!tablePreviews[tableKey(table)] && tablePreviewLoading[tableKey(table)]"
                           class="table-preview-loading"
                         >
-                          <el-skeleton :rows="3" animated />
+                          <p class="detail-loading-text">正在读取数据预览</p>
                         </div>
                         <template v-else-if="tablePreviews[tableKey(table)]">
                           <TableRowSearch
@@ -811,30 +811,7 @@ function selectFile(file) {
                                   :on-rows-rendered="(params) => handleRowsRendered(table, params)"
                                 >
                                   <template #empty>
-                                    <el-skeleton
-                                      v-if="isAllRowsInitialLoading(table)"
-                                      class="table-skeleton"
-                                      animated
-                                    >
-                                      <template #template>
-                                        <div
-                                          v-for="rowIndex in 12"
-                                          :key="`skeleton-${rowIndex}`"
-                                          class="table-skeleton-row"
-                                        >
-                                          <span class="table-skeleton-cell is-index">
-                                            <el-skeleton-item variant="text" />
-                                          </span>
-                                          <span
-                                            v-for="(column, columnIndex) in tablePreviews[tableKey(table)].columns"
-                                            :key="columnIndex"
-                                            class="table-skeleton-cell"
-                                          >
-                                            <el-skeleton-item variant="text" />
-                                          </span>
-                                        </div>
-                                      </template>
-                                    </el-skeleton>
+                                    <span v-if="isAllRowsInitialLoading(table)" class="detail-loading-text">正在读取数据行</span>
                                   </template>
                                 </el-table-v2>
                               </template>

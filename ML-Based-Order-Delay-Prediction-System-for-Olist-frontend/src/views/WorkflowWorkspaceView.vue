@@ -1,11 +1,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { Handle, Position, VueFlow, useVueFlow } from '@vue-flow/core'
 import {
-  CircleCheck, CircleClose, CopyDocument, Delete, DocumentChecked, Expand, FullScreen, Loading, Plus, Refresh, VideoPlay,
+  CircleClose, CopyDocument, Delete, DocumentChecked, Expand, FullScreen, Plus, Refresh, VideoPlay,
   SetUp, Sort, DataAnalysis, Connection, Cpu, Histogram, Files, Filter, Operation, FolderAdd,
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
@@ -28,8 +27,9 @@ const nodeCatalog = [
   { type: 'PREDICT', label: '预测', description: '对独立数据运行模型推理', icon: DataAnalysis, color: '#3a7790' },
   { type: 'OUTPUT', label: '输出', description: '定义数据或模型产物输出', icon: Expand, color: '#658b56' },
 ]
+const addableNodeCatalog = nodeCatalog.filter((item) => item.executable)
+const unknownNodeType = { type: 'UNKNOWN', label: '未知节点', description: '当前版本无法识别此节点类型', executable: false, icon: Operation, color: '#68736d' }
 const route = useRoute()
-const executableNodeCount = nodeCatalog.filter((item) => item.executable).length
 
 const workflows = ref([])
 const runs = ref([])
@@ -172,7 +172,7 @@ function formatRunLogTime(value) {
   return value ? new Date(value).toLocaleTimeString('zh-CN', { hour12: false }) : ''
 }
 
-function nodeType(type) { return nodeCatalog.find((item) => item.type === type) || nodeCatalog[0] }
+function nodeType(type) { return nodeCatalog.find((item) => item.type === type) || unknownNodeType }
 
 function workflowDocument() {
   return {
@@ -660,8 +660,13 @@ watch(() => edges.value.map((edge) => `${edge.source}:${edge.target}`).join('|')
   if (selectedNode.value?.data.kind === 'FILTER') loadFilterColumns(selectedNode.value.id)
 })
 
+function handleWorkbenchCommand(event) {
+  if (event.detail === 'pipeline:create') createNewWorkflow()
+}
+
 onMounted(() => {
   document.addEventListener('fullscreenchange', syncFullscreen)
+  window.addEventListener('workbench:command', handleWorkbenchCommand)
   loadList()
 })
 
@@ -669,27 +674,21 @@ onBeforeUnmount(() => {
   clearTimeout(saveTimer)
   clearTimeout(runPollTimer)
   document.removeEventListener('fullscreenchange', syncFullscreen)
+  window.removeEventListener('workbench:command', handleWorkbenchCommand)
   if (dirty.value && activeId.value) saveWorkflow()
 })
 </script>
 
 <template>
   <main class="workflow-page">
-    <header class="page-heading">
-      <div>
-        <h1>工作流</h1>
-        <p>组合数据、分析、规则与模型节点，保存可复用的流程定义。</p>
-      </div>
-      <el-button type="primary" :icon="FolderAdd" :disabled="busy" @click="createNewWorkflow">新建画布</el-button>
-    </header>
-
+    <h1 class="visually-hidden">流水线</h1>
     <section ref="canvasShell" class="workflow-workspace" :class="{ 'is-fullscreen': nativeFullscreen }">
       <header class="workflow-toolbar">
         <div class="workflow-title-row">
           <div class="workflow-name-wrap">
             <el-input v-if="activeId" v-model="name" maxlength="255" aria-label="工作流名称" :disabled="busy" />
             <strong v-else>{{ loading ? '正在载入工作流' : '选择或新建工作流' }}</strong>
-            <span class="save-state" :class="{ 'is-dirty': dirty, 'is-error': error }">{{ error || (busy ? '同步中' : dirty ? '有未保存修改' : message || (activeId ? '已保存' : '定义草稿')) }}</span>
+            <span class="save-state" :class="{ 'is-dirty': dirty, 'is-error': error }">{{ error || (busy ? '保存中' : dirty ? '有未保存修改' : message || (activeId ? '已保存' : '定义草稿')) }}</span>
           </div>
           <div class="toolbar-actions">
             <el-button type="primary" :icon="VideoPlay" :loading="runBusy" :disabled="!activeId || busy || dirty || !canRunWorkflow" @click="startRun">运行</el-button>
@@ -701,7 +700,7 @@ onBeforeUnmount(() => {
         </div>
         <nav v-if="workflows.length" class="workflow-tabs" aria-label="工作流画布">
           <button v-for="workflow in workflows" :key="workflow.id" type="button" class="workflow-tab" :class="{ 'is-active': activeId === workflow.id }" :title="workflow.name" :disabled="busy" @click="selectWorkflow(workflow.id)">
-            <span class="tab-dot" :class="{ 'is-dirty': activeId === workflow.id && dirty }" />
+            <span v-if="activeId === workflow.id && dirty" class="workflow-tab-state">未保存</span>
             <span>{{ workflow.name }}</span>
           </button>
         </nav>
@@ -710,18 +709,16 @@ onBeforeUnmount(() => {
       <div v-if="error && !activeId" class="workflow-alert" role="alert"><span>{{ error }}</span><el-button text :icon="Refresh" @click="loadList">重试</el-button></div>
       <section v-if="!loading && !activeId" class="workflow-empty">
         <el-icon><FolderAdd /></el-icon>
-        <h2>{{ error ? '暂时无法载入' : '从一个空白画布开始' }}</h2>
-        <el-button type="primary" :icon="Plus" :disabled="busy" @click="createNewWorkflow">新建工作流</el-button>
+        <h2>{{ error ? '暂时无法载入' : '暂无流水线' }}</h2>
       </section>
 
       <div v-else-if="activeId" class="workflow-editor">
         <aside class="node-library" aria-label="节点目录">
-          <div class="rail-heading"><strong>节点</strong><span>{{ executableNodeCount }} 可运行 · {{ nodeCatalog.length - executableNodeCount }} 建设中</span></div>
-          <button v-for="item in nodeCatalog" :key="item.type" class="node-add" :class="{ 'is-unavailable': !item.executable }" type="button" :disabled="busy || !item.executable" :title="item.executable ? item.description : `${item.description} · 执行能力建设中`" @click="addNode(item)">
+          <div class="rail-heading"><strong>节点</strong></div>
+          <button v-for="item in addableNodeCatalog" :key="item.type" class="node-add" type="button" :disabled="busy" :title="item.description" @click="addNode(item)">
             <span class="node-icon" :style="{ '--node-accent': item.color }"><el-icon><component :is="item.icon" /></el-icon></span>
-            <span class="node-add-copy"><strong>{{ item.label }}</strong><small>{{ item.executable ? item.description : '执行器建设中' }}</small></span>
-            <el-icon v-if="item.executable" class="add-symbol"><Plus /></el-icon>
-            <span v-else class="node-status">建设中</span>
+            <span class="node-add-copy"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
+            <el-icon class="add-symbol"><Plus /></el-icon>
           </button>
         </aside>
 
@@ -738,7 +735,6 @@ onBeforeUnmount(() => {
                   <span class="node-index">{{ id.slice(-4) }}</span>
                 </div>
               </template>
-              <Background pattern-color="#d5dfd9" :gap="18" />
               <MiniMap pannable zoomable />
               <Controls />
               <div v-if="nodes.length === 0" class="canvas-empty">从左侧添加节点，拖动节点并连接端口</div>
@@ -757,7 +753,7 @@ onBeforeUnmount(() => {
             <label class="field-label">说明<el-input v-model="selectedNode.data.description" type="textarea" :rows="3" maxlength="240" show-word-limit /></label>
             <template v-if="selectedNode.data.kind === 'DATA_SOURCE'">
               <div class="node-contract source-contract"><strong>数据资产</strong><small>引用固定的数据集版本，画布会保存所选表的 schema 标识。</small></div>
-              <el-skeleton v-if="sourceLoading && !sourceDatasets.length" :rows="2" animated />
+              <p v-if="sourceLoading && !sourceDatasets.length" class="source-empty">正在读取数据集</p>
               <template v-else>
                 <label class="field-label">数据集
                   <el-select :model-value="selectedNode.data.config?.datasetId || ''" filterable clearable placeholder="选择数据集" :loading="sourceLoading" @change="changeSourceDataset">
@@ -847,7 +843,6 @@ onBeforeUnmount(() => {
         <div v-if="runs.length" class="run-monitor-body">
           <nav class="run-list" aria-label="运行列表">
             <button v-for="run in runs" :key="run.id" type="button" class="run-item" :class="{ 'is-active': selectedRunId === run.id }" :title="`${run.id} · ${runStatusLabel(run.status)}`" @click="selectedRunId = run.id">
-              <span class="run-status-icon" :class="`status-${run.status.toLowerCase()}`"><el-icon><Loading v-if="runIsActive(run)" /><CircleCheck v-else-if="run.status === 'SUCCEEDED'" /><CircleClose v-else /></el-icon></span>
               <span class="run-item-copy"><strong>{{ runStatusLabel(run.status) }} · 修订 {{ run.workflowRevision }}</strong><small>{{ formatRunTime(run.createdAt) }}</small></span>
               <span class="run-progress">{{ run.progress }}%</span>
             </button>
@@ -908,7 +903,7 @@ onBeforeUnmount(() => {
 .workflow-page .page-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; }
 .workflow-page .page-heading h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: 0; }
 .workflow-page .page-heading p { margin: 5px 0 0; color: #6b7077; font-size: 12px; }
-.workflow-workspace { display: flex; min-width: 0; min-height: 560px; flex-direction: column; overflow: hidden; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); }
+.workflow-workspace { display: flex; min-width: 0; min-height: 560px; flex-direction: column; overflow: hidden; background: transparent; border: 0; border-top: 1px solid var(--line-strong); border-radius: 0; }
 .workflow-toolbar { display: grid; gap: 0; padding: 10px 14px 0; border-bottom: 1px solid #e4ebe7; }
 .workflow-title-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 9px; }
 .workflow-name-wrap { display: flex; min-width: 0; flex: 1; align-items: center; gap: 12px; }
@@ -921,10 +916,9 @@ onBeforeUnmount(() => {
 .workflow-tabs { display: flex; min-width: 0; gap: 2px; overflow-x: auto; scrollbar-width: thin; }
 .workflow-tab { display: flex; width: max-content; min-width: 0; max-width: 220px; height: 32px; flex: 0 0 auto; align-items: center; gap: 7px; padding: 0 9px; overflow: hidden; color: #50545a; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
 .workflow-tab > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workflow-tab.is-active { color: #0f6cbd; border-bottom-color: #0f6cbd; font-weight: 650; }
+.workflow-tab.is-active { color: var(--accent-hover); border-bottom-color: var(--accent); font-weight: 650; }
 .workflow-tab:disabled { cursor: wait; }
-.tab-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: #a8b5ae; }
-.tab-dot.is-dirty { background: #d3963d; }
+.workflow-tab-state { flex: 0 0 auto; color: #8b5b22; font-size: 9px; }
 .workflow-editor { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: 200px minmax(0, 1fr) 280px; }
 .node-library, .node-inspector { min-width: 0; padding: 10px; background: #fff; }
 .node-library { overflow: auto; border-right: 1px solid #e5ece8; }
@@ -946,8 +940,8 @@ onBeforeUnmount(() => {
 .canvas-meta .execution-warning { min-width: 0; color: #9a6540; overflow-wrap: anywhere; }
 .canvas-stage { position: relative; min-width: 0; min-height: 0; flex: 1; }
 .flow-canvas { width: 100%; height: 100%; min-height: 540px; background-color: #f6f9f7; }
-.flow-node { position: relative; display: flex; width: 224px; min-height: 82px; align-items: flex-start; gap: 9px; padding: 10px; color: #242424; background: #fff; border: 1px solid var(--line-strong); border-top: 2px solid var(--node-accent, #0f6cbd); border-radius: var(--radius-panel); box-shadow: 0 1px 3px rgba(0, 0, 0, .07); }
-.flow-node.is-selected { border-color: #0f6cbd; box-shadow: 0 0 0 2px rgba(15, 108, 189, .14); }
+.flow-node { position: relative; display: flex; width: 224px; min-height: 82px; align-items: flex-start; gap: 9px; padding: 10px; color: #242424; background: #fff; border: 1px solid var(--line-strong); border-top: 2px solid var(--node-accent, #356b58); border-radius: var(--radius-panel); box-shadow: 0 1px 3px rgba(0, 0, 0, .07); }
+.flow-node.is-selected { border-color: #356b58; box-shadow: 0 0 0 2px rgba(53, 107, 88, .14); }
 .flow-node-icon { width: 28px; height: 28px; }
 .flow-node-copy { display: grid; min-width: 0; gap: 3px; }
 .flow-node-copy small { color: var(--node-accent); font-size: 9px; }
@@ -990,10 +984,6 @@ onBeforeUnmount(() => {
 .run-list { display: grid; align-content: start; max-height: 280px; overflow: auto; border-right: 1px solid #e7ece9; }
 .run-item { display: flex; min-width: 0; align-items: center; gap: 9px; padding: 10px 12px; color: #43564b; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #eef2ef; cursor: pointer; }
 .run-item:hover, .run-item.is-active { background: #f4f8f5; }
-.run-status-icon { display: grid; width: 25px; height: 25px; flex: 0 0 auto; place-items: center; color: #77857d; background: #f0f3f1; border-radius: 50%; }
-.run-status-icon.status-running, .run-status-icon.status-queued, .run-status-icon.status-cancelling { color: #347c5a; background: #eaf4ee; }
-.run-status-icon.status-succeeded { color: #2b8656; background: #e6f3eb; }
-.run-status-icon.status-failed, .run-status-icon.status-canceled { color: #a94b43; background: #fbefed; }
 .run-item-copy { display: grid; min-width: 0; flex: 1; gap: 3px; }
 .run-item-copy strong, .run-item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-item-copy strong { font-size: 10px; }

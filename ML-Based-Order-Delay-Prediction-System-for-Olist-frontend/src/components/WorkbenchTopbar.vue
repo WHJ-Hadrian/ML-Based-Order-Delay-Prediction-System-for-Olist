@@ -1,147 +1,120 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { DataBoard, EditPen, Search, Timer } from '@element-plus/icons-vue'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, ArrowRight, Clock, Plus, Search } from '@element-plus/icons-vue'
 import { NAVIGATION_ITEMS } from '@/config/navigation'
-import { useWorkbench } from '@/state/workbench'
+import { useAuth } from '@/auth/keycloak'
+import brandMark from '@/assets/img/chahua.png'
 
+const route = useRoute()
 const router = useRouter()
-const { state: workbench, toggleBottomPanel } = useWorkbench()
-const searchRef = ref(null)
-const selectedPath = ref('')
-function readWorkspaceName() {
-  try {
-    return localStorage.getItem('seekdataset-workspace-name') || '默认分析工作区'
-  } catch {
-    return '默认分析工作区'
-  }
+const auth = useAuth()
+const modules = [
+  { key: '数据', label: '数据' },
+  { key: '建模', label: '建模' },
+  { key: '自动化', label: '自动化' },
+  { key: '概览', label: '概览' },
+]
+const activeModule = computed(() => NAVIGATION_ITEMS.find((item) => item.key === route.meta.navigationKey)?.group || '')
+const quickPages = NAVIGATION_ITEMS.map(({ key, path, title }) => ({ key, path, title }))
+const contextCommand = computed(() => ({
+  datasets: { key: 'dataset:create', label: '新建数据集' },
+  quality: { key: 'rules:create', label: '新建规则库' },
+  fields: { key: 'fields:create', label: '新建字段库' },
+  analysis: { key: 'analysis:create', label: '新建分析方案' },
+  experiments: { key: 'experiment:create', label: '新建实验' },
+  pipelines: { key: 'pipeline:create', label: '新建流水线' },
+})[route.meta.navigationKey] || null)
+
+function openModule(module) {
+  const firstPage = NAVIGATION_ITEMS.find((item) => item.group === module.key)
+  if (firstPage) router.push(firstPage.path)
 }
 
-const workspaceName = ref(readWorkspaceName())
-const editingName = ref(workspaceName.value)
-const workspacePopover = ref(false)
-const searchableItems = computed(() => NAVIGATION_ITEMS)
-
-function handleShortcut(event) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-    event.preventDefault()
-    searchRef.value?.focus?.()
-  }
+function openPage(path) {
+  if (path) router.push(path)
 }
 
-function openPath(path) {
-  if (!path) return
-  router.push(path)
-  selectedPath.value = ''
-}
-
-onMounted(() => window.addEventListener('keydown', handleShortcut))
-onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcut))
-
-function saveWorkspaceName() {
-  const name = editingName.value.trim().slice(0, 48)
-  if (!name) return
-  workspaceName.value = name
-  try {
-    localStorage.setItem('seekdataset-workspace-name', name)
-  } catch {
-    // Renaming remains available for this session when storage is unavailable.
+function executeContextCommand() {
+  if (contextCommand.value) {
+    window.dispatchEvent(new CustomEvent('workbench:command', { detail: contextCommand.value.key }))
   }
-  workspacePopover.value = false
 }
 </script>
 
 <template>
   <header class="workbench-topbar">
-    <div class="topbar-workspace">
-      <span class="workspace-caption">工作区</span>
-      <el-popover v-model:visible="workspacePopover" placement="bottom-start" :width="260" trigger="click">
-      <template #reference>
-        <button type="button" class="workspace-switcher" title="重命名工作区">
-          <span class="workspace-mark"><el-icon><DataBoard /></el-icon></span>
-          <span class="workspace-name">{{ workspaceName }}</span>
-          <el-icon class="workspace-edit"><EditPen /></el-icon>
-        </button>
-      </template>
-      <div class="workspace-rename">
-        <span>工作区名称</span>
-        <el-input v-model="editingName" maxlength="48" @keyup.enter="saveWorkspaceName" />
-        <el-button type="primary" size="small" @click="saveWorkspaceName">保存</el-button>
-      </div>
-      </el-popover>
-    </div>
-
-    <div class="command-search-wrap">
-      <el-select
-        ref="searchRef"
-        v-model="selectedPath"
-        class="command-search"
-        filterable
-        clearable
-        :prefix-icon="Search"
-        placeholder="转到页面或打开资源"
-        @change="openPath"
-      >
-        <el-option v-for="item in searchableItems" :key="item.key" :label="item.title" :value="item.path">
-          <span class="command-option"><el-icon><component :is="item.icon" /></el-icon><span>{{ item.title }}</span><small>{{ item.description }}</small></span>
-        </el-option>
-      </el-select>
-      <kbd>Ctrl K</kbd>
-    </div>
-
-    <button type="button" class="topbar-icon-button" :aria-label="workbench.bottomPanelOpen ? '收起任务面板' : '打开任务面板'" :title="workbench.bottomPanelOpen ? '收起任务面板' : '打开任务面板'" @click="toggleBottomPanel">
-      <el-icon><Timer /></el-icon>
-      <span>任务</span>
+    <button type="button" class="brand-mark" aria-label="返回概览" title="返回概览" @click="router.push('/workspace')">
+      <img :src="brandMark" alt="" />
     </button>
-    <slot />
+    <nav class="global-navigation" aria-label="业务模块">
+      <button
+        v-for="module in modules"
+        :key="module.key"
+        type="button"
+        class="global-navigation-item"
+        :class="{ 'is-active': activeModule === module.key }"
+        :aria-current="activeModule === module.key ? 'page' : undefined"
+        @click="openModule(module)"
+      >{{ module.label }}</button>
+    </nav>
+    <div class="toolbar-tools" aria-label="全局工具">
+      <el-button-group class="history-tools">
+        <el-button text aria-label="后退" title="后退" :icon="ArrowLeft" @click="router.back()" />
+        <el-button text aria-label="前进" title="前进" :icon="ArrowRight" @click="router.forward()" />
+      </el-button-group>
+      <el-select class="quick-open" filterable clearable :prefix-icon="Search" placeholder="快速打开页面" @change="openPage">
+        <el-option v-for="page in quickPages" :key="page.key" :label="page.title" :value="page.path" />
+      </el-select>
+      <el-button v-if="contextCommand && auth.state.authenticated" type="primary" :icon="Plus" :aria-label="contextCommand.label" :title="contextCommand.label" @click="executeContextCommand">{{ contextCommand.label }}</el-button>
+      <el-button text :icon="Clock" aria-label="运行记录" title="运行记录" @click="router.push('/pipeline-runs')">运行记录</el-button>
+    </div>
+    <div class="global-actions"><slot /></div>
   </header>
 </template>
 
 <style scoped>
-.workbench-topbar { position: relative; display: flex; min-width: 0; height: 48px; flex: 0 0 48px; align-items: center; gap: 12px; padding: 0 12px; background: #fff; border-bottom: 1px solid #e3e5e8; }
-.topbar-workspace { display: grid; width: clamp(176px, 20vw, 248px); min-width: 0; flex: 0 1 248px; gap: 2px; }
-.workspace-caption { padding-left: 2px; color: #707070; font-size: 10px; font-weight: 600; line-height: 1; }
-.workspace-switcher { display: flex; min-width: 0; height: 28px; align-items: center; gap: 8px; padding: 0 2px; overflow: hidden; color: #242424; font-size: 13px; font-weight: 620; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
-.workspace-switcher:hover .workspace-name { color: #0f6cbd; }
-.workspace-mark { display: grid; width: 19px; height: 19px; flex: 0 0 19px; place-items: center; color: #0f6cbd; background: #ebf3fc; border-radius: 3px; }
-.workspace-mark :deep(.el-icon) { font-size: 12px; }
-.workspace-name { min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-edit { flex: 0 0 auto; color: #98a39d; font-size: 11px; opacity: 0; transition: opacity .15s ease; }
-.workspace-switcher:hover .workspace-edit, .workspace-switcher:focus-visible .workspace-edit { opacity: 1; }
-.command-search-wrap { position: relative; width: min(480px, 42vw); min-width: 220px; flex: 1 1 480px; margin: 0 auto; }
-.command-search { width: 100%; }
-.command-search :deep(.el-select__wrapper) { min-height: 32px; padding-right: 56px; background: #f3f4f5; border-radius: 4px; box-shadow: 0 0 0 1px #e3e5e8 inset; transition: background .15s ease, box-shadow .15s ease; }
-.command-search :deep(.el-select__wrapper:hover), .command-search :deep(.el-select__wrapper.is-focused) { background: #fff; box-shadow: 0 0 0 1px #0f6cbd inset; }
-.command-search-wrap kbd { position: absolute; top: 50%; right: 8px; padding: 3px 5px; color: #87928c; font-family: inherit; font-size: 9px; line-height: 1; background: #fff; border: 1px solid #e1e6e3; border-radius: 4px; transform: translateY(-50%); pointer-events: none; }
-.command-option { display: grid; min-width: 0; grid-template-columns: 18px auto minmax(0, 1fr); align-items: center; gap: 7px; }
-.command-option small { overflow: hidden; color: #8a9690; text-overflow: ellipsis; white-space: nowrap; }
+.workbench-topbar { position: relative; display: flex; min-width: 0; height: 48px; flex: 0 0 48px; align-items: center; padding: 0 16px 0 0; background: #fff; border-bottom: 1px solid #e3e5e8; }
+.brand-mark { display: grid; width: var(--navigation-rail-width); height: 48px; flex: 0 0 var(--navigation-rail-width); place-items: center; padding: 0; background: transparent; border: 0; cursor: pointer; }
+.brand-mark img { display: block; width: 42px; height: 32px; object-fit: contain; }
+.global-navigation { display: flex; min-width: 0; height: 100%; align-items: stretch; }
+.global-navigation-item { position: relative; width: var(--navigation-rail-width); min-width: var(--navigation-rail-width); padding: 0; color: #59625d; font-size: 12px; font-weight: 550; background: transparent; border: 0; cursor: pointer; }
+.global-navigation-item:hover, .global-navigation-item.is-active { color: #285444; }
+.global-navigation-item.is-active { font-weight: 650; }
+.global-navigation-item.is-active::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: #356b58; content: ''; }
+.global-actions { display: flex; min-width: 0; align-items: center; margin-left: auto; }
+.toolbar-tools { display: flex; min-width: 0; align-items: center; gap: 6px; margin-left: 18px; }
+.history-tools { display: inline-flex; flex: 0 0 auto; }
+.quick-open { width: 190px; }
+.quick-open :deep(.el-select__wrapper) { min-height: 30px; }
 .topbar-icon-button { display: inline-flex; width: max-content; min-width: 38px; height: 32px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; color: #50545a; font-size: 12px; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
 .topbar-icon-button .el-icon { font-size: 15px; }
-.topbar-icon-button:hover { color: #0f6cbd; background: #f0f0f0; }
-.workspace-rename { display: grid; gap: 9px; color: #53655c; font-size: 11px; }
-.workspace-rename .el-button { justify-self: end; }
+.topbar-icon-button:hover { color: var(--accent); background: #f0f0f0; }
 @media (max-width: 760px) {
-  .workbench-topbar { height: 48px; flex-basis: 48px; gap: 10px; padding-inline: 10px; }
-  .topbar-workspace { width: 160px; max-width: 180px; flex: 0 1 180px; }
-  .command-search-wrap { width: auto; min-width: 0; flex: 1 1 auto; }
-  .command-search-wrap kbd { display: none; }
-  .command-search :deep(.el-select__wrapper) { padding-right: 12px; }
+  .workbench-topbar { height: 48px; flex-basis: 48px; padding-right: 12px; }
+  .global-navigation-item { font-size: 11px; }
+  .toolbar-tools { margin-left: 10px; }
+  .toolbar-tools { gap: 2px; }
+  .quick-open { width: 150px; }
+  .toolbar-tools :deep(.el-button) { padding-inline: 7px; }
   .topbar-icon-button { width: 34px; min-width: 34px; padding: 0; }
   .topbar-icon-button span { display: none; }
 }
 @media (min-width: 761px) and (max-width: 1024px) {
-  .topbar-workspace { width: 148px; flex-basis: 148px; }
-  .command-search-wrap { min-width: 140px; }
   :slotted(.account-trigger) { max-width: 132px; }
   :slotted(.account-name) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 @media (max-width: 520px) {
-  .workbench-topbar { gap: 6px; padding-inline: 9px; }
-  .topbar-workspace { width: 132px; max-width: 132px; flex-basis: 132px; }
-  .workspace-caption { display: none; }
-  .workspace-switcher { height: 34px; gap: 6px; }
-  .workspace-mark { width: 18px; height: 18px; flex-basis: 18px; }
-  .topbar-icon-button { width: 30px; min-width: 30px; }
+  .workbench-topbar { padding-right: 8px; }
+  .brand-mark img { width: 36px; height: 28px; }
+  .toolbar-tools { margin-left: 6px; }
+  .history-tools { display: none; }
+  .quick-open { display: none; }
+  .toolbar-tools > :deep(.el-button:last-child) { display: none; }
+  .toolbar-tools > :deep(.el-button) { font-size: 0; }
+  .toolbar-tools > :deep(.el-button .el-icon) { margin: 0; font-size: 14px; }
+  .toolbar-tools :deep(.el-button--primary) { width: 31px; padding-inline: 0; }
+  .toolbar-tools :deep(.el-button--primary span) { display: none; }
   :slotted(.el-dropdown) { flex: 0 0 auto; }
   :slotted(.account-trigger) { width: 32px; justify-content: center; padding: 0; }
   :slotted(.account-trigger .account-name), :slotted(.account-trigger > .el-icon) { display: none; }

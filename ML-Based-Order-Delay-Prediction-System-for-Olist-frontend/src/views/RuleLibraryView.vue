@@ -5,7 +5,6 @@ import {
   ArrowRight,
   Delete,
   EditPen,
-  FolderAdd,
   Grid,
   Plus,
   Refresh,
@@ -141,7 +140,6 @@ const saving = ref(false)
 const dirty = ref(false)
 const saveTimer = ref(null)
 const lastSavedAt = ref('')
-const migratingNotice = ref(0)
 const changeVersion = ref(0)
 const validationResult = ref(null)
 const validating = ref(false)
@@ -1444,7 +1442,7 @@ async function openLibrary(library) {
   suspendDirtyWatch = true
   try {
     const detail = await getRuleWorkbook(library.id)
-    migratingNotice.value = migrateLegacyRules(detail.document)
+    migrateLegacyRules(detail.document)
     const sheet = ensureRuleSheet(detail.document)
     ensureRuleSearch(detail.id)
     activeWorkbookId.value = detail.id
@@ -1473,7 +1471,6 @@ function resetEditor() {
   activeWorkbook.value = null
   activeRuleSheet.value = null
   lastSavedAt.value = ''
-  migratingNotice.value = 0
   dirty.value = false
   datasetCatalog.value = null
   validationResult.value = null
@@ -1803,7 +1800,12 @@ onMounted(() => {
   loadDatasets()
   loadWorkbooks()
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('workbench:command', handleWorkbenchCommand)
 })
+
+function handleWorkbenchCommand(event) {
+  if (event.detail === 'rules:create') openCreateDialog()
+}
 
 watch(
   () => activeWorkbook.value?.datasetVersionId,
@@ -1818,32 +1820,13 @@ onBeforeUnmount(() => {
     persistDraft({ silent: true })
   }
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('workbench:command', handleWorkbenchCommand)
 })
 </script>
 
 <template>
   <div class="page-content">
-    <el-breadcrumb separator="/" class="page-breadcrumb">
-      <el-breadcrumb-item>工作台</el-breadcrumb-item>
-      <el-breadcrumb-item>规则库</el-breadcrumb-item>
-    </el-breadcrumb>
-
-    <header class="page-header">
-      <div>
-        <h1>规则库</h1>
-        <p>按「规则库 → 结构化节点」编排数据检查、清洗与筛选，不需要编写 SQL。</p>
-      </div>
-      <el-button
-        type="primary"
-        size="large"
-        :icon="FolderAdd"
-        :loading="creatingLibrary"
-        @click="openCreateDialog"
-      >
-        新建规则库
-      </el-button>
-    </header>
-
+    <h1 class="visually-hidden">清洗规则</h1>
     <el-card class="toolbar-card" shadow="never">
       <div class="library-toolbar">
         <el-input
@@ -1869,13 +1852,11 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="list-header">
           <span class="list-title">规则库目录</span>
-          <span class="list-hint">
-            {{ activeWorkbookId ? '点击展开的规则库行可以收起，编辑会自动保存' : '点击规则库展开规则明细，名称可以行内重命名' }}
-          </span>
         </div>
       </template>
 
-      <div v-loading="loadingWorkbooks" class="library-list">
+      <div class="library-list">
+        <p v-if="loadingWorkbooks" class="plain-loading">正在读取规则库…</p>
         <article
           v-for="library in pagedLibraries"
           :key="library.id"
@@ -1933,10 +1914,10 @@ onBeforeUnmount(() => {
           </div>
           <section
             v-if="activeWorkbookId === library.id"
-            v-loading="loadingEditor"
             class="library-expanded"
             @click.stop
           >
+            <p v-if="loadingEditor" class="plain-loading">正在读取规则配置…</p>
             <div v-if="activeWorkbook" class="expanded-inner">
               <div class="rule-editor-head">
                 <div class="rule-editor-title">
@@ -1960,13 +1941,6 @@ onBeforeUnmount(() => {
                   </el-button>
                 </div>
               </div>
-
-              <p class="rule-hint">
-                <span v-if="migratingNotice">
-                  已将 {{ migratingNotice }} 条旧版文本保留为只读历史记录；
-                </span>
-                配置仅包含白名单操作和字段；校验由服务端完成并生成可追溯的编译计划。
-              </p>
 
               <el-alert
                 v-if="validationResult"
@@ -2450,12 +2424,10 @@ onBeforeUnmount(() => {
                 </article>
               </div>
 
-              <el-empty
+              <div
                 v-else-if="!activeRuleTotal"
                 class="rule-empty"
-                :image-size="72"
-                description="还没有规则，点击下方「添加一条规则」开始"
-              />
+              >暂无规则。</div>
 
               <el-empty
                 v-else
@@ -2492,16 +2464,7 @@ onBeforeUnmount(() => {
           </section>
         </article>
 
-        <el-empty
-          v-if="!loadingWorkbooks && workbooks.length === 0"
-          class="empty-state"
-          :image-size="104"
-          description="还没有规则库"
-        >
-          <el-button type="primary" :icon="FolderAdd" @click="openCreateDialog">
-            新建第一个规则库
-          </el-button>
-        </el-empty>
+        <div v-if="!loadingWorkbooks && workbooks.length === 0" class="empty-state"><p>暂无规则库。</p></div>
 
         <div v-if="showLibraryPagination" class="library-pagination">
           <span class="pagination-hint">每页 {{ libraryPageSize }} 个规则库</span>
@@ -2520,7 +2483,6 @@ onBeforeUnmount(() => {
     </el-card>
 
     <el-dialog v-model="createDialogOpen" title="新建规则库" width="min(520px, calc(100vw - 32px))">
-      <p class="dialog-copy">规则库会绑定一个 READY 数据集版本，后续可以在其中复用多个结构化处理节点。</p>
       <el-form label-position="top">
         <el-form-item label="数据集库" required>
           <el-select :model-value="createDatasetId" filterable class="dialog-select" placeholder="选择数据集库" @update:model-value="changeCreateDataset">
@@ -2529,7 +2491,7 @@ onBeforeUnmount(() => {
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="READY 数据集版本" required>
+        <el-form-item label="数据集版本" required>
           <el-select v-model="createDatasetVersionId" filterable class="dialog-select" :loading="loadingCreateVersions" placeholder="选择数据集版本">
             <el-option v-for="version in createDatasetVersions" :key="version.datasetVersionId" :label="`v${version.versionNo} · ${version.rowCount} 行`" :value="version.datasetVersionId" />
           </el-select>
@@ -2620,7 +2582,8 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
-      <div v-loading="loadingPreview" class="preview-layout">
+      <div class="preview-layout">
+        <p v-if="loadingPreview" class="plain-loading">正在读取运行结果…</p>
         <aside class="preview-node-list">
           <button
             v-for="node in previewDisplayNodes"
@@ -2736,11 +2699,11 @@ onBeforeUnmount(() => {
 }
 
 .library-summary:hover {
-  background: rgba(15, 108, 189, 0.04);
+  background: rgba(53, 107, 88, 0.04);
 }
 
 .library-item.is-expanded .library-summary {
-  background: rgba(15, 108, 189, 0.055);
+  background: rgba(53, 107, 88, 0.055);
 }
 
 .row-chevron {
@@ -2809,7 +2772,7 @@ onBeforeUnmount(() => {
   padding: 3px 8px;
   color: var(--ink-soft);
   font-size: 11px;
-  background: rgba(15, 108, 189, 0.06);
+  background: rgba(53, 107, 88, 0.06);
   border-radius: 8px;
 }
 
@@ -2827,7 +2790,7 @@ onBeforeUnmount(() => {
 
 .library-expanded {
   padding: 0 20px 20px;
-  background: rgba(15, 108, 189, 0.018);
+  background: rgba(53, 107, 88, 0.018);
 }
 
 .expanded-inner {
@@ -3330,8 +3293,8 @@ onBeforeUnmount(() => {
 }
 
 .preview-node-item.is-active {
-  background: rgba(15, 108, 189, 0.06);
-  border-color: rgba(15, 108, 189, 0.34);
+  background: rgba(53, 107, 88, 0.06);
+  border-color: rgba(53, 107, 88, 0.34);
 }
 
 .preview-node-main {
@@ -3482,15 +3445,14 @@ onBeforeUnmount(() => {
 
 .rule-item {
   overflow: hidden;
-  background: #fff;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-panel);
-  transition: border-color 0.15s ease;
+  padding-bottom: 8px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
 }
 
-.rule-item:hover {
-  border-color: rgba(15, 108, 189, 0.24);
-}
+.rule-item:hover { border-color: var(--line-strong); }
 
 .rule-head {
   display: grid;
@@ -3498,8 +3460,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  background: rgba(15, 108, 189, 0.045);
-  border-bottom: 1px dashed var(--line-strong);
+  background: transparent;
+  border-bottom: 1px solid var(--line-subtle);
 }
 
 .rule-index {
@@ -3510,7 +3472,7 @@ onBeforeUnmount(() => {
   color: var(--accent);
   font-size: 11px;
   font-weight: 700;
-  background: rgba(15, 108, 189, 0.1);
+  background: rgba(53, 107, 88, 0.1);
   border-radius: var(--radius-control);
 }
 .rule-name-input {
@@ -3581,16 +3543,16 @@ onBeforeUnmount(() => {
   color: var(--accent);
   font-size: 13px;
   font-weight: 600;
-  background: rgba(15, 108, 189, 0.035);
-  border: 1px dashed rgba(15, 108, 189, 0.32);
+  background: rgba(53, 107, 88, 0.035);
+  border: 1px dashed rgba(53, 107, 88, 0.32);
   border-radius: var(--radius-control);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .rule-add-row:hover {
-  background: rgba(15, 108, 189, 0.075);
-  border-color: rgba(15, 108, 189, 0.5);
+  background: rgba(53, 107, 88, 0.075);
+  border-color: rgba(53, 107, 88, 0.5);
 }
 
 .rule-add-row small {

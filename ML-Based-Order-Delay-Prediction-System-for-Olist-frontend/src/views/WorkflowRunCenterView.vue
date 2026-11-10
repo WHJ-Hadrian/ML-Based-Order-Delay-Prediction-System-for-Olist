@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CircleCheck, CircleClose, Loading, Refresh, Search, Share, VideoPlay } from '@element-plus/icons-vue'
+import { CircleCheck, CircleClose, Refresh, Search, Share, VideoPlay } from '@element-plus/icons-vue'
 import { cancelWorkflowRun, getWorkflowRun, retryWorkflowRun, searchWorkflowRuns } from '@/api/workflows'
 
 const router = useRouter()
@@ -18,13 +18,10 @@ const loading = ref(false)
 const detailLoading = ref(false)
 const actionBusy = ref(false)
 const error = ref('')
-let pollTimer
 let searchTimer
 let detailSequence = 0
 let listSequence = 0
 let disposed = false
-
-const activeRuns = computed(() => runs.value.filter((run) => isActive(run.status)).length)
 
 function isActive(status) { return ['QUEUED', 'RUNNING', 'CANCELLING'].includes(status) }
 function statusLabel(status) {
@@ -39,13 +36,6 @@ function formatTime(value) {
 function formatClock(value) {
   return value ? new Date(value).toLocaleTimeString('zh-CN', { hour12: false }) : ''
 }
-function schedulePoll() {
-  clearTimeout(pollTimer)
-  if (disposed) return
-  const delay = activeRuns.value || isActive(selectedRun.value?.status) ? 2500 : 15000
-  pollTimer = setTimeout(() => refreshRuns({ silent: true }), delay)
-}
-
 function resetSelection() {
   detailSequence += 1
   selectedId.value = ''
@@ -53,12 +43,11 @@ function resetSelection() {
   detailLoading.value = false
 }
 
-async function refreshRuns({ silent = false } = {}) {
-  clearTimeout(pollTimer)
+async function refreshRuns() {
   clearTimeout(searchTimer)
   const sequence = ++listSequence
-  if (!silent) loading.value = true
-  if (!silent) error.value = ''
+  loading.value = true
+  error.value = ''
   try {
     const result = await searchWorkflowRuns({
       page: currentPage.value - 1,
@@ -72,7 +61,7 @@ async function refreshRuns({ silent = false } = {}) {
     totalPages.value = result.totalPages || 0
     if (currentPage.value > Math.max(1, totalPages.value)) {
       currentPage.value = Math.max(1, totalPages.value)
-      return refreshRuns({ silent })
+      return refreshRuns()
     }
     if (selectedId.value && !detailLoading.value && !actionBusy.value) await refreshSelectedRun()
     else if (runs.value.length) await selectRun(runs.value[0].id)
@@ -81,14 +70,12 @@ async function refreshRuns({ silent = false } = {}) {
   } finally {
     if (sequence === listSequence) {
       loading.value = false
-      schedulePoll()
     }
   }
 }
 
 function queueSearch() {
   listSequence += 1
-  clearTimeout(pollTimer)
   runs.value = []
   totalRuns.value = 0
   totalPages.value = 0
@@ -141,7 +128,6 @@ async function selectRun(id) {
   } finally {
     if (sequence === detailSequence) {
       detailLoading.value = false
-      schedulePoll()
     }
   }
 }
@@ -150,7 +136,6 @@ async function actOnRun(action) {
   if (!selectedRun.value || actionBusy.value) return
   const targetId = selectedRun.value.id
   const sequence = ++detailSequence
-  clearTimeout(pollTimer)
   actionBusy.value = true
   error.value = ''
   try {
@@ -172,19 +157,17 @@ async function actOnRun(action) {
     }
   } finally {
     actionBusy.value = false
-    schedulePoll()
   }
 }
 
 function openWorkflow() {
   if (!selectedRun.value) return
-  router.push({ path: '/workflows', query: { workflow: selectedRun.value.workflowId } })
+  router.push({ path: '/pipelines', query: { workflow: selectedRun.value.workflowId } })
 }
 
 onMounted(refreshRuns)
 onBeforeUnmount(() => {
   disposed = true
-  clearTimeout(pollTimer)
   clearTimeout(searchTimer)
   listSequence += 1
   detailSequence += 1
@@ -193,13 +176,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="run-center">
-    <header class="run-center-heading">
-      <div>
-        <h1>运行中心</h1>
-        <p>跨工作流追踪后台运行、查看冻结结果并处理失败任务。</p>
-      </div>
-      <div class="run-center-health"><span class="health-dot" />本页 {{ activeRuns }} 个运行中</div>
-    </header>
+    <h1 class="visually-hidden">运行记录</h1>
 
     <div v-if="error" class="run-center-error" role="alert"><span>{{ error }}</span><el-button text :icon="Refresh" @click="retryList">重试</el-button></div>
 
@@ -220,9 +197,8 @@ onBeforeUnmount(() => {
         <div class="run-center-list-heading"><strong>运行记录</strong><span>显示 {{ runs.length }} 条 · 共 {{ totalRuns }} 条</span><el-button text circle :icon="Refresh" :loading="loading" aria-label="刷新运行列表" title="刷新运行列表" @click="refreshRuns" /></div>
         <nav v-if="runs.length" class="global-run-list" aria-label="工作流运行列表">
           <button v-for="run in runs" :key="run.id" type="button" class="global-run-item" :class="{ 'is-selected': selectedId === run.id }" :title="`${run.workflowName} · ${run.id}`" @click="selectRun(run.id)">
-            <span class="global-run-status" :class="`status-${run.status.toLowerCase()}`"><el-icon><Loading v-if="isActive(run.status)" /><CircleCheck v-else-if="run.status === 'SUCCEEDED'" /><CircleClose v-else /></el-icon></span>
             <span class="global-run-copy"><strong>{{ run.workflowName }}</strong><small>{{ statusLabel(run.status) }} · 修订 {{ run.workflowRevision }}</small><small>{{ formatTime(run.createdAt) }}</small></span>
-            <span v-if="isActive(run.status)" class="global-run-progress">{{ run.progress }}%</span>
+            <span v-if="isActive(run.status) && run.progress != null" class="global-run-progress">{{ run.progress }}%</span>
           </button>
         </nav>
         <div v-else-if="loading" class="run-center-empty">正在读取运行记录</div>
@@ -240,11 +216,11 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="run-center-detail" aria-label="运行详情">
-        <div v-if="detailLoading || (loading && !runs.length)" class="run-center-empty run-center-loading"><el-icon><Loading /></el-icon><span>正在读取运行记录</span></div>
+        <div v-if="detailLoading || (loading && !runs.length)" class="run-center-empty">正在读取运行记录</div>
         <template v-else-if="selectedRun">
           <header class="run-detail-top">
             <div class="run-detail-title">
-              <span class="run-detail-kicker">工作流运行 · 修订 {{ selectedRun.workflowRevision }}</span>
+              <span class="run-detail-revision">修订 {{ selectedRun.workflowRevision }}</span>
               <h2 :title="selectedRun.workflowName">{{ selectedRun.workflowName }}</h2>
               <span class="run-detail-id" :title="selectedRun.id">{{ selectedRun.id }}</span>
             </div>
@@ -282,8 +258,8 @@ onBeforeUnmount(() => {
             <p v-if="!selectedRun.nodes?.length" class="run-center-empty">{{ selectedRun.status === 'QUEUED' ? '等待 Worker 接收运行' : '此运行没有节点结果' }}</p>
           </section>
         </template>
-        <div v-else-if="!runs.length" class="run-center-empty run-center-welcome"><el-icon><Share /></el-icon><strong>还没有运行记录</strong><span>创建或运行工作流后，状态、节点日志和结果会显示在这里。</span><el-button size="small" :icon="VideoPlay" @click="router.push('/workflows')">打开工作流</el-button></div>
-        <div v-else class="run-center-empty run-center-welcome"><el-icon><Share /></el-icon><strong>选择一次运行</strong><span>查看状态、节点日志和本次运行保存的结果。</span></div>
+        <div v-else-if="!runs.length" class="run-center-empty">暂无运行记录 <el-button size="small" @click="router.push('/pipelines')">打开流水线</el-button></div>
+        <div v-else class="run-center-empty">选择一次运行</div>
       </section>
     </section>
   </main>
@@ -294,9 +270,7 @@ onBeforeUnmount(() => {
 .run-center-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; }
 .run-center-heading h1 { margin: 0; font-size: 20px; line-height: 1.3; }
 .run-center-heading p { margin: 5px 0 0; color: #718078; font-size: 12px; }
-.run-center-health { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; color: #5f7067; font-size: 11px; }
-.health-dot { width: 8px; height: 8px; border-radius: 50%; background: #41936b; box-shadow: 0 0 0 3px #e5f2ea; }
-.run-center-workspace { display: grid; min-width: 0; min-height: max(420px, calc(100dvh - 190px)); grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); overflow: hidden; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); }
+.run-center-workspace { display: grid; min-width: 0; min-height: max(420px, calc(100dvh - 190px)); grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); overflow: hidden; background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
 .run-center-list-panel { display: flex; min-width: 0; flex-direction: column; background: #fff; border-right: 1px solid #e5ece8; }
 .run-center-tools { display: grid; gap: 6px; padding: 8px 9px; border-bottom: 1px solid #e1e1e1; }
 .run-center-tools > *, .run-center-tools :deep(.el-input), .run-center-tools :deep(.el-select), .run-center-tools :deep(.el-select__wrapper) { width: 100%; min-width: 0; }
@@ -319,10 +293,10 @@ onBeforeUnmount(() => {
 .global-run-copy strong { color: #354a3f; font-size: 11px; }
 .global-run-copy small { color: #87938c; font-size: 9px; }
 .global-run-progress { flex: 0 0 auto; color: #4c7562; font-size: 10px; }
-.run-center-detail { display: grid; min-width: 0; align-content: start; gap: 9px; padding: 12px 14px; background: #fff; }
+.run-center-detail { display: grid; min-width: 0; align-content: start; gap: 14px; padding: 12px 0 12px 18px; background: transparent; }
 .run-detail-top { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .run-detail-title { display: grid; min-width: 0; gap: 4px; }
-.run-detail-kicker { color: #87938c; font-size: 10px; }
+.run-detail-revision { color: #68766f; font-size: 10px; }
 .run-detail-title h2 { max-width: 100%; margin: 0; overflow: hidden; color: #263a31; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
 .run-detail-id { max-width: 100%; overflow: hidden; color: #97a29c; font: 9px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .run-detail-commands { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
@@ -341,7 +315,7 @@ onBeforeUnmount(() => {
 .run-node-section > header { display: flex; align-items: center; gap: 8px; color: #354a3f; }
 .run-node-section > header strong { font-size: 12px; }
 .run-node-section > header span { color: #89948e; font-size: 10px; }
-.global-node-result { display: grid; min-width: 0; gap: 9px; padding: 11px; border: 1px solid #e4ebe7; border-radius: 5px; }
+.global-node-result { display: grid; min-width: 0; gap: 9px; padding: 11px 0; border: 0; border-top: 1px solid #e4ebe7; border-radius: 0; }
 .global-node-result > header { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .global-node-name { min-width: 0; overflow: hidden; color: #34493f; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .global-node-type { flex: 0 0 auto; padding: 3px 5px; color: #6c7d73; font: 8px ui-monospace, monospace; background: #f0f4f1; }
@@ -357,14 +331,6 @@ onBeforeUnmount(() => {
 .global-sample-scroll th, .global-sample-scroll td { min-width: 90px; max-width: 240px; padding: 6px 8px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid #edf1ee; }
 .global-sample-scroll th { color: #5c6f63; background: #f4f7f5; }
 .run-center-empty { display: grid; min-height: 120px; place-items: center; padding: 20px; color: #87938c; font-size: 11px; text-align: center; }
-.run-center-welcome { align-content: center; justify-items: center; gap: 9px; }
-.run-center-welcome .el-icon { color: #598c70; font-size: 26px; }
-.run-center-welcome strong { color: #44564d; }
-.run-center-welcome span { max-width: 360px; line-height: 1.6; }
-.run-center-welcome :deep(.el-button) { margin-top: 5px; }
-.run-center-loading { align-content: center; gap: 9px; }
-.run-center-loading .el-icon { color: #328064; font-size: 18px; animation: run-center-spin 1s linear infinite; }
-@keyframes run-center-spin { to { transform: rotate(360deg); } }
 .run-center-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; color: #a13d37; font-size: 11px; overflow-wrap: anywhere; background: #fbefee; border-left: 3px solid #ca6b60; }
 @media (max-width: 900px) {
   .run-center-workspace { grid-template-columns: minmax(230px, 34%) minmax(0, 1fr); }

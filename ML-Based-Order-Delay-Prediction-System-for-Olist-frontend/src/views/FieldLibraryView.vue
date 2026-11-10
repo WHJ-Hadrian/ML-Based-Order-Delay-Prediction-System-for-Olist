@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Aim,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -13,7 +12,6 @@ import {
   EditPen,
   FolderAdd,
   Grid,
-  InfoFilled,
   Plus,
   Refresh,
   Search,
@@ -66,16 +64,6 @@ const extractReturn = ref(null)
 const extractResult = ref(null)
 const importingIntoLibrary = ref(false)
 
-const extractBannerRef = ref(null)
-const libraryRowRefs = ref({})
-const idleHintLevel = ref(0)
-const guideTargetId = ref('')
-const guideRect = reactive({ top: 0, left: 0, width: 0, height: 0, visible: false })
-const guideBubble = reactive({ top: 0, left: 0, placement: 'below' })
-let hintTimer = null
-let deepTimer = null
-let guidancePaused = false
-let lastActivityAt = 0
 
 const creatingLibrary = ref(false)
 const editingLibraryId = ref('')
@@ -127,38 +115,6 @@ const pagedLibraries = computed(() => {
 
 const showLibraryPagination = computed(() => libraries.value.length > 0)
 
-const guideCopy = computed(() => {
-  if (!libraries.value.length) {
-    return {
-      title: '还没有字段库',
-      description: '点击上方「新建字段库并导入」，会自动建库并导入当前数据集。',
-    }
-  }
-  return {
-    title: '把鼠标移到任意字段库行',
-    description: '点击整行即可把当前数据集的字段导入这个字段库。',
-  }
-})
-
-const guideSteps = computed(() =>
-  libraries.value.length
-    ? ['选一个字段库', '鼠标移到整行并点击', '在确认框点「导入」']
-    : ['点击上方「新建字段库并导入」', '系统会自动创建字段库', '导入完成后字段库会自动展开'],
-)
-
-const spotlightStyle = computed(() => ({
-  top: `${guideRect.top}px`,
-  left: `${guideRect.left}px`,
-  width: `${guideRect.width}px`,
-  height: `${guideRect.height}px`,
-}))
-
-const guideBubbleStyle = computed(() => ({
-  top: `${guideBubble.top}px`,
-  left: `${guideBubble.left}px`,
-  transform: guideBubble.placement === 'above' ? 'translateY(-100%)' : 'none',
-}))
-
 watch(
   () => route.query,
   (query) => {
@@ -199,49 +155,6 @@ watch(
   },
   { immediate: true },
 )
-
-watch(extractDatasetId, (value) => {
-  lastActivityAt = Date.now()
-  if (value) {
-    guidancePaused = false
-    hideGuidance()
-    scheduleGuidance()
-  } else {
-    stopGuidance()
-  }
-})
-
-watch(libraries, () => {
-  if (!extractDatasetId.value || !idleHintLevel.value || guidancePaused) {
-    return
-  }
-  showGuidanceSpotlight({ animate: false })
-})
-
-onMounted(() => {
-  window.addEventListener('pointermove', handleUserActivity, { passive: true })
-  window.addEventListener('pointerdown', handleUserActivity, { passive: true })
-  window.addEventListener('keydown', handleUserActivity, { passive: true })
-  window.addEventListener('wheel', handleUserActivity, { passive: true })
-  window.addEventListener('touchstart', handleUserActivity, { passive: true })
-  window.addEventListener('scroll', handleUserActivity, { passive: true, capture: true })
-  window.addEventListener('resize', handleGuidanceResize, { passive: true })
-  if (extractDatasetId.value) {
-    lastActivityAt = Date.now()
-    scheduleGuidance()
-  }
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('pointermove', handleUserActivity)
-  window.removeEventListener('pointerdown', handleUserActivity)
-  window.removeEventListener('keydown', handleUserActivity)
-  window.removeEventListener('wheel', handleUserActivity)
-  window.removeEventListener('touchstart', handleUserActivity)
-  window.removeEventListener('scroll', handleUserActivity, { capture: true })
-  window.removeEventListener('resize', handleGuidanceResize)
-  stopGuidance()
-})
 
 async function loadLibraries() {
   loadingLibraries.value = true
@@ -490,6 +403,13 @@ async function createLibrary() {
   }
 }
 
+function handleWorkbenchCommand(event) {
+  if (event.detail === 'fields:create') createLibrary()
+}
+
+onMounted(() => window.addEventListener('workbench:command', handleWorkbenchCommand))
+onBeforeUnmount(() => window.removeEventListener('workbench:command', handleWorkbenchCommand))
+
 function handleLibraryPageChange(page) {
   libraryPage.value = page - 1
   focusedLibraryId.value = ''
@@ -514,7 +434,6 @@ function exitExtractMode({ goBack = false } = {}) {
   const hadExtractQuery = Boolean(route.query.extract)
   extractDatasetId.value = ''
   extractDatasetName.value = ''
-  stopGuidance()
   if (goBack) {
     returnToDatasetLibrary(fallbackDatasetId)
     return
@@ -556,204 +475,10 @@ async function returnToDatasetLibrary(fallbackDatasetId = '') {
   router.push({ path: '/datasets', query })
 }
 
-function clearGuidanceTimers() {
-  if (hintTimer) {
-    window.clearTimeout(hintTimer)
-    hintTimer = null
-  }
-  if (deepTimer) {
-    window.clearTimeout(deepTimer)
-    deepTimer = null
-  }
-}
-
-function hideGuidance() {
-  idleHintLevel.value = 0
-  guideTargetId.value = ''
-  guideRect.visible = false
-}
-
-function stopGuidance() {
-  clearGuidanceTimers()
-  guidancePaused = false
-  hideGuidance()
-}
-
-function scheduleGuidance() {
-  clearGuidanceTimers()
-  if (!extractDatasetId.value || guidancePaused) {
-    return
-  }
-  hintTimer = window.setTimeout(() => {
-    hintTimer = null
-    showSpotlightHint()
-  }, 3000)
-  deepTimer = window.setTimeout(() => {
-    deepTimer = null
-    showDeepGuidance()
-  }, 25000)
-}
-
-function pauseGuidance() {
-  guidancePaused = true
-  clearGuidanceTimers()
-  hideGuidance()
-}
-
-function resumeGuidance() {
-  if (!extractDatasetId.value) {
-    return
-  }
-  guidancePaused = false
-  lastActivityAt = Date.now()
-  scheduleGuidance()
-}
-
-function handleUserActivity() {
-  if (!extractDatasetId.value || guidancePaused) {
-    return
-  }
-  const now = Date.now()
-  if (now - lastActivityAt < 180) {
-    return
-  }
-  lastActivityAt = now
-  hideGuidance()
-  scheduleGuidance()
-}
-
-function setLibraryRowRef(el, id) {
-  if (el) {
-    libraryRowRefs.value[id] = el
-  } else {
-    delete libraryRowRefs.value[id]
-  }
-}
-
-function isGuideElementVisible(el) {
-  if (!el) {
-    return false
-  }
-  const rect = el.getBoundingClientRect()
-  return (
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.bottom > 8 &&
-    rect.top < window.innerHeight - 8 &&
-    rect.right > 8 &&
-    rect.left < window.innerWidth - 8
-  )
-}
-
-function resolveGuideTarget() {
-  if (!libraries.value.length) {
-    const banner = extractBannerRef.value
-    return isGuideElementVisible(banner) ? { id: 'extract-banner', el: banner } : null
-  }
-  const focusedEl = focusedLibraryId.value
-    ? libraryRowRefs.value[focusedLibraryId.value]
-    : null
-  if (focusedEl && isGuideElementVisible(focusedEl)) {
-    return { id: focusedLibraryId.value, el: focusedEl }
-  }
-  for (const library of pagedLibraries.value) {
-    const el = libraryRowRefs.value[library.id]
-    if (el && isGuideElementVisible(el)) {
-      return { id: library.id, el }
-    }
-  }
-  return null
-}
-
-function positionGuideBubble(rect) {
-  const bubbleWidth = Math.min(340, window.innerWidth - 32)
-  const left = Math.min(
-    Math.max(16, rect.left + 24),
-    Math.max(16, window.innerWidth - bubbleWidth - 16),
-  )
-  const below = rect.bottom + 120 < window.innerHeight
-  guideBubble.left = left
-  if (below) {
-    guideBubble.top = rect.bottom + 12
-    guideBubble.placement = 'below'
-  } else {
-    guideBubble.top = Math.max(96, rect.top - 12)
-    guideBubble.placement = 'above'
-  }
-}
-
-function showGuidanceSpotlight({ animate = true } = {}) {
-  const target = resolveGuideTarget()
-  if (!target) {
-    guideTargetId.value = ''
-    guideRect.visible = false
-    return
-  }
-  const rect = target.el.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) {
-    guideTargetId.value = ''
-    guideRect.visible = false
-    return
-  }
-  guideTargetId.value = target.id
-  positionGuideBubble(rect)
-  const targetRect = {
-    top: rect.top - 6,
-    left: rect.left - 6,
-    width: rect.width + 12,
-    height: rect.height + 12,
-  }
-  if (animate) {
-    const expand = 56
-    Object.assign(guideRect, {
-      top: rect.top - expand,
-      left: rect.left - expand,
-      width: rect.width + expand * 2,
-      height: rect.height + expand * 2,
-      visible: true,
-    })
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (!extractDatasetId.value || !idleHintLevel.value) {
-          return
-        }
-        Object.assign(guideRect, targetRect)
-      })
-    })
-  } else {
-    Object.assign(guideRect, targetRect)
-    guideRect.visible = true
-  }
-}
-
-function showSpotlightHint() {
-  if (!extractDatasetId.value || guidancePaused) {
-    return
-  }
-  idleHintLevel.value = 1
-  showGuidanceSpotlight({ animate: true })
-}
-
-function showDeepGuidance() {
-  if (!extractDatasetId.value || guidancePaused) {
-    return
-  }
-  idleHintLevel.value = 2
-  showGuidanceSpotlight({ animate: !guideRect.visible })
-}
-
-function handleGuidanceResize() {
-  if (!extractDatasetId.value || guidancePaused || !idleHintLevel.value) {
-    return
-  }
-  showGuidanceSpotlight({ animate: false })
-}
-
 async function confirmImportIntoLibrary(library) {
   if (importingIntoLibrary.value) {
     return
   }
-  pauseGuidance()
   try {
     await ElMessageBox.confirm(
       `把数据集「${extractDatasetName.value || '当前数据集'}」的字段导入到字段库「${library.name}」？`,
@@ -761,7 +486,6 @@ async function confirmImportIntoLibrary(library) {
       { type: 'info', confirmButtonText: '导入', cancelButtonText: '取消' },
     )
   } catch {
-    resumeGuidance()
     return
   }
   importingIntoLibrary.value = true
@@ -794,7 +518,6 @@ async function confirmImportIntoLibrary(library) {
     ElMessage.error(error?.message || '导入字段失败')
   } finally {
     importingIntoLibrary.value = false
-    resumeGuidance()
   }
 }
 
@@ -802,7 +525,6 @@ async function createLibraryAndImport() {
   if (creatingLibrary.value || !extractDatasetId.value) {
     return
   }
-  pauseGuidance()
   creatingLibrary.value = true
   try {
     const created = await createFieldLibrary({})
@@ -846,7 +568,6 @@ async function createLibraryAndImport() {
     ElMessage.error(error?.message || '创建字段库失败')
   } finally {
     creatingLibrary.value = false
-    resumeGuidance()
   }
 }
 async function startRenameLibrary(library) {
@@ -1307,28 +1028,10 @@ async function applyPaste() {
 </script>
 <template>
   <div class="page-content">
-    <el-breadcrumb separator="/" class="page-breadcrumb">
-      <el-breadcrumb-item>工作台</el-breadcrumb-item>
-      <el-breadcrumb-item>字段库</el-breadcrumb-item>
-    </el-breadcrumb>
-
-    <header class="page-header">
-      <div>
-        <h1>字段库</h1>
-        <p>按「字段库 → 数据集 → 数据表 → 字段」维护业务字段；新增字段和剪贴板录入都在数据表内完成。</p>
-      </div>
-      <el-button type="primary" size="large" :icon="FolderAdd" :loading="creatingLibrary" @click="createLibrary">
-        新建字段库
-      </el-button>
-    </header>
-
-    <div v-if="extractDatasetId" ref="extractBannerRef" class="extract-banner">
+    <h1 class="visually-hidden">字段定义</h1>
+    <div v-if="extractDatasetId" class="extract-banner">
       <div class="extract-banner-copy">
         <strong>正在为数据集「{{ extractDatasetName || '当前数据集' }}」提取字段</strong>
-        <span v-if="libraries.length">
-          把鼠标移到任意字段库行，点击整行即可导入；也可以直接新建字段库并导入。完成后可回到数据集库继续。
-        </span>
-        <span v-else>还没有字段库，点击右侧「新建字段库并导入」即可开始。</span>
       </div>
       <div class="extract-banner-actions">
         <el-button
@@ -1382,30 +1085,21 @@ async function applyPaste() {
       <template #header>
         <div class="list-header">
           <span class="list-title">字段库目录</span>
-          <span class="list-hint">
-            {{
-              extractDatasetId
-                ? '提取模式下点击字段库整行即可导入'
-                : '点击字段库展开，数据集和数据表可以继续展开'
-            }}
-          </span>
         </div>
       </template>
 
       <div
-        v-loading="loadingLibraries"
         class="library-list"
         :class="{ 'is-picking': !!extractDatasetId, 'has-focus': !!focusedLibraryId }"
       >
+        <p v-if="loadingLibraries" class="plain-loading">正在读取字段库…</p>
         <article
           v-for="library in pagedLibraries"
           :key="library.id"
-          :ref="(el) => setLibraryRowRef(el, library.id)"
           class="library-item"
           :class="{
             'is-expanded': isLibraryExpanded(library.id),
             'is-focused': focusedLibraryId === library.id,
-            'is-guide-target': guideTargetId === library.id,
           }"
           @mouseenter="focusedLibraryId = library.id"
           @mouseleave="focusedLibraryId = ''"
@@ -1473,7 +1167,8 @@ async function applyPaste() {
 
           <transition name="accordion">
             <section v-if="isLibraryExpanded(library.id)" class="library-expanded" @click.stop>
-              <div v-loading="loadingFields[library.id]" class="expanded-inner">
+              <div class="expanded-inner">
+                <p v-if="loadingFields[library.id]" class="plain-loading">正在读取字段…</p>
                 <div class="field-search-row">
                   <el-input
                     v-model="fieldSearch[library.id].input"
@@ -1504,9 +1199,6 @@ async function applyPaste() {
                     从数据集导入
                   </el-button>
                 </div>
-                <p class="library-tip">
-                  字段在具体的数据表内新增；剪贴板内容也会写入对应数据表。整批数据集请用「从数据集导入」。
-                </p>
                 <div v-if="groupsFor(library.id).length" class="dataset-groups">
                   <div
                     v-for="group in groupsFor(library.id)"
@@ -1752,33 +1444,21 @@ async function applyPaste() {
                   </button>
                 </div>
 
-                <el-empty
-                  v-else
-                  :image-size="88"
-                  description="这个字段库还没有字段，可以先从数据集导入，或手动创建"
-                >
+                <div v-else class="empty-state">
+                  <p>暂无字段。</p>
                   <el-button type="primary" :icon="Refresh" @click="openImport(library.id)">
                     从数据集导入
                   </el-button>
                   <el-button :icon="Plus" @click="addManualField(library.id)">
                     手动添加字段
                   </el-button>
-                </el-empty>
+                </div>
               </div>
             </section>
           </transition>
         </article>
 
-        <el-empty
-          v-if="!loadingLibraries && libraries.length === 0"
-          class="empty-state"
-          :image-size="104"
-          description="还没有字段库"
-        >
-          <el-button type="primary" :icon="FolderAdd" @click="createLibrary">
-            新建第一个字段库
-          </el-button>
-        </el-empty>
+        <div v-if="!loadingLibraries && libraries.length === 0" class="empty-state"><p>暂无字段库。</p></div>
 
         <div v-if="showLibraryPagination" class="library-pagination">
           <span class="pagination-hint">每页 {{ libraryPageSize }} 个字段库</span>
@@ -1795,47 +1475,6 @@ async function applyPaste() {
         </div>
       </div>
     </el-card>
-
-    <div
-      v-if="extractDatasetId && idleHintLevel > 0"
-      class="extract-guide-layer"
-      role="status"
-      aria-live="polite"
-    >
-      <div v-if="guideRect.visible" class="guide-spotlight" :style="spotlightStyle" />
-      <div
-        v-if="idleHintLevel === 1 && guideRect.visible"
-        class="guide-bubble"
-        :class="`is-${guideBubble.placement}`"
-        :style="guideBubbleStyle"
-      >
-        <el-icon class="guide-bubble-icon"><Aim /></el-icon>
-        <div class="guide-bubble-copy">
-          <strong>{{ guideCopy.title }}</strong>
-          <span>{{ guideCopy.description }}</span>
-        </div>
-      </div>
-      <div
-        v-if="idleHintLevel === 1 && !guideRect.visible"
-        class="guide-card guide-card-fallback"
-      >
-        <div class="guide-card-title">
-          <el-icon><InfoFilled /></el-icon>
-          {{ guideCopy.title }}
-        </div>
-        <p class="guide-card-text">{{ guideCopy.description }}</p>
-      </div>
-      <div v-if="idleHintLevel >= 2" class="guide-card">
-        <div class="guide-card-title">
-          <el-icon><InfoFilled /></el-icon>
-          还没开始操作？
-        </div>
-        <ol class="guide-card-steps">
-          <li v-for="step in guideSteps" :key="step">{{ step }}</li>
-        </ol>
-        <span class="guide-card-hint">移动鼠标、点击或按键，提示会自动消失</span>
-      </div>
-    </div>
 
     <FieldImportDialog
       v-model="importVisible"
@@ -1952,7 +1591,7 @@ async function applyPaste() {
   background: #fff;
   filter: none;
   opacity: 1;
-  box-shadow: inset 4px 0 0 var(--accent), 0 8px 20px rgba(15, 108, 189, 0.14);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .library-list.is-picking .library-summary {
@@ -1966,8 +1605,8 @@ async function applyPaste() {
   gap: 16px;
   margin-bottom: 16px;
   padding: 14px 18px;
-  background: linear-gradient(90deg, rgba(15, 108, 189, 0.12), rgba(15, 108, 189, 0.03));
-  border: 1px solid rgba(15, 108, 189, 0.22);
+  background: #f5f7f6;
+  border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   flex-wrap: wrap;
 }
@@ -2008,7 +1647,7 @@ async function applyPaste() {
   margin-bottom: 16px;
   padding: 14px 18px;
   background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(15, 108, 189, 0.18);
+  border: 1px solid rgba(53, 107, 88, 0.18);
   border-radius: var(--radius-panel);
   box-shadow: 0 10px 26px rgba(10, 45, 37, 0.06);
   flex-wrap: wrap;
@@ -2051,174 +1690,6 @@ async function applyPaste() {
   gap: 8px;
 }
 
-.library-item.is-guide-target .library-summary {
-  background: rgba(15, 108, 189, 0.06);
-  box-shadow: inset 4px 0 0 var(--accent);
-}
-
-.extract-guide-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 1800;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.guide-spotlight {
-  position: fixed;
-  border: 1px solid rgba(15, 108, 189, 0.55);
-  border-radius: var(--radius-panel);
-  box-shadow:
-    0 0 0 2px rgba(15, 108, 189, 0.12),
-    0 0 34px 8px rgba(15, 108, 189, 0.2),
-    0 0 0 9999px rgba(10, 24, 20, 0.16);
-  transition:
-    top 0.55s cubic-bezier(0.22, 0.8, 0.24, 1),
-    left 0.55s cubic-bezier(0.22, 0.8, 0.24, 1),
-    width 0.55s cubic-bezier(0.22, 0.8, 0.24, 1),
-    height 0.55s cubic-bezier(0.22, 0.8, 0.24, 1);
-  will-change: top, left, width, height;
-}
-
-.guide-spotlight::after {
-  position: absolute;
-  inset: -7px;
-  border: 1px solid rgba(15, 108, 189, 0.18);
-  border-radius: 8px;
-  content: '';
-  animation: guidePulse 2.2s ease-in-out infinite;
-}
-
-.guide-bubble {
-  position: fixed;
-  z-index: 1801;
-  display: flex;
-  max-width: 340px;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.98);
-  border: 1px solid rgba(15, 108, 189, 0.18);
-  border-radius: var(--radius-panel);
-  box-shadow: 0 18px 40px rgba(8, 21, 18, 0.18);
-  animation: guideFadeIn 0.22s ease-out;
-}
-
-.guide-bubble::before {
-  position: absolute;
-  top: -6px;
-  left: 22px;
-  width: 11px;
-  height: 11px;
-  background: #fff;
-  border-top: 1px solid rgba(15, 108, 189, 0.18);
-  border-left: 1px solid rgba(15, 108, 189, 0.18);
-  content: '';
-  transform: rotate(45deg);
-}
-
-.guide-bubble.is-above::before {
-  top: auto;
-  bottom: -6px;
-  transform: rotate(225deg);
-}
-
-.guide-bubble-icon {
-  margin-top: 1px;
-  color: var(--accent);
-  font-size: 16px;
-}
-
-.guide-bubble-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  line-height: 1.5;
-}
-
-.guide-bubble-copy strong {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.guide-bubble-copy span {
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-
-.guide-card {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 1802;
-  width: min(340px, calc(100vw - 48px));
-  padding: 16px 18px;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.985);
-  border: 1px solid rgba(15, 108, 189, 0.2);
-  border-radius: var(--radius-panel);
-  box-shadow: 0 20px 50px rgba(8, 21, 18, 0.22);
-  animation: guideFadeIn 0.24s ease-out;
-}
-
-.guide-card-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.guide-card-title .el-icon {
-  color: var(--accent);
-}
-
-.guide-card-text {
-  margin: 8px 0 0;
-  color: var(--ink-soft);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.guide-card-steps {
-  margin: 10px 0 0;
-  padding-left: 18px;
-  color: var(--ink-soft);
-  font-size: 12px;
-  line-height: 1.8;
-}
-
-.guide-card-hint {
-  display: block;
-  margin-top: 10px;
-  color: var(--accent);
-  font-size: 11px;
-}
-
-@keyframes guidePulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.995);
-  }
-
-  50% {
-    opacity: 0.9;
-    transform: scale(1.012);
-  }
-}
-
-@keyframes guideFadeIn {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
 .library-pagination {
   display: flex;
   align-items: center;
@@ -2250,7 +1721,7 @@ async function applyPaste() {
 }
 
 .library-summary:hover {
-  background: rgba(15, 108, 189, 0.04);
+  background: rgba(53, 107, 88, 0.04);
 }
 
 .row-chevron {
@@ -2325,7 +1796,7 @@ async function applyPaste() {
   padding: 3px 8px;
   color: var(--ink-soft);
   font-size: 11px;
-  background: rgba(15, 108, 189, 0.06);
+  background: rgba(53, 107, 88, 0.06);
   border-radius: 8px;
 }
 
@@ -2344,7 +1815,7 @@ async function applyPaste() {
 
 .library-expanded {
   padding: 0 20px 18px 44px;
-  background: rgba(15, 108, 189, 0.02);
+  background: rgba(53, 107, 88, 0.02);
 }
 
 .expanded-inner {
@@ -2385,7 +1856,7 @@ async function applyPaste() {
   align-items: center;
   padding: 1px 7px;
   border-radius: var(--radius-control);
-  background: rgba(15, 108, 189, 0.1);
+  background: rgba(53, 107, 88, 0.1);
   color: var(--accent);
   font-size: 11px;
   font-weight: 600;
@@ -2402,14 +1873,15 @@ async function applyPaste() {
 .dataset-groups {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 16px;
 }
 
 .dataset-group {
-  overflow: hidden;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .group-summary,
@@ -2424,7 +1896,7 @@ async function applyPaste() {
 
 .group-summary:hover,
 .table-summary:hover {
-  background: rgba(15, 108, 189, 0.04);
+  background: rgba(53, 107, 88, 0.04);
 }
 
 .group-icon {
@@ -2464,8 +1936,9 @@ async function applyPaste() {
 
 .table-group {
   margin-top: 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  border: 0;
+  border-top: 1px solid var(--line-subtle);
+  border-radius: 0;
 }
 
 .table-icon {
@@ -2528,11 +2001,11 @@ async function applyPaste() {
 }
 
 .table-fields :deep(.is-draft-row > td.el-table__cell) {
-  background: rgba(15, 108, 189, 0.055);
+  background: rgba(53, 107, 88, 0.055);
 }
 
 .table-fields :deep(.is-draft-row:hover > td.el-table__cell) {
-  background: rgba(15, 108, 189, 0.08) !important;
+  background: rgba(53, 107, 88, 0.08) !important;
 }
 
 .group-pagination {
@@ -2608,14 +2081,5 @@ async function applyPaste() {
     padding-left: 20px;
   }
 
-  .guide-card {
-    right: 16px;
-    bottom: 16px;
-    width: calc(100vw - 32px);
-  }
-
-  .guide-bubble {
-    max-width: calc(100vw - 32px);
-  }
 }
 </style>
