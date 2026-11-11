@@ -48,6 +48,7 @@ const ruleNodeKinds = [
   { id: 'JOIN', label: '数据关联', summary: '用字段键连接两个数据表或上游结果' },
   { id: 'AGGREGATE', label: '分组聚合', summary: '按字段分组并生成统计指标' },
   { id: 'DERIVE', label: '派生字段', summary: '用结构化表达式生成新字段' },
+  { id: 'OUTPUT', label: '输出', summary: '将上游结果物化为新的数据集版本' },
 ]
 const predicateOperators = [
   { id: 'IS_NULL', label: '为空' },
@@ -147,6 +148,8 @@ const publishing = ref(false)
 const publishedVersion = ref(null)
 const previewDrawerOpen = ref(false)
 const previewStarting = ref(false)
+const fullStarting = ref(false)
+const runMode = ref('PREVIEW')
 const previewCancelling = ref(false)
 const previewRetrying = ref(false)
 const previewSampleSize = ref(100)
@@ -158,6 +161,10 @@ const previewSelectedNodeId = ref('')
 const loadingPreview = ref(false)
 let previewPollTimer = null
 let previewPollToken = 0
+
+watch(previewRun, (run) => {
+  if (run?.mode) runMode.value = run.mode
+})
 
 const ruleSearch = reactive({})
 const rulePages = reactive({})
@@ -314,6 +321,14 @@ function defaultConfig(kind) {
         expression: { type: 'FIELD', nameSnapshot: '' },
         replaceExisting: false,
         outputAlias: 'derived',
+      }
+    case 'OUTPUT':
+      return {
+        schemaVersion: 1,
+        mode: 'MATERIALIZE_VERSION',
+        format: 'CSV',
+        name: '',
+        partitionBy: [],
       }
     default:
       return { schemaVersion: 1, scope: 'ROW', predicate: { op: 'AND', predicates: [condition] }, effect: 'WARN' }
@@ -645,6 +660,13 @@ function previewRunLeaseActive(run) {
 
 function previewRunSummary(run) {
   if (!run) return ''
+  if (run.mode === 'FULL') {
+    if (run.status === 'QUEUED') return '运行已进入队列；等待 Worker 领取并生成数据版本。'
+    if (run.status === 'RUNNING') return '正在执行全量处理并物化 CSV 数据版本。'
+    if (run.status === 'SUCCEEDED') return '数据版本已生成，请到数据集库查看。'
+    if (run.status === 'FAILED') return run.errorMessage || '全量处理失败，请查看节点错误信息。'
+    return '全量处理已取消。'
+  }
   if (run.status === 'CANCELLED') return '运行已取消；正在执行的只读查询会在当前节点结束后停止上报。'
   if (run.status === 'QUEUED') {
     if (!run.claimedBy) return '运行已进入队列；等待可用 Worker 领取。'
@@ -768,6 +790,7 @@ async function retryPreviewRun() {
 }
 
 async function startRulePreview() {
+  if (runMode.value === 'FULL') return startFullRun()
   if (!activeWorkbook.value || previewStarting.value) return
   previewStarting.value = true
   const workbook = activeWorkbook.value
@@ -807,6 +830,53 @@ async function startRulePreview() {
     if (!handleAuthError(error)) ElMessage.error(error?.message || '创建预览运行失败')
   } finally {
     previewStarting.value = false
+  }
+}
+
+async function startFullRun() {
+  if (!activeWorkbook.value || fullStarting.value) return
+  fullStarting.value = true
+  const workbook = activeWorkbook.value
+  const reusePublishedVersion = !dirty.value && workbook.status === 'PUBLISHED'
+  try {
+    if (dirty.value && !(await persistDraft({ silent: true }))) return
+    if (!(await validateWorkbook())) return
+    const outputNodes = (validationResult.value?.compiledPlan?.nodes || [])
+      .filter((node) => node.enabled !== false && node.kind === 'OUTPUT')
+    if (outputNodes.length !== 1) {
+      ElMessage.warning('运行处理需要且只能启用 1 个输出节点')
+      return
+    }
+    const outputName = String(outputNodes[0].config?.name || '').trim()
+    if (!outputName) {
+      ElMessage.warning('请先在输出节点填写新数据版本名称')
+      return
+    }
+
+    let version
+    if (reusePublishedVersion) {
+      const versions = await listRuleWorkbookVersions(workbook.id)
+      version = [...(versions || [])].sort((left, right) => right.versionNumber - left.versionNumber)[0]
+    }
+    if (!version) {
+      version = await publishRuleWorkbook(workbook.id)
+      publishedVersion.value = version
+      workbook.status = 'PUBLISHED'
+      const item = workbooks.value.find((library) => library.id === workbook.id)
+      if (item) item.status = 'PUBLISHED'
+    }
+    const run = await createRuleRun(workbook.id, {
+      workbookVersionId: version.id,
+      mode: 'FULL',
+    })
+    runMode.value = 'FULL'
+    previewDrawerOpen.value = true
+    previewHistory.value = await listRuleRuns(workbook.id, 20)
+    await selectPreviewRun(run.id)
+  } catch (error) {
+    if (!handleAuthError(error)) ElMessage.error(error?.message || '创建数据处理运行失败')
+  } finally {
+    fullStarting.value = false
   }
 }
 
@@ -1826,7 +1896,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-content">
-    <h1 class="visually-hidden">清洗规则</h1>
+    <h1 class="visually-hidden">数据处理</h1>
     <el-card class="toolbar-card" shadow="never">
       <div class="library-toolbar">
         <el-input
@@ -1842,16 +1912,26 @@ onBeforeUnmount(() => {
         <el-button size="large" :icon="Search" @click="searchLibraries">搜索</el-button>
         <el-button size="large" :icon="Refresh" @click="resetLibrarySearch">重置</el-button>
         <span class="toolbar-spacer"></span>
+        <el-button type="primary" size="large" :icon="Plus" @click="openCreateDialog">新建数据处理</el-button>
         <span class="toolbar-count">
-          当前共 <strong>{{ workbooks.length }}</strong> 个规则库
+          当前共 <strong>{{ workbooks.length }}</strong> 个数据处理任务
         </span>
       </div>
     </el-card>
 
+    <el-alert
+      class="processing-guide"
+      type="info"
+      :closable="false"
+      show-icon
+      title="在这里把原始数据加工成可训练的数据版本"
+      description="新建任务后，按顺序添加节点：数据关联（合并多表）→ 去重/空值/范围/时间清洗 → 字段选择（去掉多余字段）→ 派生字段（生成延误标签、月份、配送天数等）→ 输出（物化为新数据版本）。"
+    />
+
     <el-card class="list-card" shadow="never">
       <template #header>
         <div class="list-header">
-          <span class="list-title">规则库目录</span>
+          <span class="list-title">数据处理任务</span>
         </div>
       </template>
 
@@ -1936,6 +2016,7 @@ onBeforeUnmount(() => {
                   <el-button :loading="validating" @click="validateWorkbook">校验流程</el-button>
                   <el-button v-if="previewRun" @click="openPreviewResults">查看结果</el-button>
                   <el-button :loading="previewStarting" @click="startRulePreview">预览运行</el-button>
+                  <el-button type="primary" plain :loading="fullStarting" @click="startFullRun">运行处理并生成版本</el-button>
                   <el-button type="primary" :loading="publishing" :disabled="activeWorkbook.status === 'PUBLISHED'" @click="publishWorkbook">
                     发布版本
                   </el-button>
@@ -2420,6 +2501,30 @@ onBeforeUnmount(() => {
                         />
                       </div>
                     </template>
+
+                    <template v-else-if="rule.cells.nodeKind === 'OUTPUT'">
+                      <div class="config-row">
+                        <span class="definition-label">新数据版本名称</span>
+                        <el-input
+                          v-model="rule.cells.config.name"
+                          class="config-control output-name-control"
+                          maxlength="255"
+                          show-word-limit
+                          placeholder="例如 orders_cleaned_v1"
+                        />
+                      </div>
+                      <div class="config-row">
+                        <span class="definition-label">输出方式</span>
+                        <el-select v-model="rule.cells.config.mode" class="config-control">
+                          <el-option label="生成数据版本" value="MATERIALIZE_VERSION" />
+                        </el-select>
+                        <span class="definition-label">格式</span>
+                        <el-select v-model="rule.cells.config.format" class="config-control">
+                          <el-option label="CSV" value="CSV" />
+                        </el-select>
+                        <span class="config-note">当前全量执行仅支持生成 CSV 数据版本，单次最多 100,000 行。</span>
+                      </div>
+                    </template>
                   </div>
                 </article>
               </div>
@@ -2445,8 +2550,8 @@ onBeforeUnmount(() => {
                 @click="addRule"
               >
                 <el-icon><Plus /></el-icon>
-                <span>添加一条规则</span>
-                <small>同时创建规则表头和定义内容</small>
+                <span>添加处理节点</span>
+                <small>选择关联、清洗、字段选择、派生字段或输出</small>
               </button>
 
               <div v-if="activeRules.length > RULE_PAGE_SIZE" class="rule-pagination">
@@ -2464,7 +2569,10 @@ onBeforeUnmount(() => {
           </section>
         </article>
 
-        <div v-if="!loadingWorkbooks && workbooks.length === 0" class="empty-state"><p>暂无规则库。</p></div>
+        <div v-if="!loadingWorkbooks && workbooks.length === 0" class="empty-state">
+          <p>还没有数据处理任务。先选择数据集和版本，再添加关联、清洗、派生字段和输出节点。</p>
+          <el-button type="primary" :icon="Plus" @click="openCreateDialog">新建数据处理</el-button>
+        </div>
 
         <div v-if="showLibraryPagination" class="library-pagination">
           <span class="pagination-hint">每页 {{ libraryPageSize }} 个规则库</span>
@@ -2482,7 +2590,7 @@ onBeforeUnmount(() => {
       </div>
     </el-card>
 
-    <el-dialog v-model="createDialogOpen" title="新建规则库" width="min(520px, calc(100vw - 32px))">
+    <el-dialog v-model="createDialogOpen" title="新建数据处理" width="min(520px, calc(100vw - 32px))">
       <el-form label-position="top">
         <el-form-item label="数据集库" required>
           <el-select :model-value="createDatasetId" filterable class="dialog-select" placeholder="选择数据集库" @update:model-value="changeCreateDataset">
@@ -2514,7 +2622,7 @@ onBeforeUnmount(() => {
       @closed="stopPreviewPolling"
     >
       <div class="preview-toolbar">
-        <el-input-number v-model="previewSampleSize" :min="1" :max="5000" :step="50" controls-position="right" />
+        <el-input-number v-if="runMode !== 'FULL'" v-model="previewSampleSize" :min="1" :max="5000" :step="50" controls-position="right" />
         <span class="preview-toolbar-note">每个节点最多展示 100 行样例，查询仍受只读与资源上限保护</span>
         <span class="toolbar-spacer"></span>
         <el-button type="primary" :loading="previewStarting" @click="startRulePreview">创建新预览</el-button>
@@ -2642,6 +2750,8 @@ onBeforeUnmount(() => {
   </div>
 </template>
 <style scoped>
+.processing-guide { margin-bottom: 12px; }
+
 .library-toolbar {
   display: flex;
   align-items: center;

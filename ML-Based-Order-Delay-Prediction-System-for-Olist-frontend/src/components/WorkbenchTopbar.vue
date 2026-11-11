@@ -19,7 +19,7 @@ const activeModule = computed(() => NAVIGATION_ITEMS.find((item) => item.key ===
 const quickPages = NAVIGATION_ITEMS.map(({ key, path, title }) => ({ key, path, title }))
 const contextCommand = computed(() => ({
   datasets: { key: 'dataset:create', label: '新建数据集' },
-  quality: { key: 'rules:create', label: '新建规则库' },
+  quality: { key: 'rules:create', label: '新建数据处理' },
   fields: { key: 'fields:create', label: '新建字段库' },
   analysis: { key: 'analysis:create', label: '新建分析方案' },
   experiments: { key: 'experiment:create', label: '新建实验' },

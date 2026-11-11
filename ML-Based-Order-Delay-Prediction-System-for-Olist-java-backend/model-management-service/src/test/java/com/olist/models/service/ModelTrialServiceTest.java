@@ -3,7 +3,6 @@ package com.olist.models.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -65,11 +64,10 @@ class ModelTrialServiceTest {
         ModelVersion model = model();
         when(modelRepository.findByIdAndOwnerId(modelId, "owner-a")).thenReturn(Optional.of(model));
         when(datasetClient.catalog(versionId, "caller-token")).thenReturn(catalog("READY", 40));
-        when(datasetClient.rows(eq(versionId), eq(tableId), eq(40L), any(), eq("caller-token")))
-                .thenReturn(List.of(List.of("12.50", "yes")));
         when(pythonClient.trial(eq("owner-a"), eq("artifact-1"), any(), eq("label")))
                 .thenReturn(new TrialResult("classification", "label", 40, 40, 0,
-                        Map.of("accuracy", 0.9), Map.of("labels", List.of("yes")), List.of(Map.of("row", 1))));
+                        Map.of("accuracy", 0.9), Map.of("sampleCount", 40),
+                        Map.of("labels", List.of("yes")), List.of(Map.of("row", 1))));
         when(trialRepository.save(any(ModelTrial.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         var response = service.trial("owner-a", "caller-token", modelId,
@@ -79,10 +77,11 @@ class ModelTrialServiceTest {
         assertEquals(versionId, response.datasetVersionId());
         assertEquals("label", response.targetColumn());
         assertEquals(40, response.evaluatedRows());
-        ArgumentCaptor<List<Map<String, Object>>> rows = ArgumentCaptor.forClass(List.class);
-        verify(pythonClient).trial(eq("owner-a"), eq("artifact-1"), rows.capture(), eq("label"));
-        assertEquals(new java.math.BigDecimal("12.50"), rows.getValue().get(0).get("amount"));
-        assertEquals("yes", rows.getValue().get(0).get("label"));
+        ArgumentCaptor<PythonTrainingClient.DataSource> dataSource =
+                ArgumentCaptor.forClass(PythonTrainingClient.DataSource.class);
+        verify(pythonClient).trial(eq("owner-a"), eq("artifact-1"), dataSource.capture(), eq("label"));
+        assertEquals(List.of("amount", "label"), dataSource.getValue().columns());
+        assertEquals("owner-a", dataSource.getValue().ownerId());
         ArgumentCaptor<ModelTrial> saved = ArgumentCaptor.forClass(ModelTrial.class);
         verify(trialRepository).save(saved.capture());
         assertEquals("owner-a", saved.getValue().getOwnerId());
@@ -111,7 +110,6 @@ class ModelTrialServiceTest {
         assertThrows(ResponseStatusException.class, () -> service.trial("owner-a", "caller-token", modelId,
                 new ModelTrialRequest(datasetId, versionId, tableId, "label")));
 
-        verify(datasetClient, never()).rows(any(), any(), anyLong(), any(), any());
         verify(pythonClient, never()).trial(any(), any(), any(), any());
     }
 
@@ -129,7 +127,6 @@ class ModelTrialServiceTest {
         assertThrows(ResponseStatusException.class, () -> service.trial("owner-a", "caller-token", modelId,
                 new ModelTrialRequest(datasetId, versionId, tableId, "label")));
 
-        verify(datasetClient, never()).rows(any(), any(), anyLong(), any(), any());
         verify(pythonClient, never()).trial(any(), any(), any(), any());
         verify(trialRepository, never()).save(any());
     }
@@ -154,7 +151,6 @@ class ModelTrialServiceTest {
                         List.of(modelId, secondId), "label")));
 
         verify(datasetClient).catalog(versionId, "caller-token");
-        verify(datasetClient, never()).rows(any(), any(), anyLong(), any(), any());
         verify(pythonClient, never()).trial(any(), any(), any(), any());
     }
 
@@ -179,13 +175,9 @@ class ModelTrialServiceTest {
                                 java.util.Arrays.stream(new String[] {"label", "category", "amount"})
                                         .map(name -> new CatalogColumn(UUID.randomUUID(), name, 0, "STRING", true))
                                         .toList()))));
-        when(datasetClient.rows(eq(versionId), eq(tableId), eq(40L), any(), eq("caller-token")))
-                .thenReturn(List.of(List.of("12.50", "A", "yes")));
-        when(datasetClient.rows(eq(secondVersionId), eq(secondTableId), eq(30L), any(), eq("caller-token")))
-                .thenReturn(List.of(List.of("8.25", "B", "no")));
         when(pythonClient.trial(eq("owner-a"), any(), any(), eq("label")))
                 .thenReturn(new TrialResult("classification", "label", 40, 40, 0,
-                        Map.of("accuracy", 0.9), null, List.of()));
+                        Map.of("accuracy", 0.9), Map.of(), null, List.of()));
         when(trialRepository.save(any(ModelTrial.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         var results = service.compare("owner-a", "caller-token", new ModelTrialCompareRequest(
@@ -198,24 +190,16 @@ class ModelTrialServiceTest {
         assertEquals(List.of(datasetId, datasetId, secondDatasetId, secondDatasetId),
                 results.stream().map(result -> result.datasetId()).toList());
         assertEquals(1, results.stream().map(result -> result.comparisonId()).distinct().count());
-        verify(datasetClient).rows(eq(versionId), eq(tableId), eq(40L), any(), eq("caller-token"));
-        verify(datasetClient).rows(eq(secondVersionId), eq(secondTableId), eq(30L), any(), eq("caller-token"));
         ArgumentCaptor<ModelTrial> saved = ArgumentCaptor.forClass(ModelTrial.class);
         verify(trialRepository, org.mockito.Mockito.times(4)).save(saved.capture());
         assertEquals(List.of(modelId, secondId, modelId, secondId), saved.getAllValues().stream()
                 .map(ModelTrial::getModelId).toList());
-        ArgumentCaptor<List<Map<String, Object>>> firstRows = ArgumentCaptor.forClass(List.class);
-        verify(pythonClient, org.mockito.Mockito.times(2))
-                .trial(eq("owner-a"), eq("artifact-1"), firstRows.capture(), eq("label"));
-        assertEquals(new java.math.BigDecimal("12.50"), firstRows.getAllValues().get(0).get(0).get("amount"));
-        assertEquals(new java.math.BigDecimal("8.25"), firstRows.getAllValues().get(1).get(0).get("amount"));
-        ArgumentCaptor<List<Map<String, Object>>> secondRows = ArgumentCaptor.forClass(List.class);
-        verify(pythonClient, org.mockito.Mockito.times(2))
-                .trial(eq("owner-a"), eq("artifact-2"), secondRows.capture(), eq("label"));
-        assertEquals("A", secondRows.getAllValues().get(0).get(0).get("category"));
-        assertEquals(new java.math.BigDecimal("12.50"), secondRows.getAllValues().get(0).get(0).get("amount"));
-        assertEquals("B", secondRows.getAllValues().get(1).get(0).get("category"));
-        assertEquals(new java.math.BigDecimal("8.25"), secondRows.getAllValues().get(1).get(0).get("amount"));
+        ArgumentCaptor<PythonTrainingClient.DataSource> sources =
+                ArgumentCaptor.forClass(PythonTrainingClient.DataSource.class);
+        verify(pythonClient, org.mockito.Mockito.times(4))
+                .trial(eq("owner-a"), any(), sources.capture(), eq("label"));
+        assertEquals(versionId, sources.getAllValues().get(0).datasetVersionId());
+        assertEquals(secondVersionId, sources.getAllValues().get(2).datasetVersionId());
     }
 
     @Test
@@ -234,7 +218,6 @@ class ModelTrialServiceTest {
                         List.of(modelId, secondId), "label")));
 
         verify(datasetClient, never()).catalog(any(), any());
-        verify(datasetClient, never()).rows(any(), any(), anyLong(), any(), any());
         verify(pythonClient, never()).trial(any(), any(), any(), any());
     }
 

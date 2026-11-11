@@ -54,6 +54,8 @@ olist:
     internal-token: ${WORKFLOW_WORKER_INTERNAL_TOKEN:}
   rule-worker:
     internal-token: ${RULE_WORKER_INTERNAL_TOKEN:}
+  model-training:
+    internal-token: ${MODEL_TRAINING_INTERNAL_TOKEN:}
   dataset:
     table-search:
       max-scanned-rows: ${DATASET_TABLE_SEARCH_MAX_SCANNED_ROWS:250000}

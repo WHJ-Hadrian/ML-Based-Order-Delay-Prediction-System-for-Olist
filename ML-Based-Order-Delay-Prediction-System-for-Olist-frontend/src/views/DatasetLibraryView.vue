@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 import {
   AuthenticationRequiredError,
   useAuth,
@@ -655,6 +655,7 @@ function syncRowFromDetail(id, detail) {
             <el-button size="large" :icon="Search" @click="search">搜索</el-button>
             <el-button size="large" :icon="Refresh" @click="resetFilters">重置</el-button>
             <span class="toolbar-spacer"></span>
+            <el-button type="primary" size="large" :icon="Plus" :loading="creating" @click="handleCreate">新建数据集</el-button>
             <span class="toolbar-count">当前共 <strong>{{ totalElements }}</strong> 个数据集</span>
           </div>
         </el-card>
@@ -726,7 +727,9 @@ function syncRowFromDetail(id, detail) {
               class="empty-state"
               :image-size="104"
               :description="section.emptyText"
-            />
+            >
+              <el-button type="primary" :icon="Plus" :loading="creating" @click="handleCreate">新建数据集并上传文件</el-button>
+            </el-empty>
 
             <div v-if="totalElements > 0" class="pagination-row">
               <span class="pagination-hint">每页 {{ size }} 条，支持 CSV / TSV / ZIP / XLSX</span>

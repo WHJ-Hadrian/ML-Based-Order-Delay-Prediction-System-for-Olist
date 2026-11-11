@@ -2,6 +2,8 @@ package com.olist.models.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
@@ -84,6 +86,25 @@ public class ModelVersion {
     @Column(name = "evaluation_samples_json", columnDefinition = "TEXT", nullable = false, updatable = false)
     private String evaluationSamplesJson;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", length = 32, nullable = false)
+    private ModelVersionStatus status;
+
+    @Column(name = "approved_at")
+    private Instant approvedAt;
+
+    @Column(name = "approved_by", length = 255)
+    private String approvedBy;
+
+    @Column(name = "deprecated_at")
+    private Instant deprecatedAt;
+
+    @Column(name = "model_family", length = 255)
+    private String modelFamily;
+
+    @Column(name = "version_no", nullable = false)
+    private int versionNo;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -134,7 +155,35 @@ public class ModelVersion {
         this.artifactId = artifactId;
         this.confusionMatrixJson = confusionMatrixJson;
         this.evaluationSamplesJson = evaluationSamplesJson;
+        this.status = ModelVersionStatus.DRAFT;
+        this.modelFamily = name;
+        this.versionNo = 1;
         this.createdAt = createdAt;
+    }
+
+    public void approve(String approvedBy, Instant approvedAt) {
+        if (status != ModelVersionStatus.DRAFT
+                && status != ModelVersionStatus.CANDIDATE
+                && status != ModelVersionStatus.VALIDATED) {
+            throw new IllegalStateException("模型版本当前状态不允许审批: " + status);
+        }
+        this.status = ModelVersionStatus.APPROVED;
+        this.approvedBy = approvedBy;
+        this.approvedAt = approvedAt;
+        this.deprecatedAt = null;
+    }
+
+    public void deprecate(Instant deprecatedAt) {
+        if (status != ModelVersionStatus.APPROVED) {
+            throw new IllegalStateException("只有已审批模型版本可以弃用，当前状态: " + status);
+        }
+        this.status = ModelVersionStatus.DEPRECATED;
+        this.deprecatedAt = deprecatedAt;
+    }
+
+    public void assignVersion(String modelFamily, int versionNo) {
+        this.modelFamily = modelFamily;
+        this.versionNo = versionNo;
     }
 
     public UUID getId() { return id; }
@@ -158,5 +207,11 @@ public class ModelVersion {
     public String getArtifactId() { return artifactId; }
     public String getConfusionMatrixJson() { return confusionMatrixJson; }
     public String getEvaluationSamplesJson() { return evaluationSamplesJson; }
+    public ModelVersionStatus getStatus() { return status; }
+    public Instant getApprovedAt() { return approvedAt; }
+    public String getApprovedBy() { return approvedBy; }
+    public Instant getDeprecatedAt() { return deprecatedAt; }
+    public String getModelFamily() { return modelFamily; }
+    public int getVersionNo() { return versionNo; }
     public Instant getCreatedAt() { return createdAt; }
 }

@@ -1,6 +1,10 @@
 spring:
   application:
     name: model-management-service
+  task:
+    scheduling:
+      pool:
+        size: ${MODEL_TRAINING_SCHEDULER_POOL_SIZE:4}
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:olist_models;MODE=MySQL;DB_CLOSE_DELAY=-1}
     username: ${SPRING_DATASOURCE_USERNAME:sa}
@@ -46,4 +50,12 @@ olist:
   model-training:
     dataset-service-url: ${DATASET_SERVICE_URL:http://localhost:8082}
     model-serving-url: ${MODEL_SERVING_URL:http://localhost:8090}
-    internal-token: ${MODEL_TRAINING_INTERNAL_TOKEN:}
+    internal-token: ${MODEL_TRAINING_INTERNAL_TOKEN:local-training-token-2026}
+    worker-bearer-token: ${MODEL_TRAINING_WORKER_BEARER_TOKEN:}
+    worker:
+      enabled: ${MODEL_TRAINING_WORKER_ENABLED:true}
+      poll-interval-ms: ${MODEL_TRAINING_WORKER_POLL_INTERVAL_MS:5000}
+      batch-size: ${MODEL_TRAINING_WORKER_BATCH_SIZE:5}
+      lease-seconds: ${MODEL_TRAINING_WORKER_LEASE_SECONDS:1800}
+      heartbeat-interval-ms: ${MODEL_TRAINING_WORKER_HEARTBEAT_INTERVAL_MS:60000}
+      max-attempts: ${MODEL_TRAINING_WORKER_MAX_ATTEMPTS:3}

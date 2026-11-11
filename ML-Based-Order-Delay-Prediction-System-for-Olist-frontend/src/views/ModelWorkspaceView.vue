@@ -3,8 +3,27 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '@/auth/keycloak'
 import { getDatasetCatalog, getDatasetVersions, listDatasets } from '@/api/datasets'
-import { createModelWorkflow, duplicateModelWorkflow, getModelWorkflow, listModelWorkflows, trainModel, updateModelWorkflow } from '@/api/models'
+import {
+  approveModelVersion,
+  cancelTrainingRun,
+  createModelWorkflow,
+  deprecateModelVersion,
+  downloadModelArtifact,
+  duplicateModelWorkflow,
+  getModelManifest,
+  getModelVersion,
+  getModelWorkflow,
+  getTrainingRun,
+  listModelWorkflows,
+  trainModel,
+  updateModelWorkflow,
+} from '@/api/models'
 import { Aim, CircleCheck, CopyDocument, Cpu, DataAnalysis, DocumentChecked, FullScreen, Plus, Refresh, Remove, Warning } from '@element-plus/icons-vue'
+import TrainingCurveChart from '@/components/TrainingCurveChart.vue'
+import TrainingScatterChart from '@/components/TrainingScatterChart.vue'
+import TrainingDistributionChart from '@/components/TrainingDistributionChart.vue'
+import ModelExplainPanel from '@/components/ModelExplainPanel.vue'
+import ModelReportPanel from '@/components/ModelReportPanel.vue'
 
 const auth = useAuth()
 const route = useRoute()
@@ -29,7 +48,12 @@ const targetColumn = ref('')
 const featureColumns = ref([])
 const modelName = ref('')
 const testSize = ref(0.2)
+const validationSize = ref(0)
+const cvFolds = ref(0)
 const randomState = ref(42)
+const splitStrategy = ref('random')
+const timeColumn = ref('')
+const groupColumn = ref('')
 const candidateModels = ref([{ id: 1, algorithm: 'random_forest' }])
 const loadingDatasets = ref(false)
 const loadingVersions = ref(false)
@@ -42,12 +66,20 @@ const trainingError = ref('')
 const trainingResults = ref([])
 const trainingFailures = ref([])
 const trainingBranchStates = ref({})
+const trainingRuns = ref({})
+const trainingProgress = ref(0)
+const pollingStopped = ref(false)
+const manifestByModel = ref({})
+const manifestError = ref('')
+const explainRun = ref(null)
+const reportRun = ref(null)
 const workflows = ref([])
 const activeWorkflowId = ref('')
 const activeWorkflowName = ref('')
 const workflowRevision = ref(0)
 const workflowDirty = ref(false)
 const workflowBusy = ref(false)
+const workflowSaving = ref(false)
 const workflowError = ref('')
 const workflowNotice = ref('')
 const workflowShell = ref(null)
@@ -60,6 +92,8 @@ let workflowSaveTimer
 let versionsRequest = 0
 let catalogRequest = 0
 let datasetsRequest = 0
+let trainingEpoch = 0
+let completedBranches = 0
 
 function workflowDocument() {
   return {
@@ -78,7 +112,17 @@ function workflowDocument() {
       ...candidateModels.value.map((candidate) => ({
         id: `train-${candidate.id}`,
         type: 'TRAIN_MODEL',
-        data: { algorithm: candidate.algorithm, modelName: modelName.value, testSize: testSize.value, randomState: randomState.value },
+        data: {
+          algorithm: candidate.algorithm,
+          modelName: modelName.value,
+          testSize: testSize.value,
+          validationSize: validationSize.value,
+          cvFolds: cvFolds.value,
+          randomState: randomState.value,
+          splitStrategy: splitStrategy.value,
+          timeColumn: timeColumn.value || null,
+          groupColumn: groupColumn.value || null,
+        },
       })),
     ],
     edges: [
@@ -94,7 +138,12 @@ function workflowDocument() {
       featureColumns: [...featureColumns.value],
       modelName: modelName.value,
       testSize: testSize.value,
+      validationSize: validationSize.value,
+      cvFolds: cvFolds.value,
       randomState: randomState.value,
+      splitStrategy: splitStrategy.value,
+      timeColumn: timeColumn.value || null,
+      groupColumn: groupColumn.value || null,
       candidates: candidateModels.value.map(({ id, algorithm }) => ({ id, algorithm })),
     },
   }
@@ -119,7 +168,13 @@ async function applyWorkflowDocument(document) {
   featureColumns.value = Array.isArray(config.featureColumns) ? [...config.featureColumns] : []
   modelName.value = config.modelName || ''
   testSize.value = Number(config.testSize) || 0.2
+  validationSize.value = Number(config.validationSize) || 0
+  cvFolds.value = [0, 3, 5, 10].includes(Number(config.cvFolds)) ? Number(config.cvFolds) : 0
   randomState.value = Number.isInteger(config.randomState) ? config.randomState : 42
+  splitStrategy.value = ['random', 'temporal', 'group'].includes(config.splitStrategy)
+    ? config.splitStrategy : 'random'
+  timeColumn.value = config.timeColumn || ''
+  groupColumn.value = config.groupColumn || ''
   const candidates = Array.isArray(config.candidates) ? config.candidates : []
   candidateModels.value = candidates.length
     ? candidates.slice(0, 4).map((candidate, index) => ({
@@ -136,11 +191,15 @@ async function applyWorkflowDocument(document) {
   applyingWorkflow.value = false
 }
 
-async function saveWorkflow() {
+async function saveWorkflow(waited = 0) {
   clearTimeout(workflowSaveTimer)
   if (!activeWorkflowId.value || !workflowDirty.value) return true
-  if (workflowBusy.value) return false
-  workflowBusy.value = true
+  if (workflowSaving.value) {
+    if (waited >= 5000) return false
+    await delay(200)
+    return saveWorkflow(waited + 200)
+  }
+  workflowSaving.value = true
   workflowError.value = ''
   let saveSucceeded = false
   try {
@@ -163,9 +222,22 @@ async function saveWorkflow() {
     workflowError.value = error.message || '工作流保存失败'
     return false
   } finally {
-    workflowBusy.value = false
+    workflowSaving.value = false
     if (saveSucceeded && workflowDirty.value) scheduleWorkflowSave()
   }
+}
+
+async function manualSave() {
+  if (!activeWorkflowId.value) {
+    await createWorkflow()
+    return
+  }
+  if (!workflowDirty.value) {
+    workflowError.value = ''
+    workflowNotice.value = '当前配置已自动保存，无需重复保存'
+    return
+  }
+  await saveWorkflow()
 }
 
 async function loadWorkflows() {
@@ -259,12 +331,21 @@ function syncFullscreen() {
 
 const algorithmCatalog = {
   classification: [
-    { value: 'random_forest', label: '随机森林', note: '适合非线性关系与混合特征' },
-    { value: 'logistic_regression', label: '逻辑回归', note: '轻量、可解释的分类基线' },
+    { value: 'random_forest', label: '随机森林', note: '非线性、稳健的默认选择' },
+    { value: 'logistic_regression', label: '逻辑回归', note: '轻量、可解释的线性基线' },
+    { value: 'decision_tree', label: '决策树', note: '规则清晰，容易过拟合' },
+    { value: 'xgboost', label: 'XGBoost', note: '梯度提升，精度高但训练较慢' },
+    { value: 'lightgbm', label: 'LightGBM', note: '大数据集上速度快、精度高' },
+    { value: 'svm', label: '支持向量机', note: '小样本非线性边界，超过 2 万行自动抽样' },
+    { value: 'knn', label: 'K 近邻', note: '依赖距离度量，超过 3 万行自动抽样' },
   ],
   regression: [
-    { value: 'random_forest', label: '随机森林', note: '适合非线性关系与混合特征' },
-    { value: 'ridge_regression', label: '岭回归', note: '稳定的线性回归基线' },
+    { value: 'random_forest', label: '随机森林回归', note: '非线性、稳健的默认选择' },
+    { value: 'ridge_regression', label: '岭回归', note: '带正则化的线性基线' },
+    { value: 'linear_regression', label: '线性回归', note: '最强可解释性的基线' },
+    { value: 'decision_tree', label: '决策树回归', note: '分段常数拟合，容易过拟合' },
+    { value: 'xgboost_regression', label: 'XGBoost 回归', note: '梯度提升，精度高但训练较慢' },
+    { value: 'lightgbm_regression', label: 'LightGBM 回归', note: '大数据集上速度快、精度高' },
   ],
 }
 
@@ -301,9 +382,13 @@ const canTrain = computed(() => Boolean(
   && targetColumn.value
   && featureColumns.value.length
   && candidateModels.value.length
+  && (!['temporal', 'group'].includes(splitStrategy.value)
+    || (splitStrategy.value === 'temporal' ? timeColumn.value : groupColumn.value))
+  && testSize.value + validationSize.value <= 0.6
   && selectedTable.value.rowCount >= 12
   && selectedTable.value.rowCount <= 100000,
 ))
+const trainingBlocker = computed(() => validateTraining())
 const selectedCandidateCount = computed(() => candidateModels.value.length)
 
 function datasetLabel(dataset) {
@@ -331,6 +416,129 @@ function metricRows(run) {
     .map(([key, label]) => ({ key, label, value: run.metrics[key] }))
 }
 
+function detailMetricRows(manifest) {
+  if (!manifest) return []
+  const detail = manifest.metricDetails || {}
+  const candidates = manifest.task === 'classification'
+    ? [
+      ['rocAuc', 'ROC-AUC'], ['prAuc', 'PR-AUC'], ['f1Macro', '宏平均 F1'],
+      ['precisionMacro', '宏平均精确率'], ['recallMacro', '宏平均召回率'],
+      ['logLoss', 'Log Loss'], ['rocAucOvrMacro', '多分类 ROC-AUC'],
+    ]
+    : [
+      ['mapePercent', 'MAPE %'], ['rmsle', 'RMSLE'], ['medianAbsoluteError', '中位绝对误差'],
+      ['explainedVariance', '解释方差'], ['residualStd', '残差标准差'],
+    ]
+  const rows = candidates
+    .filter(([key]) => detail[key] !== undefined && detail[key] !== null)
+    .map(([key, label]) => ({ key, label, value: detail[key] }))
+  if (manifest.decisionThreshold !== undefined && manifest.decisionThreshold !== null) {
+    rows.unshift({ key: 'decisionThreshold', label: '决策阈值', value: manifest.decisionThreshold, digits: 2 })
+  }
+  if (manifest.calibrationRows !== undefined && manifest.calibrationRows !== null) {
+    rows.push({ key: 'calibrationRows', label: '校准样本数', value: manifest.calibrationRows, digits: 0 })
+  }
+  return rows
+}
+
+function crossValidation(manifest) {
+  return manifest?.metricDetails?.crossValidation || null
+}
+
+function cvMetricRows(manifest) {
+  const cv = crossValidation(manifest)
+  if (!cv || !cv.mean) return []
+  const means = cv.mean
+  const stds = cv.std || {}
+  const preferred = manifest.task === 'classification' ? ['rocAuc', 'f1Macro'] : ['rmse', 'r2']
+  const labels = { rocAuc: 'ROC-AUC', f1Macro: '宏平均 F1', rmse: 'RMSE', r2: 'R²' }
+  const keys = preferred.filter((key) => means[key] != null)
+  return keys.map((key) => ({
+    key,
+    label: `CV ${labels[key] || key}`,
+    display: `${formatNumber(means[key], 4)} ± ${formatNumber(stds[key] ?? 0, 4)}`,
+  }))
+}
+
+function rocSeries(manifest) {
+  const curve = manifest?.metricDetails?.rocCurve
+  if (!curve?.fpr?.length) return []
+  return [{
+    name: 'ROC',
+    color: '#31825a',
+    data: curve.fpr.map((value, index) => [value, curve.tpr[index] ?? 0]),
+  }]
+}
+
+function prSeries(manifest) {
+  const curve = manifest?.metricDetails?.prCurve
+  if (!curve?.recall?.length) return []
+  return [{
+    name: 'PR',
+    color: '#b06a3c',
+    data: curve.recall.map((value, index) => [value, curve.precision[index] ?? 0]),
+  }]
+}
+
+function predictionPoints(manifest) {
+  const data = manifest?.metricDetails?.predictedVsActual
+  if (!data?.actual?.length) return []
+  return data.actual.map((value, index) => [value, data.predicted[index] ?? 0])
+}
+
+function identityLine(manifest) {
+  const points = predictionPoints(manifest)
+  if (!points.length) return null
+  const values = points.flat()
+  const low = Math.min(...values)
+  const high = Math.max(...values)
+  return [[low, low], [high, high]]
+}
+
+function residualPoints(manifest) {
+  const data = manifest?.metricDetails?.residualPlot
+  if (!data?.predicted?.length) return []
+  return data.predicted.map((value, index) => [value, data.residual[index] ?? 0])
+}
+
+function residualLabels(manifest) {
+  return (manifest?.metricDetails?.residualDistribution?.centers || []).map((value) => Number(value).toFixed(2))
+}
+
+function residualCounts(manifest) {
+  return manifest?.metricDetails?.residualDistribution?.counts || []
+}
+
+function comparisonRows() {
+  return trainingResults.value.map((item) => ({
+    name: item.name,
+    algorithm: item.algorithm,
+    metrics: item.metrics || {},
+    metricDetails: manifestByModel.value[item.id]?.metricDetails || {},
+    decisionThreshold: manifestByModel.value[item.id]?.decisionThreshold ?? null,
+  }))
+}
+
+async function openExplainPanel(run) {
+  if (!manifestByModel.value[run.id]) await loadExplanation(run)
+  if (manifestByModel.value[run.id]) explainRun.value = run
+}
+
+async function openReportPanel(run) {
+  if (!manifestByModel.value[run.id]) await loadExplanation(run)
+  if (manifestByModel.value[run.id]) reportRun.value = run
+}
+
+function splitSummaryRows(manifest) {
+  const split = manifest?.splitSummary
+  if (!split) return []
+  return [
+    { label: '训练', value: split.trainRows },
+    { label: '验证', value: split.validationRows },
+    { label: '测试', value: split.testRows },
+  ]
+}
+
 function resetCatalog() {
   catalog.value = null
   selectedTableId.value = ''
@@ -339,6 +547,8 @@ function resetCatalog() {
   columnQuery.value = ''
   trainingResults.value = []
   trainingFailures.value = []
+  trainingRuns.value = {}
+  trainingProgress.value = 0
   trainingError.value = ''
 }
 
@@ -484,14 +694,20 @@ function validateTraining() {
   if (!selectedDataset.value || !selectedVersion.value || !selectedTable.value) return '请先连接一个 READY 数据集版本和数据表。'
   if (!targetColumn.value) return '在字段节点中指定一个预测目标。'
   if (!featureColumns.value.length) return '至少保留一个输入特征。'
+  if (testSize.value + validationSize.value > 0.6) return '测试集与验证集比例之和不能超过 60%。'
+  if (splitStrategy.value === 'temporal' && !timeColumn.value) return '时间切分需要选择一个时间字段。'
+  if (splitStrategy.value === 'group' && !groupColumn.value) return '分组切分需要选择一个分组字段。'
+  if (splitStrategy.value === 'temporal' && featureColumns.value.includes(timeColumn.value)) return '时间字段不能同时作为输入特征。'
+  if (splitStrategy.value === 'group' && featureColumns.value.includes(groupColumn.value)) return '分组字段不能同时作为输入特征，避免分组泄漏。'
   if (selectedTable.value.rowCount < 12) return '当前数据表少于 12 行，暂不满足训练条件。'
-  if (selectedTable.value.rowCount > 100000) return '当前数据表超过 100,000 行，请先选择较小的数据版本。'
+  if (selectedTable.value.rowCount > 100000) return `当前数据表 ${selectedTable.value.rowCount.toLocaleString('zh-CN')} 行，超过单次训练上限 100,000 行。请先在数据处理模块筛选/聚合，或生成一个不超过 100,000 行的数据版本。`
   return ''
 }
 
 async function submitTraining() {
   trainingError.value = validateTraining()
   if (trainingError.value) return
+  if (training.value) return
   if (!activeWorkflowId.value || !(await saveWorkflow())) {
     trainingError.value = '工作流尚未保存，请检查名称或保存错误后再运行。'
     return
@@ -507,35 +723,208 @@ async function submitTraining() {
     targetColumn: targetColumn.value,
     featureColumns: [...featureColumns.value],
     testSize: testSize.value,
+    validationSize: validationSize.value,
+    cvFolds: cvFolds.value,
     randomState: randomState.value,
+    splitStrategy: splitStrategy.value,
+    timeColumn: splitStrategy.value === 'temporal' ? timeColumn.value : null,
+    groupColumn: splitStrategy.value === 'group' ? groupColumn.value : null,
+    explain: true,
   }
 
+  const epoch = ++trainingEpoch
+  pollingStopped.value = false
+  completedBranches = 0
   training.value = true
   trainingIndex.value = 0
+  trainingProgress.value = 0
   trainingError.value = ''
   trainingResults.value = []
   trainingFailures.value = []
-  trainingBranchStates.value = Object.fromEntries(candidates.map((candidate) => [candidate.id, 'running']))
+  trainingRuns.value = {}
+  trainingBranchStates.value = Object.fromEntries(candidates.map((candidate) => [candidate.id, 'queued']))
   await Promise.all(candidates.map(async (candidate) => {
     const label = availableAlgorithms.value.find((option) => option.value === candidate.algorithm)?.label || candidate.algorithm
     const name = baseName ? `${baseName} · ${label}`.slice(0, 255) : null
     try {
-      const result = await trainModel({ ...commonPayload, name, algorithm: candidate.algorithm })
-      trainingResults.value.push({ ...result, candidateId: candidate.id, algorithmLabel: label })
-      trainingBranchStates.value[candidate.id] = 'success'
+      const submitted = await trainModel({ ...commonPayload, name, algorithm: candidate.algorithm })
+      if (epoch !== trainingEpoch) {
+        cancelTrainingRun(submitted.id).catch(() => {})
+        return
+      }
+      trainingRuns.value = { ...trainingRuns.value, [candidate.id]: submitted }
+      trainingBranchStates.value[candidate.id] = 'running'
+      updateTrainingProgress(candidates.length)
+      const finished = await pollTrainingRun(candidate.id, submitted.id, epoch, candidates.length)
+      if (!finished) return
+      if (finished.status === 'SUCCEEDED') {
+        const model = finished.modelVersionId ? await getModelVersion(finished.modelVersionId) : null
+        if (epoch !== trainingEpoch) return
+        if (model) {
+          trainingResults.value.push({ ...model, candidateId: candidate.id, algorithmLabel: label, runId: finished.id })
+        } else {
+          trainingResults.value.push({
+            ...(finished.result || {}),
+            id: finished.modelVersionId || finished.id,
+            name,
+            task: commonPayload.task,
+            algorithm: candidate.algorithm,
+            candidateId: candidate.id,
+            algorithmLabel: label,
+            runId: finished.id,
+          })
+        }
+        trainingBranchStates.value[candidate.id] = 'success'
+      } else if (finished.status === 'CANCELLED') {
+        trainingBranchStates.value[candidate.id] = 'cancelled'
+      } else {
+        trainingFailures.value.push({
+          candidateId: candidate.id,
+          algorithmLabel: label,
+          message: finished.errorMessage || finished.stage || '训练失败',
+          runId: finished.id,
+        })
+        trainingBranchStates.value[candidate.id] = 'failed'
+      }
     } catch (error) {
       trainingFailures.value.push({ candidateId: candidate.id, algorithmLabel: label, message: error.message || '训练失败' })
       trainingBranchStates.value[candidate.id] = 'failed'
     } finally {
-      trainingIndex.value += 1
+      completedBranches += 1
+      trainingIndex.value = completedBranches
+      updateTrainingProgress(candidates.length)
     }
   }))
   const branchOrder = new Map(candidates.map((candidate, index) => [candidate.id, index]))
   trainingResults.value.sort((left, right) => branchOrder.get(left.candidateId) - branchOrder.get(right.candidateId))
   trainingFailures.value.sort((left, right) => branchOrder.get(left.candidateId) - branchOrder.get(right.candidateId))
-  training.value = false
+  if (epoch === trainingEpoch) {
+    training.value = false
+    trainingProgress.value = 100
+  }
   if (trainingFailures.value.length) {
     trainingError.value = `${trainingFailures.value.length} 个模型分支未完成；已成功的模型仍已登记，可在下方查看。`
+  } else if (Object.values(trainingBranchStates.value).some((status) => status === 'cancelled')) {
+    trainingError.value = '训练已取消；已提交成功的模型仍保留在模型版本中。'
+  }
+}
+
+const stageLabels = {
+  QUEUED: '排队中',
+  VALIDATING: '校验数据',
+  TRAINING: '训练中',
+  REGISTERING: '登记模型',
+  COMPLETED: '已完成',
+  FAILED: '已失败',
+  CANCELLED: '已取消',
+}
+
+function isTerminalStatus(status) {
+  return ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(status)
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function updateTrainingProgress(total) {
+  if (!total) return
+  const values = Object.values(trainingRuns.value)
+  if (!values.length) return
+  const completed = values.reduce((sum, run) => (
+    sum + (isTerminalStatus(run.status) ? 100 : Number(run.progress || 0))
+  ), 0)
+  trainingProgress.value = Math.min(99, Math.round(completed / total))
+}
+
+async function pollTrainingRun(candidateId, runId, epoch, total) {
+  while (!pollingStopped.value && epoch === trainingEpoch) {
+    const run = await getTrainingRun(runId)
+    if (pollingStopped.value || epoch !== trainingEpoch) return null
+    trainingRuns.value = { ...trainingRuns.value, [candidateId]: run }
+    updateTrainingProgress(total)
+    if (isTerminalStatus(run.status)) return run
+    await delay(1500)
+  }
+  return null
+}
+
+function runStageLabel(run) {
+  if (!run) return '等待提交'
+  if (run.status === 'SUCCEEDED') return '已完成'
+  return stageLabels[run.stage] || run.stage || stageLabels[run.status] || run.status
+}
+
+async function cancelTraining() {
+  pollingStopped.value = true
+  trainingEpoch += 1
+  const activeRuns = Object.entries(trainingRuns.value)
+    .filter(([, run]) => run?.id && !isTerminalStatus(run.status))
+  await Promise.allSettled(activeRuns.map(([, run]) => cancelTrainingRun(run.id)))
+  trainingBranchStates.value = Object.fromEntries(Object.entries(trainingBranchStates.value).map(
+    ([candidateId, status]) => [candidateId, ['queued', 'running'].includes(status) ? 'cancelled' : status],
+  ))
+  training.value = false
+  trainingError.value = '训练已取消；已提交成功的模型仍保留在模型版本中。'
+}
+
+async function reloadTrainingRun(failure) {
+  if (!failure.runId) return
+  trainingError.value = ''
+  try {
+    const run = await getTrainingRun(failure.runId)
+    trainingFailures.value = trainingFailures.value.map((item) => (
+      item.candidateId === failure.candidateId
+        ? { ...item, message: run.errorMessage || item.message, runId: run.id }
+        : item
+    ))
+  } catch (error) {
+    trainingError.value = error.message || '无法刷新训练运行'
+  }
+}
+
+async function loadExplanation(run) {
+  manifestError.value = ''
+  try {
+    const manifest = await getModelManifest(run.id)
+    manifestByModel.value = { ...manifestByModel.value, [run.id]: manifest }
+  } catch (error) {
+    manifestError.value = error.message || '无法读取模型解释'
+  }
+}
+
+async function approveModel(run) {
+  manifestError.value = ''
+  try {
+    const updated = await approveModelVersion(run.id)
+    Object.assign(run, updated)
+  } catch (error) {
+    manifestError.value = error.message || '模型审批失败'
+  }
+}
+
+async function deprecateModel(run) {
+  manifestError.value = ''
+  try {
+    const updated = await deprecateModelVersion(run.id)
+    Object.assign(run, updated)
+  } catch (error) {
+    manifestError.value = error.message || '模型弃用失败'
+  }
+}
+
+async function downloadArtifact(run) {
+  manifestError.value = ''
+  try {
+    const blob = await downloadModelArtifact(run.id)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `model-${run.id}.zip`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    manifestError.value = error.message || '模型包下载失败'
   }
 }
 
@@ -551,6 +940,8 @@ watch(selectedTableId, () => {
   featureColumns.value = columns.value.map((column) => column.name)
   trainingResults.value = []
   trainingFailures.value = []
+  trainingRuns.value = {}
+  trainingProgress.value = 0
 })
 watch(() => auth.state.status, (status) => {
   if (status === 'authenticated') {
@@ -573,6 +964,8 @@ function handleWorkbenchCommand(event) {
 }
 
 onBeforeUnmount(() => {
+  trainingEpoch += 1
+  pollingStopped.value = true
   datasetsRequest += 1
   versionsRequest += 1
   catalogRequest += 1
@@ -625,13 +1018,13 @@ onMounted(() => {
       <div class="workflow-bar">
         <div class="workflow-topline">
           <div class="workflow-title-group">
-            <div class="workflow-title"><strong>实验配置</strong><span class="workflow-save-state">{{ workflowBusy ? '保存中' : workflowDirty ? '未保存' : '已保存' }}</span></div>
+            <div class="workflow-title"><strong>实验配置</strong><span class="workflow-save-state">{{ workflowSaving ? '保存中' : workflowDirty ? '未保存' : '已自动保存' }}</span></div>
             <div class="workflow-count">{{ columns.length }} 个字段 <span>·</span> {{ selectedCandidateCount }} 个模型分支</div>
           </div>
           <div class="workflow-controls">
             <el-input v-model="activeWorkflowName" class="workflow-name-input" size="small" maxlength="255" aria-label="工作流名称" placeholder="工作流名称" :disabled="workflowBusy" />
             <el-button circle size="small" aria-label="复制当前画布" title="复制当前画布" :icon="CopyDocument" :disabled="workflowBusy || !activeWorkflowId" @click="duplicateWorkflow" />
-            <el-button circle size="small" aria-label="保存工作流" title="保存工作流" :icon="DocumentChecked" :loading="workflowBusy" :disabled="!workflowDirty" @click="saveWorkflow" />
+            <el-button circle size="small" aria-label="保存工作流" :title="workflowDirty ? '立即保存（修改也会自动保存）' : '当前配置已自动保存'" :icon="DocumentChecked" :loading="workflowSaving" :disabled="workflowBusy" @click="manualSave" />
             <el-button circle size="small" :aria-label="focusMode ? '退出画布专注模式' : '专注画布'" :title="focusMode ? '退出画布专注模式' : '专注画布'" :icon="focusMode ? Aim : FullScreen" @click="toggleFocusMode" />
           </div>
         </div>
@@ -800,9 +1193,11 @@ onMounted(() => {
             <div class="model-branch-list">
               <article v-for="(candidate, index) in candidateModels" :key="candidate.id" class="model-branch">
                 <div class="branch-title"><span class="branch-index">{{ String.fromCharCode(65 + index) }}</span><strong>模型 {{ index + 1 }}</strong>
-                  <el-tag v-if="trainingBranchStates[candidate.id] === 'running'" size="small" effect="plain">运行中</el-tag>
+                  <el-tag v-if="trainingBranchStates[candidate.id] === 'queued'" size="small" effect="plain">排队</el-tag>
+                  <el-tag v-else-if="trainingBranchStates[candidate.id] === 'running'" size="small" effect="plain">运行中 · {{ runStageLabel(trainingRuns[candidate.id]) }}</el-tag>
                   <el-tag v-else-if="trainingBranchStates[candidate.id] === 'success'" size="small" type="success" effect="plain">完成</el-tag>
                   <el-tag v-else-if="trainingBranchStates[candidate.id] === 'failed'" size="small" type="danger" effect="plain">失败</el-tag>
+                  <el-tag v-else-if="trainingBranchStates[candidate.id] === 'cancelled'" size="small" type="info" effect="plain">已取消</el-tag>
                   <el-button v-if="candidateModels.length > 1" text circle size="small" :icon="Remove" :aria-label="`移除模型分支 ${index + 1}`" :disabled="training" @click="removeCandidate(candidate.id)" />
                 </div>
                 <div class="algorithm-choices">
@@ -831,6 +1226,39 @@ onMounted(() => {
               <label class="option-field">
                 <span>留出集 <small>{{ Math.round(testSize * 100) }}%</small></span>
                 <el-slider v-model="testSize" :min="0.1" :max="0.4" :step="0.05" show-stops :disabled="training" />
+              </label>
+              <label class="option-field">
+                <span>验证集 <small>{{ Math.round(validationSize * 100) }}%</small></span>
+                <el-slider v-model="validationSize" :min="0" :max="0.3" :step="0.05" show-stops :disabled="training" />
+              </label>
+              <label class="option-field">
+                <span>切分策略</span>
+                <el-select v-model="splitStrategy" size="small" :disabled="training">
+                  <el-option label="随机分层" value="random" />
+                  <el-option label="按时间顺序" value="temporal" />
+                  <el-option label="按分组隔离" value="group" />
+                </el-select>
+              </label>
+              <label class="option-field">
+                <span>交叉验证 <small>{{ cvFolds ? `${cvFolds} 折` : '关闭' }}</small></span>
+                <el-select v-model="cvFolds" size="small" :disabled="training">
+                  <el-option label="不启用" :value="0" />
+                  <el-option label="3 折" :value="3" />
+                  <el-option label="5 折" :value="5" />
+                  <el-option label="10 折" :value="10" />
+                </el-select>
+              </label>
+              <label v-if="splitStrategy === 'temporal'" class="option-field">
+                <span>时间字段</span>
+                <el-select v-model="timeColumn" size="small" filterable clearable :disabled="training" placeholder="选择时间字段">
+                  <el-option v-for="column in columns" :key="column.columnId" :label="column.name" :value="column.name" />
+                </el-select>
+              </label>
+              <label v-if="splitStrategy === 'group'" class="option-field">
+                <span>分组字段</span>
+                <el-select v-model="groupColumn" size="small" filterable clearable :disabled="training" placeholder="选择分组字段">
+                  <el-option v-for="column in columns" :key="column.columnId" :label="column.name" :value="column.name" />
+                </el-select>
               </label>
               <label class="option-field seed-field">
                 <span>随机种子</span>
@@ -862,7 +1290,12 @@ onMounted(() => {
           <span v-else>等待连接数据源</span>
         </div>
         <div class="run-actions">
-          <span v-if="training" class="running-status">运行中 · {{ trainingIndex }} / {{ candidateModels.length }} 个分支已完成</span>
+          <span v-if="!canTrain && !training" class="run-blocker">{{ trainingBlocker }}</span>
+          <template v-if="training">
+            <el-progress class="run-progress" :percentage="trainingProgress" :stroke-width="6" :show-text="false" aria-label="训练进度" />
+            <span class="running-status">运行中 · {{ trainingIndex }} / {{ candidateModels.length }} 个分支</span>
+            <el-button plain size="small" @click="cancelTraining">取消</el-button>
+          </template>
           <el-button type="primary" :icon="Cpu" :loading="training" :disabled="!canTrain || training" @click="submitTraining">
             {{ training ? '运行中' : `运行 ${candidateModels.length} 个分支` }}
           </el-button>
@@ -875,14 +1308,95 @@ onMounted(() => {
         <div><h2>本次运行</h2><span>成功 {{ trainingResults.length }}<template v-if="trainingFailures.length"> · 失败 {{ trainingFailures.length }}</template></span></div>
         <el-tag :type="trainingFailures.length ? 'warning' : 'success'" effect="plain">{{ trainingFailures.length ? '部分完成' : '已完成' }}</el-tag>
       </div>
+      <div v-if="manifestError" class="model-message is-error" role="alert">
+        <el-icon><Warning /></el-icon><span>{{ manifestError }}</span>
+      </div>
       <div class="result-grid">
         <article v-for="run in trainingResults" :key="run.id" class="branch-result">
-          <header><span><el-icon><CircleCheck /></el-icon>{{ run.algorithmLabel }}</span><small>{{ run.name }}</small></header>
-          <div class="result-meta"><span>{{ run.trainRows.toLocaleString('zh-CN') }} 训练</span><span>{{ run.testRows.toLocaleString('zh-CN') }} 测试</span><span>{{ formatTime(run.createdAt) }}</span></div>
+          <header>
+            <span><el-icon><CircleCheck /></el-icon>{{ run.algorithmLabel }}</span>
+            <el-tag size="small" effect="plain" :type="run.status === 'APPROVED' ? 'success' : run.status === 'DEPRECATED' ? 'info' : 'warning'">{{ run.status || 'DRAFT' }}</el-tag>
+            <small>{{ run.name }}</small>
+          </header>
+          <div class="result-meta"><span>{{ (run.trainRows || 0).toLocaleString('zh-CN') }} 训练</span><span>{{ (run.testRows || 0).toLocaleString('zh-CN') }} 测试</span><span>{{ formatTime(run.createdAt) }}</span></div>
           <div class="result-metrics">
             <div v-for="metric in metricRows(run)" :key="metric.key"><span>{{ metric.label }}</span><strong>{{ formatNumber(metric.value, 4) }}</strong></div>
             <div><span>剔除无效目标</span><strong>{{ formatNumber(run.droppedTargetRows, 0) }}</strong></div>
           </div>
+          <div v-if="manifestByModel[run.id]" class="model-details">
+            <div class="detail-block">
+              <div class="sample-heading"><h3>切分与验证</h3><span>{{ manifestByModel[run.id].splitSummary?.strategy || 'random' }}</span></div>
+              <div class="detail-grid">
+                <div v-for="item in splitSummaryRows(manifestByModel[run.id])" :key="item.label">
+                  <span>{{ item.label }}</span><strong>{{ formatNumber(item.value, 0) }}</strong>
+                </div>
+                <div v-for="metric in detailMetricRows(manifestByModel[run.id])" :key="metric.key">
+                  <span>{{ metric.label }}</span><strong>{{ formatNumber(metric.value, metric.digits ?? 4) }}</strong>
+                </div>
+                <template v-if="crossValidation(manifestByModel[run.id])">
+                  <div><span>交叉验证</span><strong>{{ crossValidation(manifestByModel[run.id]).folds }} 折</strong></div>
+                  <div v-for="item in cvMetricRows(manifestByModel[run.id])" :key="item.key"><span>{{ item.label }}</span><strong>{{ item.display }}</strong></div>
+                </template>
+              </div>
+            </div>
+            <div v-if="predictionPoints(manifestByModel[run.id]).length" class="detail-block">
+              <div class="curve-grid">
+                <TrainingScatterChart
+                  title="预测值 vs 真实值"
+                  :subtitle="`测试集 ${predictionPoints(manifestByModel[run.id]).length} 点`"
+                  x-label="真实值"
+                  y-label="预测值"
+                  :points="predictionPoints(manifestByModel[run.id])"
+                  :line="identityLine(manifestByModel[run.id])"
+                />
+                <TrainingScatterChart
+                  v-if="residualPoints(manifestByModel[run.id]).length"
+                  title="残差分布"
+                  subtitle="预测值 vs 残差"
+                  x-label="预测值"
+                  y-label="残差"
+                  :points="residualPoints(manifestByModel[run.id])"
+                />
+                <TrainingDistributionChart
+                  v-if="residualCounts(manifestByModel[run.id]).length"
+                  title="残差直方图"
+                  :subtitle="`${residualCounts(manifestByModel[run.id]).length} 个区间`"
+                  :labels="residualLabels(manifestByModel[run.id])"
+                  :values="residualCounts(manifestByModel[run.id])"
+                />
+              </div>
+            </div>
+            <div v-if="rocSeries(manifestByModel[run.id]).length" class="detail-block">
+              <div class="curve-grid">
+                <TrainingCurveChart
+                  title="ROC 曲线"
+                  :subtitle="`AUC ${formatNumber(manifestByModel[run.id].metricDetails?.rocCurve?.auc, 4)}`"
+                  x-label="假正率"
+                  y-label="真正率"
+                  :series="rocSeries(manifestByModel[run.id])"
+                />
+                <TrainingCurveChart
+                  v-if="prSeries(manifestByModel[run.id]).length"
+                  title="PR 曲线"
+                  :subtitle="`AP ${formatNumber(manifestByModel[run.id].metricDetails?.prCurve?.auc, 4)}`"
+                  x-label="召回率"
+                  y-label="精确率"
+                  :series="prSeries(manifestByModel[run.id])"
+                />
+              </div>
+            </div>
+            <div class="detail-block">
+              <div class="sample-heading"><h3>特征重要性</h3><span>置换重要性</span></div>
+              <ol class="importance-list">
+                <li v-for="item in (manifestByModel[run.id].explainability?.globalImportance || []).slice(0, 8)" :key="item.feature">
+                  <span>{{ item.feature }}</span><strong>{{ formatNumber(item.importanceMean, 5) }}</strong>
+                </li>
+              </ol>
+              <p v-if="!manifestByModel[run.id].explainability?.available" class="detail-note">{{ manifestByModel[run.id].explainability?.reason }}</p>
+              <p v-else-if="manifestByModel[run.id].explainability?.shap?.reason" class="detail-note">{{ manifestByModel[run.id].explainability.shap.reason }}</p>
+            </div>
+          </div>
+          <div v-else class="detail-note">加载解释可查看验证集指标、切分摘要与特征重要性。</div>
           <div v-if="run.evaluationSamples?.length" class="sample-table">
             <div class="sample-heading"><el-icon><DataAnalysis /></el-icon><h3>留出集样例</h3><span>{{ run.evaluationSamples.length }} 条</span></div>
             <el-table :data="run.evaluationSamples" size="small" table-layout="fixed" max-height="220">
@@ -892,15 +1406,40 @@ onMounted(() => {
             </el-table>
           </div>
           <footer class="branch-actions">
+            <el-button size="small" @click="loadExplanation(run)">解释与详情</el-button>
+            <el-button size="small" :icon="DataAnalysis" @click="openExplainPanel(run)">单样本解释</el-button>
+            <el-button size="small" @click="openReportPanel(run)">导出报告</el-button>
+            <el-button size="small" @click="downloadArtifact(run)">下载模型包</el-button>
+            <el-button v-if="run.status === 'DRAFT' || run.status === 'CANDIDATE' || run.status === 'VALIDATED'" size="small" type="success" plain @click="approveModel(run)">审批</el-button>
+            <el-button v-if="run.status === 'APPROVED'" size="small" type="warning" plain @click="deprecateModel(run)">弃用</el-button>
             <el-button size="small" :icon="Aim" @click="openTrial(run.id)">评估新数据</el-button>
           </footer>
         </article>
         <article v-for="failure in trainingFailures" :key="`failed-${failure.candidateId}`" class="branch-result is-failed">
           <header><span><el-icon><Warning /></el-icon>{{ failure.algorithmLabel }}</span><el-tag type="danger" effect="plain" size="small">失败</el-tag></header>
           <p>{{ failure.message }}</p>
+          <footer class="branch-actions">
+            <el-button v-if="failure.runId" size="small" @click="reloadTrainingRun(failure)">刷新状态</el-button>
+          </footer>
         </article>
       </div>
     </section>
+
+    <ModelExplainPanel
+      v-if="explainRun"
+      :model-id="explainRun.id"
+      :model-name="explainRun.name"
+      :manifest="manifestByModel[explainRun.id]"
+      @close="explainRun = null"
+    />
+    <ModelReportPanel
+      v-if="reportRun"
+      :model-id="reportRun.id"
+      :model-name="reportRun.name"
+      :manifest="manifestByModel[reportRun.id]"
+      :comparison="comparisonRows()"
+      @close="reportRun = null"
+    />
 
   </main>
 </template>
@@ -931,6 +1470,17 @@ onMounted(() => {
 .workflow-feedback { display: flex; min-width: 0; min-height: 24px; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0 6px; color: #68776f; font-size: 10px; }
 .workflow-feedback.is-error { color: #9a4139; }
 .workflow-count { white-space: nowrap; }
+.run-progress { width: 84px; }
+.model-details { display: grid; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #edf1ee; }
+.detail-block { display: grid; gap: 6px; min-width: 0; }
+.curve-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; }
+.detail-grid > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 5px 7px; background: #f7faf8; border-radius: 5px; }
+.detail-grid span, .importance-list span { color: #68776f; font-size: 11px; }
+.detail-grid strong, .importance-list strong { color: #263d33; font-size: 12px; }
+.importance-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.importance-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 6px; background: #f7faf8; border-radius: 5px; }
+.detail-note { margin: 6px 0 0; color: #7c8983; font-size: 11px; line-height: 1.5; }
 .workflow-shell.is-focused { position: fixed; z-index: 4000; inset: 0; display: flex; width: 100vw; height: 100vh; height: 100dvh; flex-direction: column; margin: 0; overflow: auto; border: 0; border-radius: 0; box-shadow: none; }
 .workflow-shell:fullscreen { display: flex; width: 100vw; height: 100vh; height: 100dvh; flex-direction: column; margin: 0; overflow: auto; background: #fff; border: 0; border-radius: 0; box-shadow: none; }
 .workflow-shell.is-focused .workflow-canvas, .workflow-shell:fullscreen .workflow-canvas { flex: 1 1 auto; overflow: auto; }
@@ -1020,6 +1570,7 @@ onMounted(() => {
 .run-context { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 5px 12px; color: #708078; font-size: 10px; }
 .run-context span { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-actions { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.run-blocker { max-width: 300px; color: #a3652d; font-size: 10px; line-height: 1.4; text-align: right; }
 .form-footnote, .running-status { min-width: 0; color: #829089; font-size: 10px; }
 .running-status { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); }
 .result-panel { padding: 14px 0; }

@@ -8,7 +8,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
-@Profile("!local & !mysql & !test")
+@Profile("!local & !test")
 public class DatasetServiceSecurityConfiguration {
 
     @Bean
@@ -18,6 +18,7 @@ public class DatasetServiceSecurityConfiguration {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/internal/rule-runs/**").permitAll()
                         .requestMatchers("/internal/workflow-datasets/**").permitAll()
+                        .requestMatchers("/internal/model-training/**").permitAll()
                         .requestMatchers(
                                 "/actuator/health",
                                 "/actuator/health/**",

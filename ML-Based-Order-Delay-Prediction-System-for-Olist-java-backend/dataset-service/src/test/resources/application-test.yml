@@ -11,6 +11,8 @@ spring:
     enabled: true
 
 olist:
+  model-training:
+    internal-token: test-model-training-token
   storage:
     type: local
     local-root: target/test-datasets

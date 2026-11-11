@@ -1,8 +1,5 @@
 # 连接真实 MySQL + ClickHouse：SPRING_DATASOURCE_*、CLICKHOUSE_* 可用环境变量覆盖。
 spring:
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.security.oauth2.resource.servlet.OAuth2ResourceServerAutoConfiguration
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3308/olist_datasets?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
     username: ${SPRING_DATASOURCE_USERNAME:olist}
@@ -10,6 +7,8 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
 
 olist:
+  model-training:
+    internal-token: ${MODEL_TRAINING_INTERNAL_TOKEN:local-training-token-2026}
   clickhouse:
     enabled: ${CLICKHOUSE_ENABLED:true}
     url: ${CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123}
@@ -18,4 +17,4 @@ olist:
     password: ${CLICKHOUSE_PASSWORD:local-clickhouse-only}
   storage:
     type: local
-    local-root: ./data/datasets
+    local-root: ${OLIST_STORAGE_LOCAL_ROOT:${user.home}/.olist/datasets-storage}

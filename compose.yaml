@@ -317,6 +317,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local-clickhouse-only}
       RULE_WORKER_INTERNAL_TOKEN: ${RULE_WORKER_INTERNAL_TOKEN:-}
       WORKFLOW_WORKER_INTERNAL_TOKEN: ${WORKFLOW_WORKER_INTERNAL_TOKEN:-local-workflow-worker-change-me}
+      MODEL_TRAINING_INTERNAL_TOKEN: ${MODEL_TRAINING_INTERNAL_TOKEN:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -410,6 +411,7 @@ services:
       OLIST_OBJECT_STORE_ENDPOINT: http://localstack:4566
       OLIST_OBJECT_STORE_BUCKET: olist-artifacts
       OLIST_MODEL_TRAINING_INTERNAL_TOKEN: ${MODEL_TRAINING_INTERNAL_TOKEN:-}
+      OLIST_DATASET_SERVICE_URL: http://dataset-service:8082
       OLIST_MODEL_ARTIFACT_DIRECTORY: /var/lib/olist/models
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
@@ -419,6 +421,8 @@ services:
     ports:
       - "8090:8090"
     depends_on:
+      dataset-service:
+        condition: service_started
       object-store-init:
         condition: service_completed_successfully
       mlflow:

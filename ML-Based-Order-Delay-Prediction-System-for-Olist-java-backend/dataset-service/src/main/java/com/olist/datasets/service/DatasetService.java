@@ -17,6 +17,7 @@ import com.olist.datasets.vo.TablePreviewVO;
 import com.olist.datasets.vo.TableRowSearchVO;
 import com.olist.datasets.vo.TableRowsVO;
 import java.util.List;
+import java.io.OutputStream;
 import java.util.UUID;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -70,6 +71,14 @@ public interface DatasetService {
     TablePreviewVO previewTable(UUID datasetId, UUID tableId, int limit, boolean all);
 
     TableRowsVO rows(UUID datasetId, UUID tableId, int offset, int limit);
+
+    void exportTable(
+            UUID datasetVersionId,
+            UUID tableId,
+            String ownerId,
+            List<String> columns,
+            int maxRows,
+            OutputStream output);
 
     TableRowSearchVO searchRows(
             UUID datasetId, UUID tableId, String keyword, int columnIndex, long offset, int limit);

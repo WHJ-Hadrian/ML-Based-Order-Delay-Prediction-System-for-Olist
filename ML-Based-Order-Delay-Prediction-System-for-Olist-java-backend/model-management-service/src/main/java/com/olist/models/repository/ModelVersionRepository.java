@@ -11,4 +11,6 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, UUID
     List<ModelVersion> findTop100ByOwnerIdOrderByCreatedAtDesc(String ownerId);
 
     Optional<ModelVersion> findByIdAndOwnerId(UUID id, String ownerId);
+
+    long countByOwnerIdAndModelFamily(String ownerId, String modelFamily);
 }

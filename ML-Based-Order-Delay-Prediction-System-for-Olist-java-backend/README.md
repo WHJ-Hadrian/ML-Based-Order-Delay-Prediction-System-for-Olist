@@ -61,6 +61,39 @@ container source files: their CSV / TSV / XLSX entries are parsed into logical t
 the archive itself is never registered as a data table. Table source names point to the
 entry inside the archive.
 
+## Model management service
+
+`model-management-service` is the user-facing training and registry boundary. Training is
+asynchronous: `POST /api/v1/models/training-runs` accepts an optional `Idempotency-Key`,
+persists a `training_runs` row, and returns `202 Accepted` with a `Location` header. A
+worker claims queued runs using a claim token and renewable lease, supports cancellation,
+lease-expiry takeover, bounded retries, and heartbeat renewal. It validates the caller's
+READY dataset catalog and sends Python only a `dataSource` descriptor; it never pages the
+whole table through Java.
+
+```text
+POST   /api/v1/models/training-runs                 queue training (202)
+GET    /api/v1/models/training-runs/{id}            poll status, stage and progress
+GET    /api/v1/models/training-runs                 list owner-scoped runs
+POST   /api/v1/models/training-runs/{id}/cancel     cancel queued/running work
+GET    /api/v1/models/versions/{id}/manifest        owner-scoped manifest v2
+GET    /api/v1/models/versions/{id}/artifact        stream owner-scoped ZIP bundle
+POST   /api/v1/models/versions/{id}/approve         DRAFT -> APPROVED
+POST   /api/v1/models/versions/{id}/deprecate       APPROVED -> DEPRECATED
+```
+
+Python streams selected columns from
+`/internal/model-training/dataset-versions/{versionId}/tables/{tableId}/export.csv` using
+`X-Model-Training-Token`. That endpoint caps the export at 256 MB, honors `maxRows`, and
+rejects missing/duplicate columns. The Python contract requires `dataSource.columns` to be
+exactly the union of feature, target, and split columns.
+
+Set the same `MODEL_TRAINING_INTERNAL_TOKEN` for `dataset-service`, `model-serving`, and
+`model-management-service`. `MODEL_TRAINING_WORKER_BEARER_TOKEN` optionally points the
+worker at a service account JWT accepted by `dataset-service`; without it, the worker uses
+the caller token temporarily stored on the run and clears it on terminal states. Prefer a
+service account JWT outside local development.
+
 ### Local standalone run
 
 The `local` profile disables Keycloak, stores metadata in a file-backed H2 database and

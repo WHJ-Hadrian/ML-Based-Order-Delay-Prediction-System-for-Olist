@@ -7,7 +7,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.stereotype.Component;
 
 @Component
-@Profile({"local", "mysql", "test"})
+@Profile({"local", "test"})
 public class LocalDatasetOwnerProvider implements DatasetOwnerProvider {
 
     private static final String LEGACY_OWNER_ID = "legacy";

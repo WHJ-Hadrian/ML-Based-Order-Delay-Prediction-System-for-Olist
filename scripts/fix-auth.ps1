@@ -148,7 +148,7 @@ if (-not $SkipDockerStart) {
     if (-not $docker) { throw 'Docker was not found. Install Docker Desktop or run with -SkipDockerStart.' }
 
     $dependencies = @(
-        @{ Name = 'mysql'; Port = 3307 },
+        @{ Name = 'mysql'; Port = 3308 },
         @{ Name = 'redis'; Port = 6379 },
         @{ Name = 'mailpit'; Port = 8025 },
         @{ Name = 'keycloak'; Port = 8180 }

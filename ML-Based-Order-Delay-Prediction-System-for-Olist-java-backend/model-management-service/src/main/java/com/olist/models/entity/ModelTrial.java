@@ -63,6 +63,9 @@ public class ModelTrial {
     @Column(name = "metrics_json", columnDefinition = "TEXT", nullable = false, updatable = false)
     private String metricsJson;
 
+    @Column(name = "metric_details_json", columnDefinition = "TEXT", updatable = false)
+    private String metricDetailsJson;
+
     @Column(name = "confusion_matrix_json", columnDefinition = "TEXT", updatable = false)
     private String confusionMatrixJson;
 
@@ -78,18 +81,18 @@ public class ModelTrial {
     public ModelTrial(
             UUID id, String ownerId, UUID modelId, UUID datasetId, UUID datasetVersionId,
             int datasetVersionNo, UUID tableId, String targetColumn, int predictedRows,
-            int evaluatedRows, int ignoredTargetRows, String metricsJson, String confusionMatrixJson,
-            String evaluationSamplesJson, Instant createdAt) {
+            int evaluatedRows, int ignoredTargetRows, String metricsJson, String metricDetailsJson,
+            String confusionMatrixJson, String evaluationSamplesJson, Instant createdAt) {
         this(id, id, ownerId, modelId, datasetId, datasetVersionId, datasetVersionNo, tableId,
                 targetColumn, predictedRows, evaluatedRows, ignoredTargetRows, metricsJson,
-                confusionMatrixJson, evaluationSamplesJson, createdAt);
+                metricDetailsJson, confusionMatrixJson, evaluationSamplesJson, createdAt);
     }
 
     public ModelTrial(
             UUID id, UUID comparisonId, String ownerId, UUID modelId, UUID datasetId, UUID datasetVersionId,
             int datasetVersionNo, UUID tableId, String targetColumn, int predictedRows,
-            int evaluatedRows, int ignoredTargetRows, String metricsJson, String confusionMatrixJson,
-            String evaluationSamplesJson, Instant createdAt) {
+            int evaluatedRows, int ignoredTargetRows, String metricsJson, String metricDetailsJson,
+            String confusionMatrixJson, String evaluationSamplesJson, Instant createdAt) {
         this.id = id;
         this.comparisonId = comparisonId;
         this.ownerId = ownerId;
@@ -103,9 +106,30 @@ public class ModelTrial {
         this.evaluatedRows = evaluatedRows;
         this.ignoredTargetRows = ignoredTargetRows;
         this.metricsJson = metricsJson;
+        this.metricDetailsJson = metricDetailsJson;
         this.confusionMatrixJson = confusionMatrixJson;
         this.evaluationSamplesJson = evaluationSamplesJson;
         this.createdAt = createdAt;
+    }
+
+    public ModelTrial(
+            UUID id, String ownerId, UUID modelId, UUID datasetId, UUID datasetVersionId,
+            int datasetVersionNo, UUID tableId, String targetColumn, int predictedRows,
+            int evaluatedRows, int ignoredTargetRows, String metricsJson, String confusionMatrixJson,
+            String evaluationSamplesJson, Instant createdAt) {
+        this(id, id, ownerId, modelId, datasetId, datasetVersionId, datasetVersionNo, tableId,
+                targetColumn, predictedRows, evaluatedRows, ignoredTargetRows, metricsJson,
+                null, confusionMatrixJson, evaluationSamplesJson, createdAt);
+    }
+
+    public ModelTrial(
+            UUID id, UUID comparisonId, String ownerId, UUID modelId, UUID datasetId, UUID datasetVersionId,
+            int datasetVersionNo, UUID tableId, String targetColumn, int predictedRows,
+            int evaluatedRows, int ignoredTargetRows, String metricsJson, String confusionMatrixJson,
+            String evaluationSamplesJson, Instant createdAt) {
+        this(id, comparisonId, ownerId, modelId, datasetId, datasetVersionId, datasetVersionNo, tableId,
+                targetColumn, predictedRows, evaluatedRows, ignoredTargetRows, metricsJson,
+                null, confusionMatrixJson, evaluationSamplesJson, createdAt);
     }
 
     public UUID getId() { return id; }
@@ -121,6 +145,7 @@ public class ModelTrial {
     public int getEvaluatedRows() { return evaluatedRows; }
     public int getIgnoredTargetRows() { return ignoredTargetRows; }
     public String getMetricsJson() { return metricsJson; }
+    public String getMetricDetailsJson() { return metricDetailsJson; }
     public String getConfusionMatrixJson() { return confusionMatrixJson; }
     public String getEvaluationSamplesJson() { return evaluationSamplesJson; }
     public Instant getCreatedAt() { return createdAt; }

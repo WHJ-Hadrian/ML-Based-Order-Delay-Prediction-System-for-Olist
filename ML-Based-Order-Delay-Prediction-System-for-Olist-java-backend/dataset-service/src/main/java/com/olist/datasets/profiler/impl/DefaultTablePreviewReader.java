@@ -7,6 +7,7 @@ import com.olist.datasets.profiler.TablePreviewOptions;
 import com.olist.datasets.profiler.TablePreviewReader;
 import com.olist.datasets.profiler.TableRowSearch;
 import com.olist.datasets.profiler.TableRows;
+import com.olist.datasets.profiler.RowStreamStopException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -153,6 +154,8 @@ public class DefaultTablePreviewReader implements TablePreviewReader {
             }
             forEachRowDelimited(input, delimiterOf(format), consumer);
         } catch (InvalidDatasetException exception) {
+            throw exception;
+        } catch (RowStreamStopException exception) {
             throw exception;
         } catch (Exception exception) {
             LOGGER.warn("Failed to stream rows for table {}", tableName, exception);

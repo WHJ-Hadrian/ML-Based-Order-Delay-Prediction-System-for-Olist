@@ -78,10 +78,10 @@ flowchart LR
 | `dataset-service` | Spring Boot | 管理上传文件相关元数据、数据集版本及校验记录。文件内容存放于对象存储。 |
 | `job-service` | Spring Boot、数据库队列、Temporal Client / Worker | 持久化用户工作流定义和运行记录，校验 DAG，并执行已开放的数据源快照节点；其他节点执行器仍在建设。 |
 | `prediction-service` | Spring Boot | 提供在线预测业务入口、预测记录和审计，并调用模型服务。 |
-| `model-management-service` | Spring Boot | 管理模型审核、上线、回滚及版本元数据。 |
+| `model-management-service` | Spring Boot、数据库队列、租约 Worker | 管理模型审核、上线、回滚及版本元数据；承载训练运行的幂等提交、租约领取、心跳与取消，并代理 manifest 与模型包导出。 |
 | `analytics-query-service` | Spring Boot | 为前端分析看板提供查询 API。 |
 | `model-serving` | Python、FastAPI | 独立提供在线模型推理运行时。 |
-| Python Worker Pools | Python、Temporal SDK | 承载数据集处理、模型训练和批量预测等异步任务。 |
+| Python Worker Pools | Python、Temporal SDK | 承载规则预览等异步任务；模型训练由 Java 训练运行队列调度，再经内部 API 调用 Python 运行时。 |
 | Spark / Flink Jobs | PySpark、Flink SQL 或 Java | Spark 执行离线批处理，Flink 执行持续流处理；二者是计算运行时，不是业务微服务。 |
 
 ### 服务入口
@@ -201,7 +201,7 @@ Set-Location .\ML-Based-Order-Delay-Prediction-System-for-Olist-java-backend
 java -jar dataset-service\target\dataset-service-0.1.0-SNAPSHOT.jar --spring.profiles.active=mysql
 ```
 
-Compose 将 MySQL 映射到宿主机 `3307`，`mysql` profile 默认使用 `olist / local-only-change-me`。可以用 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD` 覆盖连接参数。
+Compose 将 MySQL 映射到宿主机 `3308`，`mysql` profile 默认使用 `olist / local-only-change-me`。可以用 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD` 覆盖连接参数。
 
 将 `dataset-service` 替换为 `order-service`、`job-service`、`prediction-service`、`model-management-service` 或 `analytics-query-service`，可运行对应模块。直接运行的模块端口见“服务入口”表。完整 Java 构建与测试：
 
@@ -221,7 +221,40 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8090
 ```
 
-健康检查地址为 `http://localhost:8090/health/live` 和 `http://localhost:8090/health/ready`。Python 模型服务提供受内部令牌保护的真实 scikit-learn 训练与试炼端点；用户 API、权限校验和模型版本登记由 Java `model-management-service` 提供。模型在线推理服务仍未实现。
+健康检查地址为 `http://localhost:8090/health/live` 和 `http://localhost:8090/health/ready`。Python 模型服务提供受内部令牌保护的真实 scikit-learn 训练、试炼、manifest 查询与模型包导出端点；用户 API、权限校验、训练运行调度和模型版本登记由 Java `model-management-service` 提供。模型在线推理服务仍未实现。
+
+### 训练与建模链路
+
+训练请求是异步任务，不在单个 HTTP 请求内同步等待训练完成：
+
+1. 前端调用 `POST /api/v1/models/training-runs`，可携带 `Idempotency-Key`。Java 只校验身份、写入 `training_runs` 队列并返回 `202 Accepted` 与 `Location`，不搬运整表数据。
+2. `model-management-service` 的 Worker 以 claim token 和租约领取 `QUEUED` 运行，定期续租心跳；租约过期可由其他实例接管，达到最大重试次数后终止。取消先持久化为 `CANCELLED`，后续阶段更新与结果登记都会校验 claim token，避免过期 Worker 覆盖新结果。
+3. Worker 读取调用方 READY 数据集目录，校验字段、切分策略、任务与算法兼容性以及行数/单元格上限，只向 Python 发送 `dataSource` 描述符（版本、表、owner、所选列、`maxRows`）。
+4. Python 通过数据集服务的训练专用内网端点流式读取 CSV：`/internal/model-training/dataset-versions/{versionId}/tables/{tableId}/export.csv`。该请求使用 `X-Model-Training-Token`，支持列裁剪与 `maxRows`，单次最多 256 MB，并计算数据 SHA-256 指纹。`dataSource.columns` 必须与特征、目标及切分字段的并集完全一致。
+5. Python 支持 `random`、`temporal`、`group` 三路切分、可选验证集以及 3/5/10 折交叉验证；分类与回归算法覆盖随机森林、逻辑回归/岭回归/线性回归、决策树、XGBoost、LightGBM、SVM 与 KNN。输出详细指标、混淆矩阵、ROC/PR 曲线、回归散点与残差分布、评估样本和 SHAP/置换重要性解释。SHAP 不可用时返回明确的降级原因，而不是伪造解释。
+6. 模型产物与 manifest v2 原子写入后，Java 登记 owner-scoped 模型版本。manifest 记录数据指纹、切分摘要、交叉验证统计、主/验证指标、曲线数据、解释摘要、运行时版本与产物 SHA-256。
+7. 前端轮询运行状态，展示阶段、进度和分支结果，支持取消、失败重试、审批 `DRAFT → APPROVED → DEPRECATED`、manifest 查看与 ZIP 模型包下载。
+8. 评估完成后可对任意样本生成 SHAP 归因、自然语言解释、What-If 重算与反事实建议；报告导出支持 PDF、Word、HTML、JSON、CSV，并记录导出人与导出时间。
+
+相关接口：
+
+```text
+POST   /api/v1/models/training-runs                   202 + 训练运行
+GET    /api/v1/models/training-runs/{id}              轮询状态与阶段
+POST   /api/v1/models/training-runs/{id}/cancel       持久化取消
+GET    /api/v1/models/versions/{id}/manifest          owner-scoped manifest
+GET    /api/v1/models/versions/{id}/artifact          owner-scoped ZIP 模型包
+POST   /api/v1/models/versions/{id}/explanations      单样本解释 / What-If 重算
+POST   /api/v1/models/versions/{id}/reports           生成 PDF/Word/HTML/JSON/CSV 报告
+GET    /api/v1/models/versions/{id}/reports           报告导出记录
+POST   /internal/v1/model-training-runs               内部训练执行端点
+POST   /internal/v1/model-explanations                内部单样本解释端点
+POST   /internal/v1/model-reports                     内部报告生成端点
+GET    /internal/v1/model-artifacts/{id}/manifest     内部产物 manifest
+GET    /internal/v1/model-artifacts/{id}/export.zip   内部 ZIP 流式导出
+```
+
+`MODEL_TRAINING_INTERNAL_TOKEN` 必须在 `dataset-service`、`model-serving` 与 `model-management-service` 之间保持一致。训练专用 CSV 端点仅接受该令牌；用户模型 API 仍使用 Keycloak JWT 并按 JWT `sub` 隔离。
 
 ### 启动前端
 
@@ -256,7 +289,7 @@ docker compose --profile observability up -d
 - 分析方案卡片可保存 `chart`/`table` 展示偏好；表视图仅显示分析 API 返回的有界聚合点或确定性样本，不是原始数据浏览器，也不产生额外查询。旧方案缺少偏好时默认为图表，后端拒绝未支持的视图标识。
 - 数据集服务已实现文件上传、版本元数据查询、对象存储写入，以及字段库和清洗规则库的维护接口；规则工作簿发布版本目前仍绑定创建时的数据集版本，尚不是跨数据集通用的规则组件。
 - 订单、通用工作流执行与分析查询的部分业务接口仍未实现；请以各服务代码和测试为准，不将架构图中的职责视为已上线能力。
-- Python FastAPI 已提供健康检查、指标、受保护的模型训练/试炼端点和规则 PREVIEW Worker；工作流 Temporal Worker 目前位于 Java `job-service`，模型在线推理尚未实现。
+- Python FastAPI 已提供健康检查、指标、受保护的训练/试炼端点、manifest 与模型包导出，以及规则 PREVIEW Worker；训练运行由 Java `model-management-service` 的数据库队列异步调度，数据通过短时 CSV 流从 `dataset-service` 拉取。工作流 Temporal Worker 目前位于 Java `job-service`，模型在线推理尚未实现。
 - `app/workers/rule_execution/` 已实现冻结计划校验、READY execution snapshot、稳定拓扑排序、受限只读 ClickHouse PREVIEW、运行上报，以及 claim/lease/fencing 自动消费；FULL 物化和 Temporal activity 尚未接入，`app/pipelines/` 仍只有职责说明。
 - Kafka 基础设施与订单状态事件契约已配置；契约不代表订单事件的生产者和消费者业务逻辑已实现。
 - Compose 与 Helm 描述本地及 Kubernetes 运行基础；实际运行时行为仍取决于对应服务代码和环境配置。

@@ -26,5 +26,11 @@ public record ModelVersionResponse(
         String artifactId,
         Map<String, Object> confusionMatrix,
         List<Map<String, Object>> evaluationSamples,
-        Instant createdAt) {
+        Instant createdAt,
+        String status,
+        String modelFamily,
+        int versionNo,
+        Instant approvedAt,
+        String approvedBy,
+        Instant deprecatedAt) {
 }

@@ -39,6 +39,7 @@ import com.olist.datasets.profiler.ColumnProfile;
 import com.olist.datasets.profiler.TablePreview;
 import com.olist.datasets.profiler.TablePreviewOptions;
 import com.olist.datasets.profiler.TablePreviewReader;
+import com.olist.datasets.profiler.RowStreamStopException;
 import com.olist.datasets.profiler.TableRowSearch;
 import com.olist.datasets.profiler.TableRows;
 import com.olist.datasets.profiler.TableProfile;
@@ -59,12 +60,16 @@ import com.olist.datasets.vo.TableRowSearchVO;
 import com.olist.datasets.vo.TableRowsVO;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -79,6 +84,8 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVPrinter;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -102,6 +109,7 @@ public class DatasetServiceImpl implements DatasetService {
     private static final int MAX_PREVIEW_ROWS = 50;
     private static final int MAX_EXPANDED_ROWS = 2000;
     private static final int MAX_ROW_PAGE_SIZE = 500;
+    private static final int MAX_TRAINING_EXPORT_ROWS = 100_000;
     private static final int MAX_SEARCH_RESULT_PAGE_SIZE = 100;
     private static final int MAX_SEARCH_KEYWORD_LENGTH = 128;
     private static final int MAX_WORKFLOW_SAMPLE_ROWS = 20;
@@ -790,6 +798,102 @@ public class DatasetServiceImpl implements DatasetService {
         } catch (IOException exception) {
             throw new StorageException("读取数据表行失败", exception);
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public void exportTable(
+            UUID datasetVersionId,
+            UUID tableId,
+            String ownerId,
+            List<String> columns,
+            int maxRows,
+            OutputStream output) {
+        if (ownerId == null || ownerId.isBlank()) {
+            throw new InvalidDatasetException("训练数据导出必须绑定有效用户");
+        }
+        if (maxRows < 1 || maxRows > MAX_TRAINING_EXPORT_ROWS) {
+            throw new InvalidDatasetException("训练数据导出行数必须在 1 到 100,000 之间");
+        }
+        DatasetVersion version = datasetVersionMapper.findById(datasetVersionId, ownerId);
+        if (version == null) {
+            throw new DatasetNotFoundException(datasetVersionId);
+        }
+        if (version.getStatus() != DatasetStatus.READY) {
+            throw new DatasetNotReadyException("数据集版本 " + datasetVersionId + " 尚未 READY");
+        }
+        DatasetTable table = datasetTableMapper.findByIdAndDatasetId(tableId, version.getId());
+        if (table == null) {
+            throw new DatasetTableNotFoundException(datasetVersionId, tableId);
+        }
+        DatasetFile file = datasetFileMapper.findById(table.getFileId());
+        if (file == null) {
+            throw new DatasetTableNotFoundException(datasetVersionId, tableId);
+        }
+        List<DatasetColumn> tableColumns = datasetColumnMapper.findByTableId(tableId).stream()
+                .sorted(Comparator.comparingInt(DatasetColumn::getOrdinal))
+                .toList();
+        if (tableColumns.isEmpty()) {
+            throw new InvalidDatasetException("数据表没有可用字段");
+        }
+        Map<String, Integer> indexByName = new LinkedHashMap<>();
+        for (int index = 0; index < tableColumns.size(); index++) {
+            indexByName.put(tableColumns.get(index).getColumnName(), index);
+        }
+        List<String> selected = columns == null || columns.isEmpty()
+                ? tableColumns.stream().map(DatasetColumn::getColumnName).toList()
+                : columns.stream().map(String::trim).filter(name -> !name.isEmpty()).toList();
+        if (selected.isEmpty()) {
+            throw new InvalidDatasetException("至少选择一个导出字段");
+        }
+        if (new HashSet<>(selected).size() != selected.size()) {
+            throw new InvalidDatasetException("导出字段不能重复");
+        }
+        int[] indices = new int[selected.size()];
+        for (int index = 0; index < selected.size(); index++) {
+            Integer sourceIndex = indexByName.get(selected.get(index));
+            if (sourceIndex == null) {
+                throw new InvalidDatasetException("字段不属于所选数据表: " + selected.get(index));
+            }
+            indices[index] = sourceIndex;
+        }
+        try (InputStream input = datasetStorage.open(file.getStorageKey());
+                OutputStreamWriter writer = new OutputStreamWriter(output, StandardCharsets.UTF_8);
+                CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT)) {
+            printer.printRecord(selected);
+            int[] exported = {0};
+            tablePreviewReader.forEachRow(
+                    file.getOriginalFilename(),
+                    table.getFileName(),
+                    table.getTableName(),
+                    table.getTableFormat(),
+                    input,
+                    row -> {
+                        if (exported[0] >= maxRows) {
+                            throw new ExportLimitReached();
+                        }
+                        List<String> values = new ArrayList<>(indices.length);
+                        for (int index : indices) {
+                            values.add(index < row.size() ? row.get(index) : "");
+                        }
+                        try {
+                            printer.printRecord(values);
+                        } catch (IOException exception) {
+                            throw new UncheckedIOException(exception);
+                        }
+                        exported[0]++;
+                    });
+            printer.flush();
+        } catch (ExportLimitReached ignored) {
+            // The bounded window is complete; the source may contain additional rows.
+        } catch (UncheckedIOException exception) {
+            throw new StorageException("写出训练数据导出失败", exception.getCause());
+        } catch (IOException exception) {
+            throw new StorageException("读取训练数据导出失败", exception);
+        }
+    }
+
+    private static final class ExportLimitReached extends RowStreamStopException {
     }
 
     @Override

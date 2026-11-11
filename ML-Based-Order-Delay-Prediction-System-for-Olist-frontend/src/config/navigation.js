@@ -19,7 +19,7 @@ export const NAVIGATION_ITEMS = Object.freeze([
     component: () => import('@/views/DatasetLibraryView.vue'),
   },
   {
-    key: 'quality', path: '/quality', title: '清洗规则', group: '数据', icon: SetUp,
+    key: 'quality', path: '/quality', title: '数据处理', group: '数据', icon: SetUp,
     component: () => import('@/views/RuleLibraryView.vue'),
   },
   {

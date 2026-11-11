@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     rule_output_max_rows: int = 100_000
     rule_output_max_bytes: int = 268_435_456
     model_training_internal_token: Optional[str] = None
+    dataset_service_url: str = "http://localhost:8082"
+    model_training_dataset_timeout_seconds: float = 120.0
     model_artifact_directory: Path = Path("./data/models")
 
 

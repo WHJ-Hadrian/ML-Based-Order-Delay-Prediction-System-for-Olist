@@ -16,6 +16,14 @@ const analyses = ref([])
 const workflows = ref([])
 const models = ref([])
 
+const flowSteps = [
+  { title: '导入数据', description: '上传 CSV / Excel，识别字段并发布为 READY', path: '/datasets' },
+  { title: '数据处理', description: '多表关联、清洗、字段选择、派生标签，输出新版本', path: '/quality' },
+  { title: '统计分析', description: '按数据版本计算延误率、配送时长和维度分布', path: '/analysis' },
+  { title: '模型训练', description: '选择目标和特征，训练、比较并保存模型', path: '/experiments' },
+  { title: '评估与预测', description: '独立测试集评估、审批模型并做推理', path: '/evaluation' },
+]
+
 const resourceRows = computed(() => [
   ...datasets.value.slice(0, 4).map((item) => ({
     id: `dataset-${item.id || item.datasetId}`,
@@ -119,6 +127,20 @@ watch(() => auth.state.status, (status) => {
       <el-button @click="router.push('/pipelines')">新建流水线</el-button>
     </nav>
 
+    <section class="guided-flow" aria-labelledby="flow-heading">
+      <h2 id="flow-heading">从数据到模型</h2>
+      <ol>
+        <li v-for="(step, index) in flowSteps" :key="step.path">
+          <span class="flow-index">{{ index + 1 }}</span>
+          <div class="flow-copy">
+            <strong>{{ step.title }}</strong>
+            <p>{{ step.description }}</p>
+          </div>
+          <el-button link type="primary" @click="router.push(step.path)">进入</el-button>
+        </li>
+      </ol>
+    </section>
+
     <section class="resource-table" aria-labelledby="resource-heading">
       <h2 id="resource-heading">资源</h2>
       <p v-if="loading" class="table-message">正在读取</p>
@@ -151,6 +173,15 @@ watch(() => auth.state.status, (status) => {
 .resource-counts { display: flex; flex-wrap: wrap; gap: 10px 28px; padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--ink-soft); font-size: 11px; }
 .resource-counts strong { margin-left: 5px; color: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; }
 .primary-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 0 20px; }
+.guided-flow { padding: 0 0 20px; }
+.guided-flow h2 { margin: 0 0 10px; font-size: 13px; font-weight: 650; }
+.guided-flow ol { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.guided-flow li { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 8px; padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 5px; }
+.flow-index { display: grid; width: 20px; height: 20px; place-items: center; color: #fff; background: var(--accent); border-radius: 50%; font-size: 10px; font-weight: 700; }
+.flow-copy { min-width: 0; }
+.flow-copy strong { display: block; color: var(--ink); font-size: 11px; font-weight: 650; }
+.flow-copy p { margin: 3px 0 0; color: var(--ink-faint); font-size: 10px; line-height: 1.45; }
+.guided-flow li .el-button { grid-column: 2; justify-self: start; padding: 0; font-size: 10px; }
 .resource-table h2 { margin: 0; padding: 0 0 9px; border-bottom: 1px solid var(--line-strong); font-size: 13px; font-weight: 650; }
 .resource-table table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .resource-table th, .resource-table td { height: 38px; padding: 0 10px; border-bottom: 1px solid var(--line-subtle); font-size: 11px; text-align: left; }
@@ -161,6 +192,7 @@ watch(() => auth.state.status, (status) => {
 .resource-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table-message { margin: 0; padding: 18px 10px; color: var(--ink-faint); border-bottom: 1px solid var(--line); font-size: 11px; }
 @media (max-width: 680px) {
+  .guided-flow ol { grid-template-columns: minmax(0, 1fr); }
   .resource-table { overflow-x: auto; }
   .resource-table table { min-width: 660px; }
   .resource-counts { gap: 8px 16px; }

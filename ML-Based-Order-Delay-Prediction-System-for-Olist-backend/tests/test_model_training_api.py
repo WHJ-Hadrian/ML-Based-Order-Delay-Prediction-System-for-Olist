@@ -9,6 +9,7 @@ from app.config import settings
 from app.main import app
 from app.ml.training.artifacts import ModelArtifactStore
 from app.api.model_training import get_artifact_store
+from app.ml.training.datasource import LoadedTrainingData
 
 
 def _payload() -> dict:
@@ -34,7 +35,8 @@ def _payload() -> dict:
     }
 
 
-def test_internal_training_endpoint_requires_service_token() -> None:
+def test_internal_training_endpoint_requires_service_token(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "model_training_internal_token", None)
     client = TestClient(app)
 
     response = client.post("/internal/v1/model-training-runs", json=_payload())
@@ -132,3 +134,74 @@ def test_internal_training_endpoint_rejects_unselected_columns_and_oversized_mat
         assert "资源上限" in response.json()["detail"]
     finally:
         app.dependency_overrides.clear()
+
+
+def test_training_endpoint_accepts_streaming_dataset_export(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "model_training_internal_token", "test-service-token")
+    app.dependency_overrides[get_artifact_store] = lambda: ModelArtifactStore(tmp_path)
+    payload = _payload()
+    payload.pop("rows")
+    payload["dataSource"] = {
+        "datasetVersionId": payload["datasetVersionId"],
+        "tableId": payload["tableId"],
+        "ownerId": "user-1",
+        "columns": ["feature", "segment", "label"],
+        "maxRows": 100,
+    }
+    frame = pd.DataFrame(
+        {
+            "feature": range(40),
+            "segment": ["returning" if index % 2 else "new" for index in range(40)],
+            "label": ["yes" if index % 2 else "no" for index in range(40)],
+        }
+    )
+
+    def fake_loader(**_: object) -> LoadedTrainingData:
+        return LoadedTrainingData(
+            frame=frame,
+            fingerprint="dataset-fingerprint",
+            row_count=len(frame),
+            source={"type": "datasetExport"},
+        )
+
+    monkeypatch.setattr("app.api.model_training.load_training_data", fake_loader)
+    try:
+        response = TestClient(app).post(
+            "/internal/v1/model-training-runs",
+            json=payload,
+            headers={"Authorization": "Bearer test-service-token"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201, response.text
+    result = response.json()
+    assert result["datasetId"] == payload["datasetId"]
+    assert result["datasetFingerprint"] == "dataset-fingerprint"
+    assert result["splitSummary"]["strategy"] == "random"
+    assert result["metricDetails"]["sampleCount"] == result["testRows"]
+    assert result["explainability"]["method"] in {"shap", "permutation_importance"}
+    assert result["explainability"]["globalImportance"]
+
+
+def test_training_endpoint_rejects_mismatched_data_source_contract(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "model_training_internal_token", "test-service-token")
+    app.dependency_overrides[get_artifact_store] = lambda: ModelArtifactStore(tmp_path)
+    payload = _payload()
+    payload.pop("rows")
+    payload["dataSource"] = {
+        "datasetVersionId": payload["datasetVersionId"],
+        "tableId": payload["tableId"],
+        "ownerId": "another-user",
+        "columns": ["feature", "label"],
+    }
+    try:
+        response = TestClient(app).post(
+            "/internal/v1/model-training-runs",
+            json=payload,
+            headers={"Authorization": "Bearer test-service-token"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422

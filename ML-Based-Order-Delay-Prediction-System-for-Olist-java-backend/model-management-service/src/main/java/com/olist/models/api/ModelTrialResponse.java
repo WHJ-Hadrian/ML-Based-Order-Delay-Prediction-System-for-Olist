@@ -19,6 +19,7 @@ public record ModelTrialResponse(
         int evaluatedRows,
         int ignoredTargetRows,
         Map<String, Double> metrics,
+        Map<String, Object> metricDetails,
         Map<String, Object> confusionMatrix,
         List<Map<String, Object>> evaluationSamples,
         Instant createdAt) {

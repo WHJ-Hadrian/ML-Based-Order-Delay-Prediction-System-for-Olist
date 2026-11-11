@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -50,7 +51,10 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@TestPropertySource(properties = "olist.workflow-worker.internal-token=test-workflow-worker-token")
+@TestPropertySource(properties = {
+        "olist.workflow-worker.internal-token=test-workflow-worker-token",
+        "olist.model-training.internal-token=test-model-training-token"
+})
 @Import(TestSecurityConfiguration.class)
 class DatasetUploadIntegrationTest {
 
@@ -322,6 +326,42 @@ class DatasetUploadIntegrationTest {
                 .andExpect(jsonPath("$[0].versionNo").value(2))
                 .andExpect(jsonPath("$[0].status").value("READY"))
                 .andExpect(jsonPath("$[1].versionNo").value(1));
+    }
+
+    @Test
+    void exportsReadyTableAsBoundedStreamingCsvForTraining() throws Exception {
+        UUID id = createEmptyDataset("training-export");
+        MvcResult upload = mockMvc.perform(multipart("/api/v1/datasets/{id}/files", id)
+                        .file(csvFile("orders.csv", "order_id,status,amount\n1,delivered,10\n2,shipped,20\n")))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode uploaded = objectMapper.readTree(upload.getResponse().getContentAsString());
+        UUID tableId = UUID.fromString(uploaded.path("tables").get(0).path("id").asText());
+
+        mockMvc.perform(post("/api/v1/datasets/{id}/ready", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"));
+
+        MvcResult exported = mockMvc.perform(get(
+                                "/internal/model-training/dataset-versions/{id}/tables/{tableId}/export.csv",
+                                id, tableId)
+                        .param("ownerId", "legacy")
+                        .param("columns", "status,order_id")
+                        .param("maxRows", "1")
+                        .header("X-Model-Training-Token", "test-model-training-token"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andReturn();
+
+        String csv = exported.getResponse().getContentAsString(StandardCharsets.UTF_8).replace("\r\n", "\n");
+        assertThat(csv).isEqualTo("status,order_id\ndelivered,1\n");
+
+        mockMvc.perform(get(
+                        "/internal/model-training/dataset-versions/{id}/tables/{tableId}/export.csv",
+                        id, tableId)
+                .param("ownerId", "legacy")
+                .header("X-Model-Training-Token", "wrong-token"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

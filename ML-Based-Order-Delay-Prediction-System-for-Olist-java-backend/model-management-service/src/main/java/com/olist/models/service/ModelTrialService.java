@@ -16,11 +16,9 @@ import com.olist.models.entity.ModelTrial;
 import com.olist.models.entity.ModelVersion;
 import com.olist.models.repository.ModelTrialRepository;
 import com.olist.models.repository.ModelVersionRepository;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -73,7 +71,6 @@ public class ModelTrialService {
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "找不到所选测试数据表"));
         List<String> features = read(model.getFeatureColumnsJson(), new TypeReference<>() {});
-        Map<String, String> featureTypes = read(model.getFeatureTypesJson(), new TypeReference<>() {});
         String target = request.targetColumn() == null || request.targetColumn().isBlank()
                 ? null : request.targetColumn().trim();
         if (target != null && !target.equals(model.getTargetColumn())) {
@@ -94,10 +91,10 @@ public class ModelTrialService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "试炼数据超过单次行数或字段资源上限");
         }
-        List<Map<String, Object>> rows = toRows(
-                datasetClient.rows(request.datasetVersionId(), request.tableId(), table.rowCount(), selected, bearerToken),
-                selected, featureTypes);
-        TrialResult result = pythonClient.trial(ownerId, model.getArtifactId(), rows, target);
+        PythonTrainingClient.DataSource dataSource = new PythonTrainingClient.DataSource(
+                catalog.datasetVersionId(), table.tableId(), ownerId, selected,
+                (int) Math.min(table.rowCount(), MAX_TRIAL_ROWS));
+        TrialResult result = pythonClient.trial(ownerId, model.getArtifactId(), dataSource, target);
         if (result == null) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "试炼引擎没有返回结果");
         }
@@ -106,6 +103,7 @@ public class ModelTrialService {
                 UUID.randomUUID(), comparisonId, ownerId, model.getId(), catalog.datasetId(), catalog.datasetVersionId(),
                 catalog.versionNo(), table.tableId(), target, result.predictedRows(), result.evaluatedRows(),
                 result.ignoredTargetRows(), json(result.metrics()),
+                result.metricDetails() == null ? null : json(result.metricDetails()),
                 result.confusionMatrix() == null ? null : json(result.confusionMatrix()),
                 json(result.evaluationSamples()), Instant.now()));
         return toResponse(saved, model.getTask());
@@ -137,9 +135,6 @@ public class ModelTrialService {
                     "评估目标字段必须与模型登记的目标字段一致");
         }
 
-        List<Map<String, String>> featureTypes = models.stream()
-                .map(model -> read(model.getFeatureTypesJson(),
-                        new TypeReference<Map<String, String>>() {})).toList();
         List<List<String>> features = models.stream()
                 .map(model -> read(model.getFeatureColumnsJson(),
                         new TypeReference<List<String>>() {})).toList();
@@ -196,10 +191,6 @@ public class ModelTrialService {
             preparedSources.add(new PreparedTestSource(catalog, table, selected));
         }
 
-        List<List<List<String>>> rowsBySource = preparedSources.stream()
-                .map(source -> datasetClient.rows(source.catalog().datasetVersionId(), source.table().tableId(),
-                        source.table().rowCount(), source.columns(), bearerToken))
-                .toList();
         List<ModelTrialResponse> results = new ArrayList<>();
         UUID comparisonId = UUID.randomUUID();
         for (int sourceIndex = 0; sourceIndex < preparedSources.size(); sourceIndex++) {
@@ -210,10 +201,11 @@ public class ModelTrialService {
                 if (requestedTarget != null) {
                     modelColumns.add(requestedTarget);
                 }
-                List<Map<String, Object>> rows = toRows(rowsBySource.get(sourceIndex),
-                        source.columns(), modelColumns, featureTypes.get(modelIndex));
+                PythonTrainingClient.DataSource dataSource = new PythonTrainingClient.DataSource(
+                        source.catalog().datasetVersionId(), source.table().tableId(), ownerId,
+                        modelColumns, (int) Math.min(source.table().rowCount(), MAX_TRIAL_ROWS));
                 TrialResult result = pythonClient.trial(
-                        ownerId, model.getArtifactId(), rows, requestedTarget);
+                        ownerId, model.getArtifactId(), dataSource, requestedTarget);
                 if (result == null) {
                     throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "试炼引擎没有返回结果");
                 }
@@ -221,7 +213,9 @@ public class ModelTrialService {
                         UUID.randomUUID(), comparisonId, ownerId, model.getId(), source.catalog().datasetId(),
                         source.catalog().datasetVersionId(), source.catalog().versionNo(), source.table().tableId(),
                         requestedTarget, result.predictedRows(), result.evaluatedRows(), result.ignoredTargetRows(),
-                        json(result.metrics()), result.confusionMatrix() == null ? null : json(result.confusionMatrix()),
+                        json(result.metrics()),
+                        result.metricDetails() == null ? null : json(result.metricDetails()),
+                        result.confusionMatrix() == null ? null : json(result.confusionMatrix()),
                         json(result.evaluationSamples()), Instant.now()));
                 results.add(toResponse(saved, model.getTask()));
             }
@@ -264,11 +258,6 @@ public class ModelTrialService {
         }).toList();
     }
 
-    private List<Map<String, Object>> toRows(
-            List<List<String>> sourceRows, List<String> selected, Map<String, String> featureTypes) {
-        return toRows(sourceRows, selected, selected, featureTypes);
-    }
-
     private void requireIndependentDataset(ModelVersion model, DatasetCatalog catalog) {
         if (model.getDatasetId().equals(catalog.datasetId())
                 || model.getDatasetVersionId().equals(catalog.datasetVersionId())) {
@@ -277,34 +266,14 @@ public class ModelTrialService {
         }
     }
 
-    private List<Map<String, Object>> toRows(
-            List<List<String>> sourceRows,
-            List<String> sourceColumns,
-            List<String> modelColumns,
-            Map<String, String> featureTypes) {
-        return sourceRows.stream().map(row -> {
-            Map<String, Object> values = new LinkedHashMap<>();
-            for (String name : modelColumns) {
-                int index = sourceColumns.indexOf(name);
-                String value = index >= 0 && index < row.size() ? row.get(index) : null;
-                String type = featureTypes.get(name);
-                values.put(name, "numeric".equalsIgnoreCase(type) ? numericValue(value) : value);
-            }
-            return values;
-        }).toList();
-    }
-
-    private Object numericValue(String value) {
-        if (value == null || value.isBlank()) return null;
-        try { return new BigDecimal(value.trim()); } catch (NumberFormatException ignored) { return null; }
-    }
-
     private ModelTrialResponse toResponse(ModelTrial trial, String task) {
         return new ModelTrialResponse(
                 trial.getId(), trial.getComparisonId(), trial.getModelId(), trial.getDatasetId(), trial.getDatasetVersionId(),
                 trial.getDatasetVersionNo(), trial.getTableId(), trial.getTargetColumn(), task,
                 trial.getPredictedRows(), trial.getEvaluatedRows(), trial.getIgnoredTargetRows(),
                 read(trial.getMetricsJson(), new TypeReference<>() {}),
+                trial.getMetricDetailsJson() == null ? null
+                        : read(trial.getMetricDetailsJson(), new TypeReference<>() {}),
                 trial.getConfusionMatrixJson() == null ? null
                         : read(trial.getConfusionMatrixJson(), new TypeReference<>() {}),
                 read(trial.getEvaluationSamplesJson(), new TypeReference<>() {}), trial.getCreatedAt());

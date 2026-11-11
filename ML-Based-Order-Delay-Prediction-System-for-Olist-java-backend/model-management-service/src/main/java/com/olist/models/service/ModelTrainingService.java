@@ -11,11 +11,11 @@ import com.olist.models.client.TrainingDatasetClient;
 import com.olist.models.client.TrainingDatasetClient.CatalogTable;
 import com.olist.models.client.TrainingDatasetClient.DatasetCatalog;
 import com.olist.models.entity.ModelVersion;
+import com.olist.models.entity.ModelVersionStatus;
 import com.olist.models.repository.ModelVersionRepository;
-import java.math.BigDecimal;
+import java.io.OutputStream;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -46,11 +46,15 @@ public class ModelTrainingService {
     }
 
     public ModelVersionResponse train(String ownerId, String bearerToken, ModelTrainingRequest request) {
+        return toResponse(repository.save(execute(ownerId, bearerToken, request)));
+    }
+
+    public ModelVersion execute(String ownerId, String bearerToken, ModelTrainingRequest request) {
         DatasetCatalog catalog = datasetClient.catalog(request.datasetVersionId(), bearerToken);
         if (catalog == null
                 || !request.datasetId().equals(catalog.datasetId())
                 || !request.datasetVersionId().equals(catalog.datasetVersionId())) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "找不到所選数据集版本");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "找不到所选数据集版本");
         }
         if (!"READY".equalsIgnoreCase(catalog.status())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "只能使用 READY 数据集版本训练模型");
@@ -60,12 +64,11 @@ public class ModelTrainingService {
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "找不到所选数据表"));
         validateConfiguration(request, table);
-        List<String> selectedColumns = new ArrayList<>(request.featureColumns());
-        selectedColumns.add(request.targetColumn());
-        List<List<String>> sourceRows = datasetClient.rows(
-                catalog.datasetId(), request.tableId(), table.rowCount(), selectedColumns, bearerToken);
-        List<Map<String, Object>> rows = toTrainingRows(sourceRows, request, table);
-        TrainingResult result = pythonClient.train(ownerId, request, rows);
+        List<String> selectedColumns = dataColumns(request);
+        PythonTrainingClient.DataSource dataSource = new PythonTrainingClient.DataSource(
+                catalog.datasetVersionId(), table.tableId(), ownerId, selectedColumns,
+                (int) Math.min(table.rowCount(), MAX_TRAINING_ROWS));
+        TrainingResult result = pythonClient.train(ownerId, request, dataSource);
         if (result == null || result.artifactId() == null || result.artifactId().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "训练引擎没有返回有效模型产物");
         }
@@ -73,6 +76,7 @@ public class ModelTrainingService {
         String modelName = request.name() == null || request.name().isBlank()
                 ? request.task() + " · 数据集版本 " + catalog.versionNo()
                 : request.name().trim();
+        int versionNo = (int) repository.countByOwnerIdAndModelFamily(ownerId, modelName) + 1;
         ModelVersion model = new ModelVersion(
                 UUID.randomUUID(), ownerId, modelName, result.task(), result.algorithm(),
                 catalog.datasetId(), catalog.datasetVersionId(), catalog.versionNo(), table.tableId(),
@@ -81,7 +85,8 @@ public class ModelTrainingService {
                 result.testRows(), result.droppedTargetRows(), result.artifactId(),
                 result.confusionMatrix() == null ? null : json(result.confusionMatrix()),
                 json(result.evaluationSamples()), Instant.now());
-        return toResponse(repository.save(model));
+        model.assignVersion(modelName, versionNo);
+        return model;
     }
 
     @Transactional(readOnly = true)
@@ -98,10 +103,57 @@ public class ModelTrainingService {
         return toResponse(model);
     }
 
+    @Transactional
+    public ModelVersionResponse approve(String ownerId, UUID id) {
+        ModelVersion model = requireOwnedModel(ownerId, id);
+        if (model.getStatus() != ModelVersionStatus.DRAFT
+                && model.getStatus() != ModelVersionStatus.CANDIDATE
+                && model.getStatus() != ModelVersionStatus.VALIDATED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "模型版本当前状态不允许审批: " + model.getStatus());
+        }
+        model.approve(ownerId, Instant.now());
+        return toResponse(repository.save(model));
+    }
+
+    @Transactional
+    public ModelVersionResponse deprecate(String ownerId, UUID id) {
+        ModelVersion model = requireOwnedModel(ownerId, id);
+        if (model.getStatus() != ModelVersionStatus.APPROVED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "只有已审批模型版本可以弃用，当前状态: " + model.getStatus());
+        }
+        model.deprecate(Instant.now());
+        return toResponse(repository.save(model));
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> manifest(String ownerId, UUID id) {
+        ModelVersion model = requireOwnedModel(ownerId, id);
+        return pythonClient.manifest(ownerId, model.getArtifactId());
+    }
+
+    @Transactional(readOnly = true)
+    public void streamArtifact(String ownerId, UUID id, OutputStream output) {
+        ModelVersion model = requireOwnedModel(ownerId, id);
+        pythonClient.streamArtifact(ownerId, model.getArtifactId(), output);
+    }
+
+    private ModelVersion requireOwnedModel(String ownerId, UUID id) {
+        return repository.findByIdAndOwnerId(id, ownerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "模型版本不存在"));
+    }
+
     private void validateConfiguration(ModelTrainingRequest request, CatalogTable table) {
         if (table.rowCount() < 12 || table.rowCount() > MAX_TRAINING_ROWS) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "训练数据需要 12 到 100,000 行，当前为 " + table.rowCount() + " 行");
+                    "训练数据需要 12 到 100,000 行，当前为 " + table.rowCount()
+                            + " 行。请先在数据处理模块筛选或聚合，或生成一个不超过 100,000 行的数据版本。");
+        }
+        if (request.cvFolds() != 0 && request.cvFolds() != 3
+                && request.cvFolds() != 5 && request.cvFolds() != 10) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "交叉验证折数只能是 0、3、5 或 10");
         }
         if (request.randomState() < 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "随机种子不能小于 0");
@@ -111,16 +163,45 @@ public class ModelTrainingService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "特征字段不能重复，目标字段也不能出现在特征字段中");
         }
+        if (request.testSize() + request.validationSize() > 0.6) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "测试集与验证集比例之和不能超过 0.6");
+        }
+        if (!List.of("random", "temporal", "group").contains(request.splitStrategy())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "不支持的切分策略");
+        }
+        if ("temporal".equals(request.splitStrategy())
+                && (request.timeColumn() == null || request.timeColumn().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "时间切分必须指定时间字段");
+        }
+        if ("group".equals(request.splitStrategy())
+                && (request.groupColumn() == null || request.groupColumn().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "分组切分必须指定分组字段");
+        }
+        if ("temporal".equals(request.splitStrategy())
+                && request.featureColumns().contains(request.timeColumn())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "时间字段不能同时作为输入特征");
+        }
+        if ("group".equals(request.splitStrategy())
+                && request.featureColumns().contains(request.groupColumn())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "分组字段不能同时作为输入特征，避免分组泄漏");
+        }
         boolean compatible = switch (request.task()) {
-            case "classification" -> List.of("random_forest", "logistic_regression").contains(request.algorithm());
-            case "regression" -> List.of("random_forest", "ridge_regression").contains(request.algorithm());
+            case "classification" -> List.of(
+                    "random_forest", "logistic_regression", "decision_tree",
+                    "xgboost", "lightgbm", "svm", "knn").contains(request.algorithm());
+            case "regression" -> List.of(
+                    "random_forest", "ridge_regression", "linear_regression",
+                    "decision_tree", "xgboost_regression", "lightgbm_regression")
+                    .contains(request.algorithm());
             default -> false;
         };
         if (!compatible) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "任务类型与算法不兼容");
         }
         List<String> available = table.columns().stream().map(column -> column.name()).toList();
-        for (String selected : concat(request.featureColumns(), request.targetColumn())) {
+        for (String selected : dataColumns(request)) {
             if (!available.contains(selected)) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "字段不属于所选数据表: " + selected);
@@ -132,71 +213,16 @@ public class ModelTrainingService {
         }
     }
 
-    private List<String> concat(List<String> features, String target) {
-        List<String> columns = new ArrayList<>(features);
-        columns.add(target);
-        return columns;
-    }
-
-    private List<Map<String, Object>> toTrainingRows(
-            List<List<String>> sourceRows, ModelTrainingRequest request, CatalogTable table) {
-        Map<String, String> types = new LinkedHashMap<>();
-        for (var column : table.columns()) {
-            types.put(column.name(), column.logicalType());
+    private List<String> dataColumns(ModelTrainingRequest request) {
+        List<String> columns = new ArrayList<>(request.featureColumns());
+        columns.add(request.targetColumn());
+        if ("temporal".equals(request.splitStrategy()) && request.timeColumn() != null) {
+            columns.add(request.timeColumn());
         }
-        List<String> selected = concat(request.featureColumns(), request.targetColumn());
-        java.util.Set<String> numericColumns = new java.util.HashSet<>();
-        for (int columnIndex = 0; columnIndex < selected.size(); columnIndex++) {
-            String name = selected.get(columnIndex);
-            String logicalType = types.get(name);
-            boolean declaredNumeric = logicalType != null && List.of(
-                    "INTEGER", "LONG", "INT64", "DOUBLE", "FLOAT", "FLOAT64", "DECIMAL", "NUMBER")
-                    .contains(logicalType.toUpperCase(java.util.Locale.ROOT));
-            boolean inferredNumeric = columnIndex < selected.size() - 1 || !request.task().equals("classification");
-            if (declaredNumeric || inferredNumeric && isNumericColumn(sourceRows, columnIndex)) {
-                numericColumns.add(name);
-            }
+        if ("group".equals(request.splitStrategy()) && request.groupColumn() != null) {
+            columns.add(request.groupColumn());
         }
-        return sourceRows.stream().map(row -> {
-            Map<String, Object> values = new LinkedHashMap<>();
-            for (int index = 0; index < selected.size(); index++) {
-                String name = selected.get(index);
-                String value = index < row.size() ? row.get(index) : null;
-                values.put(name, trainingValue(value, numericColumns.contains(name)));
-            }
-            return values;
-        }).toList();
-    }
-
-    private boolean isNumericColumn(List<List<String>> rows, int columnIndex) {
-        boolean hasNumber = false;
-        for (List<String> row : rows) {
-            String value = columnIndex < row.size() ? row.get(columnIndex) : null;
-            if (value == null || value.isBlank()) {
-                continue;
-            }
-            try {
-                new BigDecimal(value.trim());
-                hasNumber = true;
-            } catch (NumberFormatException error) {
-                return false;
-            }
-        }
-        return hasNumber;
-    }
-
-    private Object trainingValue(String value, boolean numeric) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        if (numeric) {
-            try {
-                return new BigDecimal(value.trim());
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return value;
+        return columns.stream().distinct().toList();
     }
 
     private ModelVersionResponse toResponse(ModelVersion model) {
@@ -209,7 +235,10 @@ public class ModelTrainingService {
                 model.getTrainRows(), model.getTestRows(), model.getDroppedTargetRows(), model.getArtifactId(),
                 model.getConfusionMatrixJson() == null ? null
                         : read(model.getConfusionMatrixJson(), new TypeReference<>() {}),
-                read(model.getEvaluationSamplesJson(), new TypeReference<>() {}), model.getCreatedAt());
+                read(model.getEvaluationSamplesJson(), new TypeReference<>() {}), model.getCreatedAt(),
+                model.getStatus() == null ? null : model.getStatus().name(),
+                model.getModelFamily(), model.getVersionNo(), model.getApprovedAt(),
+                model.getApprovedBy(), model.getDeprecatedAt());
     }
 
     private String json(Object value) {

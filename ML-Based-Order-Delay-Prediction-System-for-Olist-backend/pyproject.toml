@@ -27,9 +27,15 @@ analytics = [
     "pyspark>=3.5,<5.0",
 ]
 training = [
+    "httpx>=0.28,<1.0",
     "joblib>=1.4,<2.0",
+    "lightgbm>=4.5,<5.0",
     "pandas>=2.2,<3.0",
+    "python-docx>=1.1,<2.0",
+    "reportlab>=4.2,<5.0",
     "scikit-learn>=1.6,<2.0",
+    "shap>=0.46,<1.0",
+    "xgboost>=2.1,<4.0",
 ]
 features = [
     "feast[redis]>=0.50,<1.0",
@@ -42,9 +48,14 @@ ml = [
 test = [
     "httpx>=0.28,<1.0",
     "joblib>=1.4,<2.0",
+    "lightgbm>=4.5,<5.0",
     "pandas>=2.2,<3.0",
     "pytest>=8.3,<10.0",
+    "python-docx>=1.1,<2.0",
+    "reportlab>=4.2,<5.0",
     "scikit-learn>=1.6,<2.0",
+    "shap>=0.46,<1.0",
+    "xgboost>=2.1,<4.0",
 ]
 
 [tool.setuptools.packages.find]
