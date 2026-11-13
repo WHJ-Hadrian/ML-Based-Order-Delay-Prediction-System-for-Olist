@@ -36,6 +36,7 @@
         <span>{{ data.tableName }}</span>
         <span>版本 v{{ versionNo }}</span>
         <span>{{ formatNumber(data.rowCount) }} 行</span>
+        <el-tag v-if="data.derivedFromTimestamps" size="small" effect="plain" type="info">延误由时间戳推导</el-tag>
         <span v-if="unavailable.length" class="source-warn">缺少字段：{{ unavailable.join('、') }}</span>
       </div>
 
@@ -171,6 +172,9 @@
         <div v-if="data.correlation.available" class="correlation-value">
           <strong>{{ formatNumber(data.correlation.deliveryVsRating, 3) }}</strong>
           <span>{{ correlationText }}</span>
+          <small v-if="data.correlation.scope?.startsWith('joined:')">
+            关联 {{ data.correlation.scope.slice(7) }} 计算
+          </small>
         </div>
         <p v-else class="panel-note">{{ data.correlation.reason }}</p>
       </section>
@@ -203,8 +207,10 @@ const tables = computed(() => catalog.value?.tables || [])
 const versionNo = computed(() => catalog.value?.versionNo ?? '—')
 const unavailable = computed(() => {
   if (!data.value) return []
+  const derived = Boolean(data.value.derivedFromTimestamps)
+  const skip = derived ? new Set(['is_delayed', 'delay_days', 'total_delivery_days']) : new Set()
   return Object.entries(data.value.columns || {})
-    .filter(([name, physical]) => !physical && name !== 'review_score')
+    .filter(([name, physical]) => !physical && name !== 'review_score' && !skip.has(name))
     .map(([name]) => name)
 })
 
@@ -275,8 +281,11 @@ function formatNumber(value, digits = 0) {
 }
 
 function autoPickTable(list) {
-  const withDelay = (list || []).find((table) => (table.columns || []).some((column) => column.name === 'is_delayed'))
-  return withDelay || (list || [])[0] || null
+  const tables = list || []
+  return tables.find((table) => (table.columns || []).some((column) => column.name === 'is_delayed'))
+    || tables.find((table) => /orders/i.test(table.tableName))
+    || tables[0]
+    || null
 }
 
 async function loadDatasets() {
@@ -406,6 +415,7 @@ watch(selectedTableId, loadAnalysis)
 .correlation-value { display: flex; align-items: baseline; gap: 10px; }
 .correlation-value strong { color: #26352e; font-size: 26px; font-weight: 700; }
 .correlation-value span { color: #6b7a72; font-size: 11px; }
+.correlation-value small { color: #93a29a; font-size: 9px; }
 .delay-message { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: #8d3c35; background: #fff4f0; border: 1px solid #f1d2c8; border-radius: 6px; font-size: 11px; }
 .delay-message span { flex: 1; }
 .delay-loading, .delay-empty { padding: 40px 12px; color: #859289; font-size: 11px; text-align: center; }
