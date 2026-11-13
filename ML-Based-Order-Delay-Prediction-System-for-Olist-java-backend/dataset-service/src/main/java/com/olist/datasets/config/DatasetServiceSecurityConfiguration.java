@@ -19,6 +19,7 @@ public class DatasetServiceSecurityConfiguration {
                         .requestMatchers("/internal/rule-runs/**").permitAll()
                         .requestMatchers("/internal/workflow-datasets/**").permitAll()
                         .requestMatchers("/internal/model-training/**").permitAll()
+                        .requestMatchers("/internal/dataset-versions/**").permitAll()
                         .requestMatchers(
                                 "/actuator/health",
                                 "/actuator/health/**",

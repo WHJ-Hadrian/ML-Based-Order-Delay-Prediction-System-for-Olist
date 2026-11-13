@@ -423,3 +423,29 @@ SETTINGS max_execution_time = 30, max_rows_to_read = 5000000
 | 旧方案数据迁移丢失 | 迁移脚本 + 兼容读取 + 迁移前后条数校验 |
 | 服务拆分带来运维复杂度 | 先并入 dataset-service 也可，契约不变 |
 | 用户不会配 | 默认从模板进入，指标/维度都有中文名和说明 |
+
+---
+
+## 16. 实现进度
+
+### P1（已完成）
+
+- `analytics-query-service` 模块：8086，独立库 `olist_analytics`（Flyway V1 建表）。
+- 已实现接口：
+  - `GET /api/v1/analytics/capabilities?datasetVersionId&tableId`
+  - `POST /api/v1/analytics/validate`
+  - `POST /api/v1/analytics/query`
+- 指标库（系统 6 个）：订单量、已签收订单量、延误订单量、延误率、平均配送耗时、平均延误天数。
+- 编译器支持：维度（含 hour/day/week/month/quarter/year/weekday 粒度）、筛选（EQ/NE/GT/GTE/LT/LTE/IN/NOT_IN/BETWEEN/IS_NULL/NOT_NULL/CONTAINS）、having、排序、limit。
+- 安全：标识符只取快照、值转义、只读连接、30s 超时、5000 行上限。
+- 验收结果（`olist_orders_ml_ready_v3`，96,476 行）：
+  `orders=96476, delivered=96476, delayed=6535, delay_rate=0.067737, avg_delivery_days=12.497, avg_delay_days=10.620`，
+  与旧「延误分析」完全一致；按月分组 12 组、组合筛选（月 × 类目 + 州过滤 + having）均通过。
+
+### 待办
+
+- P2：指标库落库（`metric_definitions`）+ `delay_analysis` 模板。
+- P3：方案 CRUD / 版本 / 运行记录。
+- P4：分析工作台前端 + 旧页面迁移。
+- P5：通用报告渲染。
+

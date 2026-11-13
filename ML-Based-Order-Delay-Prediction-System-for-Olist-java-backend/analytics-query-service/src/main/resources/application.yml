@@ -2,14 +2,17 @@ spring:
   application:
     name: analytics-query-service
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:olist_analytics;MODE=MySQL;DB_CLOSE_DELAY=-1}
-    username: ${SPRING_DATASOURCE_USERNAME:sa}
-    password: ${SPRING_DATASOURCE_PASSWORD:}
-    driver-class-name: ${SPRING_DATASOURCE_DRIVER:org.h2.Driver}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3308/olist_analytics?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${SPRING_DATASOURCE_USERNAME:olist}
+    password: ${SPRING_DATASOURCE_PASSWORD:local-only-change-me}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER:com.mysql.cj.jdbc.Driver}
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
   security:
     oauth2:
       resourceserver:
@@ -21,20 +24,22 @@ server:
   port: ${SERVER_PORT:8086}
 
 management:
-  prometheus:
-    metrics:
-      export:
-        enabled: true
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
-  endpoint:
-    health:
-      probes:
-        enabled: true
 
-info:
-  app:
-    name: ${spring.application.name}
-    description: Serves dashboard queries from the analytical ClickHouse store
+olist:
+  dataset-service:
+    url: ${DATASET_SERVICE_URL:http://localhost:8082}
+  clickhouse:
+    url: ${CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123}
+    database: ${CLICKHOUSE_DATABASE:olist_datasets}
+    username: ${CLICKHOUSE_USER:olist}
+    password: ${CLICKHOUSE_PASSWORD:local-clickhouse-only}
+  analytics:
+    max-rows: ${ANALYTICS_MAX_ROWS:5000}
+    default-limit: ${ANALYTICS_DEFAULT_LIMIT:500}
+    max-dimensions: 3
+    max-metrics: 40
+    query-timeout-seconds: ${ANALYTICS_QUERY_TIMEOUT:30}
