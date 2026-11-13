@@ -88,17 +88,34 @@ export function getDatasetCatalog(id) {
   return request(`${API_BASE}/${encodeURIComponent(id)}/catalog`)
 }
 
-export function getDelayAnalysis(datasetId, tableId) {
+export function getDelayAnalysis(datasetId, tableId, params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      if (value.length) query.set(key, value.join(','))
+    } else if (value != null && value !== '') {
+      query.set(key, String(value))
+    }
+  })
+  const suffix = query.toString() ? `?${query}` : ''
   return request(
-    `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/delay-analysis`,
+    `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/delay-analysis${suffix}`,
   )
 }
 
-export async function downloadDelayReport(datasetId, tableId, format = 'pdf') {
+export async function downloadDelayReport(datasetId, tableId, format = 'pdf', params = {}) {
   const token = await getAccessToken()
   if (!token) throw authenticationRequired()
+  const query = new URLSearchParams({ format })
+  Object.entries(params).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      if (value.length) query.set(key, value.join(','))
+    } else if (value != null && value !== '') {
+      query.set(key, String(value))
+    }
+  })
   const url = `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}`
-    + `/delay-analysis/report?format=${encodeURIComponent(format)}`
+    + `/delay-analysis/report?${query}`
   let response
   try {
     response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })

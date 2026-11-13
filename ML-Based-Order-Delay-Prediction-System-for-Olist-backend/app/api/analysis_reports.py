@@ -88,6 +88,8 @@ def _document(title: str, data: dict[str, Any]) -> dict[str, Any]:
 
     sections: list[dict[str, Any]] = []
 
+    filter_lines = _filter_lines(data.get("filters") or {})
+
     sections.append({
         "heading": "一、数据来源",
         "paragraphs": [
@@ -95,7 +97,7 @@ def _document(title: str, data: dict[str, Any]) -> dict[str, Any]:
             f"数据行数：{_count(data.get('rowCount'))}",
             f"延误标签：{'由四个时间戳推导（签收时间晚于承诺日期）' if data.get('derivedFromTimestamps') else '使用数据表内置 is_delayed 字段'}",
             f"缺失字段：{'、'.join(name for name, value in columns.items() if not value and name != 'review_score') or '无'}",
-        ],
+        ] + filter_lines,
         "table": None,
     })
 
@@ -206,6 +208,18 @@ def _document(title: str, data: dict[str, Any]) -> dict[str, Any]:
         "tableName": data.get("tableName"),
         "rowCount": data.get("rowCount"),
     }
+
+
+def _filter_lines(filters: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    if filters.get("from") or filters.get("to"):
+        parts.append(f"{filters.get('from') or '起点'} ~ {filters.get('to') or '终点'}")
+    for key, label in (("categories", "商品类目"), ("customerStates", "客户州"), ("sellerStates", "卖家州")):
+        values = filters.get(key) or []
+        if values:
+            parts.append(f"{label} {'、'.join(str(value) for value in values[:6])}"
+                         + ("…" if len(values) > 6 else ""))
+    return [f"筛选条件：{'；'.join(parts)}"] if parts else []
 
 
 def _relation_text(value: Any) -> str:

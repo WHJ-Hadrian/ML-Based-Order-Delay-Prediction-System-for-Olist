@@ -19,10 +19,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * 物流延误分析：订单量、签收量、延误量、配送耗时、延误天数、
- * 提前/按时/延误占比，以及按月份、星期、商品类目的延误率。
+ * 提前/按时/延误占比，以及可配置维度的延误率。
  *
- * <p>既支持已经加工好的宽表（有 is_delayed / delay_days / total_delivery_days），
- * 也支持原始订单表（只有四个时间戳，现场按时间差推导延误）。</p>
+ * <p>支持两种数据形态：已加工宽表（is_delayed / delay_days / total_delivery_days），
+ * 以及只有四个时间戳的原始订单表（现场推导延误）。</p>
  */
 @Service
 public class DelayAnalysisService {
@@ -30,6 +30,8 @@ public class DelayAnalysisService {
     private static final Pattern PHYSICAL_TABLE = Pattern.compile("ds_[0-9a-f]{32}_[0-9a-f]{32}");
     private static final Pattern PHYSICAL_COLUMN = Pattern.compile("c[0-9]{3,}");
     private static final String[] WEEKDAY_LABELS = {"周一", "周二", "周三", "周四", "周五", "周六", "周日"};
+    private static final int OPTION_LIMIT = 50;
+    private static final int BUCKET_LIMIT = 15;
 
     private final DatasetService datasetService;
     private final ClickHouseProperties clickHouseProperties;
@@ -45,6 +47,10 @@ public class DelayAnalysisService {
     }
 
     public Map<String, Object> analyze(UUID datasetId, UUID tableId) {
+        return analyze(datasetId, tableId, DelayAnalysisQuery.empty());
+    }
+
+    public Map<String, Object> analyze(UUID datasetId, UUID tableId, DelayAnalysisQuery query) {
         if (!clickHouseProperties.isEnabled()) {
             throw new DatasetNotReadyException("分析查询未启用 ClickHouse 存储");
         }
@@ -85,8 +91,13 @@ public class DelayAnalysisService {
         String purchaseAt = physicalByName.get("order_purchase_timestamp");
         String estimatedAt = physicalByName.get("order_estimated_delivery_date");
         String category = physicalByName.get("product_category");
+        String customerState = physicalByName.get("customer_state");
+        String sellerState = physicalByName.get("seller_state");
         String review = physicalByName.get("review_score");
         String orderId = physicalByName.get("order_id");
+        String purchaseMonth = physicalByName.get("purchase_month");
+        String purchaseWeekday = physicalByName.get("purchase_weekday");
+        String sameState = physicalByName.get("same_state");
 
         String deliveryDays = physicalByName.containsKey("total_delivery_days")
                 ? "toFloat64OrNull(" + quote(physicalByName.get("total_delivery_days")) + ")"
@@ -104,6 +115,8 @@ public class DelayAnalysisService {
                             + "或 order_purchase_timestamp、order_estimated_delivery_date、order_delivered_customer_date 三个时间戳");
         }
 
+        String where = whereClause(query, purchaseAt, category, customerState, sellerState);
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("datasetId", datasetId);
         result.put("datasetVersionId", catalog.datasetVersionId());
@@ -112,6 +125,7 @@ public class DelayAnalysisService {
         result.put("rowCount", catalogTable.rowCount());
         result.put("derivedFromTimestamps", !physicalByName.containsKey("is_delayed"));
         result.put("columns", columns(physicalByName));
+        result.put("filters", filterState(query, purchaseAt));
 
         try (ClickHouseClient client = clickHouseClientFactory.create(clickHouseProperties)) {
             String totalsSql = "SELECT count(*) AS orders,"
@@ -121,7 +135,7 @@ public class DelayAnalysisService {
                     + " countIf(" + deliveryDays + " IS NOT NULL AND " + delayDays + " = 0) AS on_time,"
                     + " avgIf(" + deliveryDays + ", " + deliveryDays + " IS NOT NULL) AS avg_delivery_days,"
                     + " avgIf(" + delayDays + ", " + isDelayed + " = 1) AS avg_delay_days"
-                    + " FROM " + tableSql;
+                    + " FROM " + tableSql + where;
             List<Object> totals = firstRow(client.query(totalsSql));
 
             long orders = longAt(totals, 0);
@@ -129,8 +143,6 @@ public class DelayAnalysisService {
             long delayed = longAt(totals, 2);
             long early = longAt(totals, 3);
             long onTime = longAt(totals, 4);
-            Double avgDeliveryDays = doubleAt(totals, 5);
-            Double avgDelayDays = doubleAt(totals, 6);
 
             Map<String, Object> totalsMap = new LinkedHashMap<>();
             totalsMap.put("orders", orders);
@@ -140,9 +152,9 @@ public class DelayAnalysisService {
             result.put("totals", totalsMap);
 
             Map<String, Object> metrics = new LinkedHashMap<>();
-            metrics.put("avgDeliveryDays", avgDeliveryDays);
+            metrics.put("avgDeliveryDays", doubleAt(totals, 5));
             metrics.put("delayRate", ratio(delayed, orders));
-            metrics.put("avgDelayDays", avgDelayDays);
+            metrics.put("avgDelayDays", doubleAt(totals, 6));
             result.put("metrics", metrics);
 
             Map<String, Object> outcomes = new LinkedHashMap<>();
@@ -154,40 +166,233 @@ public class DelayAnalysisService {
             outcomes.put("delayedRate", ratio(delayed, delivered));
             result.put("outcomes", outcomes);
 
-            result.put("byMonth", purchaseAt == null ? List.of()
-                    : grouped(client,
-                            "SELECT toMonth(parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + ")) AS \"bucket\","
-                                    + " count(*) AS orders, countIf(" + isDelayed + " = 1) AS delayed"
-                                    + " FROM " + tableSql
-                                    + " WHERE parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + ") IS NOT NULL"
-                                    + " GROUP BY \"bucket\" ORDER BY \"bucket\"", "month", null));
-            result.put("byWeekday", purchaseAt == null ? List.of()
-                    : grouped(client,
-                            "SELECT toDayOfWeek(parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + ")) AS \"bucket\","
-                                    + " count(*) AS orders, countIf(" + isDelayed + " = 1) AS delayed"
-                                    + " FROM " + tableSql
-                                    + " WHERE parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + ") IS NOT NULL"
-                                    + " GROUP BY \"bucket\" ORDER BY \"bucket\"", "weekday", WEEKDAY_LABELS));
+            List<Map<String, Object>> dimensions = availableDimensions(
+                    purchaseAt, purchaseMonth, purchaseWeekday, category, customerState, sellerState, sameState);
+            result.put("availableDimensions", dimensions);
+            result.put("dimensionOptions", dimensionOptions(client, tableSql, category, customerState, sellerState));
+            result.put("groupBy", groupBy(client, tableSql, where, isDelayed, query, purchaseAt, purchaseMonth,
+                    purchaseWeekday, category, customerState, sellerState, sameState, dimensions));
+
+            String monthExpression = purchaseAt != null
+                    ? "toMonth(parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + "))"
+                    : (purchaseMonth == null ? null : "toInt32OrNull(" + quote(purchaseMonth) + ")");
+            String weekdayExpression = purchaseAt != null
+                    ? "toDayOfWeek(parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + "))"
+                    : (purchaseWeekday == null ? null : "toInt32OrNull(" + quote(purchaseWeekday) + ") + 1");
+            result.put("byMonth", monthExpression == null ? List.of()
+                    : buckets(client, "SELECT " + monthExpression + " AS bucket,"
+                            + " count(*) AS orders, countIf(" + isDelayed + " = 1) AS delayed"
+                            + " FROM " + tableSql + andWhere(where, monthExpression + " IS NOT NULL")
+                            + " GROUP BY bucket ORDER BY bucket", "month", null));
+            result.put("byWeekday", weekdayExpression == null ? List.of()
+                    : buckets(client, "SELECT " + weekdayExpression + " AS bucket,"
+                            + " count(*) AS orders, countIf(" + isDelayed + " = 1) AS delayed"
+                            + " FROM " + tableSql + andWhere(where, weekdayExpression + " IS NOT NULL")
+                            + " GROUP BY bucket ORDER BY bucket", "weekday", WEEKDAY_LABELS));
             result.put("byCategory", category == null ? List.of()
-                    : grouped(client,
-                            "SELECT " + quote(category) + " AS \"bucket\", count(*) AS orders,"
-                                    + " countIf(" + isDelayed + " = 1) AS delayed"
-                                    + " FROM " + tableSql
-                                    + " GROUP BY \"bucket\" ORDER BY orders DESC LIMIT 12", "category", null));
+                    : buckets(client, "SELECT " + quote(category) + " AS bucket, count(*) AS orders,"
+                            + " countIf(" + isDelayed + " = 1) AS delayed"
+                            + " FROM " + tableSql + where
+                            + " GROUP BY bucket ORDER BY orders DESC LIMIT 12", "category", null));
 
             result.put("correlation", correlation(
-                    client, database, physicalTable, snapshot, physicalByName, tableSql,
-                    deliveryDays, purchaseAt, deliveredAt, review, orderId));
+                    client, database, physicalTable, snapshot, tableSql, deliveryDays,
+                    purchaseAt, deliveredAt, review, orderId));
         }
         return result;
     }
+
+    // ------------------------------------------------------------------ dimensions
+
+    private List<Map<String, Object>> availableDimensions(
+            String purchaseAt, String purchaseMonth, String purchaseWeekday,
+            String category, String customerState, String sellerState, String sameState) {
+        List<Map<String, Object>> dimensions = new ArrayList<>();
+        if (purchaseAt != null || purchaseMonth != null) {
+            dimensions.add(dimension("month", "按月份", "time"));
+        }
+        if (purchaseAt != null || purchaseWeekday != null) {
+            dimensions.add(dimension("weekday", "按星期", "time"));
+        }
+        if (category != null) {
+            dimensions.add(dimension("category", "按商品类目", "category"));
+        }
+        if (sellerState != null) {
+            dimensions.add(dimension("seller_state", "按卖家州", "category"));
+        }
+        if (customerState != null) {
+            dimensions.add(dimension("customer_state", "按客户州", "category"));
+        }
+        if (sameState != null) {
+            dimensions.add(dimension("same_state", "按是否同州发货", "category"));
+        }
+        return dimensions;
+    }
+
+    private Map<String, Object> dimension(String key, String label, String type) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("key", key);
+        item.put("label", label);
+        item.put("type", type);
+        return item;
+    }
+
+    private Map<String, Object> dimensionOptions(
+            ClickHouseClient client, String tableSql, String category, String customerState, String sellerState) {
+        Map<String, Object> options = new LinkedHashMap<>();
+        options.put("category", optionValues(client, tableSql, category));
+        options.put("sellerState", optionValues(client, tableSql, sellerState));
+        options.put("customerState", optionValues(client, tableSql, customerState));
+        return options;
+    }
+
+    private List<String> optionValues(ClickHouseClient client, String tableSql, String column) {
+        if (column == null) {
+            return List.of();
+        }
+        String sql = "SELECT " + quote(column) + " AS value, count(*) AS orders"
+                + " FROM " + tableSql
+                + " WHERE " + quote(column) + " IS NOT NULL AND " + quote(column) + " != ''"
+                + " GROUP BY value ORDER BY orders DESC LIMIT " + OPTION_LIMIT;
+        List<String> values = new ArrayList<>();
+        for (List<Object> row : client.query(sql)) {
+            if (!row.isEmpty() && row.get(0) != null) {
+                values.add(String.valueOf(row.get(0)));
+            }
+        }
+        return values;
+    }
+
+    private Map<String, Object> groupBy(
+            ClickHouseClient client, String tableSql, String where, String isDelayed,
+            DelayAnalysisQuery query, String purchaseAt, String purchaseMonth, String purchaseWeekday,
+            String category, String customerState, String sellerState, String sameState,
+            List<Map<String, Object>> dimensions) {
+        String requested = query.groupBy();
+        boolean known = requested != null && !requested.isBlank()
+                && dimensions.stream().anyMatch(item -> item.get("key").equals(requested));
+        String key = known
+                ? requested
+                : (dimensions.isEmpty() ? null : String.valueOf(dimensions.get(0).get("key")));
+        final String groupKey = key;
+        Map<String, Object> block = new LinkedHashMap<>();
+        if (groupKey == null) {
+            block.put("key", null);
+            block.put("label", null);
+            block.put("buckets", List.of());
+            return block;
+        }
+        String expression;
+        String[] labels = null;
+        int limit = BUCKET_LIMIT;
+        switch (groupKey) {
+            case "month" -> {
+                expression = purchaseAt != null
+                        ? "toMonth(parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + "))"
+                        : "toInt32OrNull(" + quote(purchaseMonth) + ")";
+                limit = 12;
+            }
+            case "weekday" -> {
+                expression = purchaseAt != null
+                        ? "toDayOfWeek(parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + "))"
+                        : "toInt32OrNull(" + quote(purchaseWeekday) + ") + 1";
+                labels = WEEKDAY_LABELS;
+                limit = 7;
+            }
+            case "seller_state" -> expression = quote(sellerState);
+            case "customer_state" -> expression = quote(customerState);
+            case "same_state" -> expression = "if(toInt32OrNull(" + quote(sameState) + ") = 1, '同州', '跨州')";
+            default -> expression = quote(category);
+        }
+        String sql = "SELECT " + expression + " AS bucket, count(*) AS orders,"
+                + " countIf(" + isDelayed + " = 1) AS delayed"
+                + " FROM " + tableSql + where
+                + " GROUP BY bucket ORDER BY orders DESC LIMIT " + limit;
+        if (groupKey.equals("month") || groupKey.equals("weekday")) {
+            sql = sql.replace("ORDER BY orders DESC", "ORDER BY bucket ASC");
+        }
+        List<Map<String, Object>> buckets = buckets(client, sql, groupKey, labels);
+        block.put("key", groupKey);
+        block.put("label", dimensions.stream()
+                .filter(item -> item.get("key").equals(groupKey))
+                .map(item -> item.get("label"))
+                .findFirst().orElse(groupKey));
+        block.put("buckets", buckets);
+        return block;
+    }
+
+    // ------------------------------------------------------------------ filters
+
+    private String whereClause(
+            DelayAnalysisQuery query, String purchaseAt, String category,
+            String customerState, String sellerState) {
+        List<String> conditions = new ArrayList<>();
+        List<String> categories = clean(query.categories());
+        if (!categories.isEmpty() && category != null) {
+            conditions.add(quote(category) + " IN (" + quotedList(categories) + ")");
+        }
+        List<String> sellers = clean(query.sellerStates());
+        if (!sellers.isEmpty() && sellerState != null) {
+            conditions.add(quote(sellerState) + " IN (" + quotedList(sellers) + ")");
+        }
+        List<String> customers = clean(query.customerStates());
+        if (!customers.isEmpty() && customerState != null) {
+            conditions.add(quote(customerState) + " IN (" + quotedList(customers) + ")");
+        }
+        if (purchaseAt != null) {
+            String parsed = "parseDateTimeBestEffortOrNull(" + quote(purchaseAt) + ")";
+            if (query.from() != null && !query.from().isBlank()) {
+                conditions.add(parsed + " >= toDate('" + escape(query.from()) + "')");
+            }
+            if (query.to() != null && !query.to().isBlank()) {
+                conditions.add(parsed + " <= toDate('" + escape(query.to()) + "')");
+            }
+        }
+        return conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+    }
+
+    private String andWhere(String where, String condition) {
+        return where.isBlank() ? " WHERE " + condition : where + " AND " + condition;
+    }
+
+    private Map<String, Object> filterState(DelayAnalysisQuery query, String purchaseAt) {
+        Map<String, Object> filters = new LinkedHashMap<>();
+        filters.put("groupBy", query.groupBy());
+        filters.put("from", query.from());
+        filters.put("to", query.to());
+        filters.put("categories", clean(query.categories()));
+        filters.put("sellerStates", clean(query.sellerStates()));
+        filters.put("customerStates", clean(query.customerStates()));
+        filters.put("timeRangeSupported", purchaseAt != null);
+        return filters;
+    }
+
+    private static List<String> clean(List<String> values) {
+        if (values == null) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+    }
+
+    private static String quotedList(List<String> values) {
+        return String.join(",", values.stream().map(value -> "'" + escape(value) + "'").toList());
+    }
+
+    private static String escape(String value) {
+        return value.replace("\\", "\\\\").replace("'", "''");
+    }
+
+    // ------------------------------------------------------------------ correlation
 
     private Map<String, Object> correlation(
             ClickHouseClient client,
             String database,
             ExecutionSnapshotVO.SnapshotTableVO table,
             ExecutionSnapshotVO snapshot,
-            Map<String, String> physicalByName,
             String tableSql,
             String deliveryDays,
             String purchaseAt,
@@ -233,24 +438,11 @@ public class DelayAnalysisService {
         correlation.put("deliveryVsRating", value);
         correlation.put("scope", scope);
         correlation.put("reason", value == null ? "样本不足，无法计算相关系数" : null);
-        correlation.put("ratingBuckets", buckets(client, source));
+        correlation.put("ratingBuckets", buckets(client,
+                "SELECT toInt32(round(assumeNotNull(score))) AS bucket, count(*) AS orders, avg(days) AS avg_days"
+                        + " FROM (" + source + ")"
+                        + " WHERE score BETWEEN 1 AND 5 GROUP BY bucket ORDER BY bucket", "score", null));
         return correlation;
-    }
-
-    /** 每个评分档（1–5 星）的平均配送天数与订单量，用来解释相关系数的来源。 */
-    private List<Map<String, Object>> buckets(ClickHouseClient client, String source) {
-        String sql = "SELECT toInt32(round(assumeNotNull(score))) AS bucket, count(*) AS orders, avg(days) AS avg_days"
-                + " FROM (" + source + ")"
-                + " WHERE score BETWEEN 1 AND 5 GROUP BY bucket ORDER BY bucket";
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (List<Object> row : client.query(sql)) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("score", (int) numeric(row.get(0)));
-            item.put("orders", longAt(row, 1));
-            item.put("avgDeliveryDays", doubleAt(row, 2));
-            rows.add(item);
-        }
-        return rows;
     }
 
     private ExecutionSnapshotVO.SnapshotTableVO findSibling(
@@ -279,6 +471,8 @@ public class DelayAnalysisService {
         return null;
     }
 
+    // ------------------------------------------------------------------ helpers
+
     private String textDiffDays(String from, String to) {
         if (from == null || to == null) {
             return null;
@@ -287,8 +481,7 @@ public class DelayAnalysisService {
                 + " parseDateTimeBestEffortOrNull(" + quote(to) + ")) / 86400.0";
     }
 
-    private List<Map<String, Object>> grouped(
-            ClickHouseClient client, String sql, String keyName, String[] labels) {
+    private List<Map<String, Object>> buckets(ClickHouseClient client, String sql, String keyName, String[] labels) {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (List<Object> row : client.query(sql)) {
             long orders = longAt(row, 1);
@@ -299,6 +492,8 @@ public class DelayAnalysisService {
             if (labels != null && key != null) {
                 int index = (int) numeric(key) - 1;
                 item.put("label", index >= 0 && index < labels.length ? labels[index] : String.valueOf(key));
+            } else {
+                item.put("label", key == null ? null : String.valueOf(key));
             }
             item.put("orders", orders);
             item.put("delayed", delayed);
@@ -312,7 +507,8 @@ public class DelayAnalysisService {
         Map<String, Object> columns = new LinkedHashMap<>();
         for (String name : List.of("is_delayed", "total_delivery_days", "delay_days",
                 "order_purchase_timestamp", "order_estimated_delivery_date",
-                "order_delivered_customer_date", "product_category", "review_score")) {
+                "order_delivered_customer_date", "product_category", "customer_state",
+                "seller_state", "review_score")) {
             columns.put(name, physicalByName.get(name));
         }
         return columns;

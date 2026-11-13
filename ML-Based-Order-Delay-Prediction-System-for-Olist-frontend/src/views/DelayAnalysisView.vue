@@ -5,7 +5,7 @@
     <header class="page-header delay-header">
       <div class="delay-title">
         <strong>物流延误分析</strong>
-        <span>整体指标 · 签收结构 · 维度延误率</span>
+        <span>整体指标 · 维度下钻 · 分析报告</span>
       </div>
       <div class="delay-filters">
         <el-select v-model="selectedDatasetId" filterable size="small" placeholder="选择数据集" class="filter-select" :loading="loadingDatasets">
@@ -20,6 +20,50 @@
             <small class="option-meta">{{ formatNumber(table.rowCount) }} 行</small>
           </el-option>
         </el-select>
+        <el-button circle size="small" :icon="Refresh" :loading="loading" aria-label="刷新分析" title="刷新" @click="loadAnalysis" />
+      </div>
+    </header>
+
+    <section class="filter-panel" aria-label="分析条件">
+      <label class="filter-field">
+        <span>分析维度</span>
+        <el-select v-model="groupBy" size="small" :disabled="!dimensions.length" placeholder="选择维度">
+          <el-option v-for="item in dimensions" :key="item.key" :value="item.key" :label="item.label" />
+        </el-select>
+      </label>
+      <label v-if="timeSupported" class="filter-field is-wide">
+        <span>下单时间</span>
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          size="small"
+          value-format="YYYY-MM-DD"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          unlink-panels
+          :disabled="!data"
+        />
+      </label>
+      <label v-if="options.category.length" class="filter-field is-wide">
+        <span>商品类目</span>
+        <el-select v-model="categories" multiple collapse-tags collapse-tags-tooltip filterable size="small" placeholder="全部类目">
+          <el-option v-for="item in options.category" :key="item" :value="item" :label="item" />
+        </el-select>
+      </label>
+      <label v-if="options.customerState.length" class="filter-field">
+        <span>客户州</span>
+        <el-select v-model="customerStates" multiple collapse-tags collapse-tags-tooltip filterable size="small" placeholder="全部州">
+          <el-option v-for="item in options.customerState" :key="item" :value="item" :label="item" />
+        </el-select>
+      </label>
+      <label v-if="options.sellerState.length" class="filter-field">
+        <span>卖家州</span>
+        <el-select v-model="sellerStates" multiple collapse-tags collapse-tags-tooltip filterable size="small" placeholder="全部州">
+          <el-option v-for="item in options.sellerState" :key="item" :value="item" :label="item" />
+        </el-select>
+      </label>
+      <div class="filter-actions">
+        <el-button size="small" text :disabled="!hasFilters" @click="resetFilters">清空条件</el-button>
         <el-select v-model="reportFormat" size="small" class="format-select" :disabled="!data">
           <el-option label="PDF" value="pdf" />
           <el-option label="Word" value="docx" />
@@ -28,9 +72,8 @@
         <el-button size="small" type="primary" :icon="Document" :loading="reporting" :disabled="!data" @click="downloadReport">
           生成报告
         </el-button>
-        <el-button circle size="small" :icon="Refresh" :loading="loading" aria-label="刷新分析" title="刷新" @click="loadAnalysis" />
       </div>
-    </header>
+    </section>
 
     <div v-if="error" class="delay-message is-error" role="alert">
       <el-icon><Warning /></el-icon><span>{{ error }}</span>
@@ -46,13 +89,14 @@
         <span>{{ formatNumber(data.rowCount) }} 行</span>
         <el-tag v-if="data.derivedFromTimestamps" size="small" effect="plain" type="info">延误由时间戳推导</el-tag>
         <span v-if="unavailable.length" class="source-warn">缺少字段：{{ unavailable.join('、') }}</span>
+        <span v-if="activeFilterText" class="source-filter">已筛选：{{ activeFilterText }}</span>
       </div>
 
       <section class="kpi-grid" aria-label="订单统计">
         <article class="kpi-card">
           <span class="kpi-label">订单量</span>
           <strong>{{ formatNumber(data.totals.orders) }}</strong>
-          <small>数据表全部下单记录</small>
+          <small>当前筛选条件下的订单</small>
         </article>
         <article class="kpi-card">
           <span class="kpi-label">已签收订单量</span>
@@ -85,13 +129,13 @@
         <article class="kpi-card">
           <span class="kpi-label">平均延误天数</span>
           <strong>{{ days(data.metrics.avgDelayDays) }}</strong>
-          <small>仅统计延误订单，晚到多久</small>
+          <small>仅统计延误订单</small>
         </article>
       </section>
 
       <section class="delay-panel" aria-label="签收结果分布">
         <div class="panel-heading">
-          <div class="panel-title"><h2>整体物流水平</h2><span>提前 / 按时 / 延误的结构，判断配送是否稳定</span></div>
+          <div class="panel-title"><h2>整体物流水平</h2><span>提前 / 按时 / 延误的结构</span></div>
           <el-tag size="small" effect="plain" :type="stability.type">{{ stability.label }}</el-tag>
         </div>
         <div class="outcome-list">
@@ -104,52 +148,30 @@
             <span class="outcome-rate">{{ percent(item.rate) }}</span>
           </div>
         </div>
-        <p class="panel-note">
-          提前送达指签收早于承诺日期；按时送达指签收日期与承诺日期相同；延误指晚于承诺日期。
-          提前占比越高、延误波动越小，说明该数据集的配送承诺越保守、履约越稳定。
-        </p>
       </section>
 
-      <div class="dimension-grid">
-        <section class="delay-panel" aria-label="按月延误率">
-          <div class="panel-heading">
-            <div class="panel-title"><h2>按月份</h2><span>下单月份 × 延误率（12 个月汇总）</span></div>
-          </div>
-          <div class="bar-chart">
-            <div v-for="item in data.byMonth" :key="item.month" class="bar-column">
-              <span class="bar-value">{{ percent(item.delayRate) }}</span>
-              <div class="bar-track">
-                <div class="bar-fill" :class="rateClass(item.delayRate)" :style="{ height: `${barHeight(item.delayRate)}%` }" />
-              </div>
-              <span class="bar-label">{{ item.month }}月</span>
-              <span class="bar-sub">{{ formatNumber(item.orders) }}</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="delay-panel" aria-label="按星期延误率">
-          <div class="panel-heading">
-            <div class="panel-title"><h2>按星期</h2><span>下单星期 × 延误率</span></div>
-          </div>
-          <div class="bar-chart">
-            <div v-for="item in data.byWeekday" :key="item.weekday" class="bar-column">
-              <span class="bar-value">{{ percent(item.delayRate) }}</span>
-              <div class="bar-track">
-                <div class="bar-fill" :class="rateClass(item.delayRate)" :style="{ height: `${barHeight(item.delayRate)}%` }" />
-              </div>
-              <span class="bar-label">{{ item.label || item.weekday }}</span>
-              <span class="bar-sub">{{ formatNumber(item.orders) }}</span>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <section class="delay-panel" aria-label="按商品类目延误率">
+      <section class="delay-panel" aria-label="维度分析">
         <div class="panel-heading">
-          <div class="panel-title"><h2>按商品类目</h2><span>订单量前 12 的类目，按延误率排序</span></div>
+          <div class="panel-title">
+            <h2>{{ groupLabel }}</h2>
+            <span>{{ isTimeDimension ? '按时间分布，看延误是否随月份/星期波动' : '按该维度排序，找延误偏高的群体' }}</span>
+          </div>
+          <el-tag size="small" effect="plain">共 {{ buckets.length }} 组</el-tag>
         </div>
-        <el-table :data="sortedCategories" size="small" table-layout="fixed" class="category-table">
-          <el-table-column prop="category" label="商品类目" min-width="200" show-overflow-tooltip />
+
+        <div v-if="isTimeDimension && buckets.length" class="bar-chart">
+          <div v-for="item in buckets" :key="item.label" class="bar-column">
+            <span class="bar-value">{{ percent(item.delayRate) }}</span>
+            <div class="bar-track">
+              <div class="bar-fill" :class="rateClass(item.delayRate)" :style="{ height: `${barHeight(item.delayRate)}%` }" />
+            </div>
+            <span class="bar-label">{{ item.label }}</span>
+            <span class="bar-sub">{{ formatNumber(item.orders) }}</span>
+          </div>
+        </div>
+
+        <el-table v-else :data="sortedBuckets" size="small" table-layout="fixed" class="category-table">
+          <el-table-column prop="label" :label="groupLabel" min-width="200" show-overflow-tooltip />
           <el-table-column label="订单量" width="110" align="right">
             <template #default="{ row }">{{ formatNumber(row.orders) }}</template>
           </el-table-column>
@@ -167,7 +189,7 @@
             </template>
           </el-table-column>
         </el-table>
-        <p class="panel-note">延误率明显高于整体的类目，是优先排查的对象（类目可能集中在重货、家具、跨境卖家等环节）。</p>
+        <p v-if="!buckets.length" class="panel-note">当前筛选条件下没有可分组的数据。</p>
       </section>
 
       <section class="delay-panel" aria-label="相关性分析">
@@ -200,14 +222,14 @@
     </template>
 
     <div v-else-if="!loading && !error" class="delay-empty">
-      请选择一个包含 <code>is_delayed</code> 字段的数据表。
+      请选择一个包含延误字段的数据表。
     </div>
   </main>
 </template>
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { Refresh, Warning, Document } from '@element-plus/icons-vue'
+import { Document, Refresh, Warning } from '@element-plus/icons-vue'
 import { downloadDelayReport, getDatasetCatalog, getDelayAnalysis, listDatasets } from '@/api/datasets'
 import { useAuth } from '@/auth/keycloak'
 
@@ -224,8 +246,40 @@ const reporting = ref(false)
 const reportFormat = ref('pdf')
 const error = ref('')
 
+const groupBy = ref('')
+const dateRange = ref(null)
+const categories = ref([])
+const customerStates = ref([])
+const sellerStates = ref([])
+let requestId = 0
+
 const tables = computed(() => catalog.value?.tables || [])
 const versionNo = computed(() => catalog.value?.versionNo ?? '—')
+const dimensions = computed(() => data.value?.availableDimensions || [])
+const options = computed(() => ({
+  category: data.value?.dimensionOptions?.category || [],
+  customerState: data.value?.dimensionOptions?.customerState || [],
+  sellerState: data.value?.dimensionOptions?.sellerState || [],
+}))
+const timeSupported = computed(() => Boolean(data.value?.filters?.timeRangeSupported))
+const buckets = computed(() => data.value?.groupBy?.buckets || [])
+const groupLabel = computed(() => data.value?.groupBy?.label || '维度分析')
+const isTimeDimension = computed(() => ['month', 'weekday'].includes(data.value?.groupBy?.key))
+const sortedBuckets = computed(() => [...buckets.value].sort((left, right) => (right.delayRate || 0) - (left.delayRate || 0)))
+
+const hasFilters = computed(() => Boolean(
+  dateRange.value?.length || categories.value.length || customerStates.value.length || sellerStates.value.length,
+))
+
+const activeFilterText = computed(() => {
+  const parts = []
+  if (dateRange.value?.length === 2) parts.push(`${dateRange.value[0]} ~ ${dateRange.value[1]}`)
+  if (categories.value.length) parts.push(`类目 ${categories.value.length} 个`)
+  if (customerStates.value.length) parts.push(`客户州 ${customerStates.value.length} 个`)
+  if (sellerStates.value.length) parts.push(`卖家州 ${sellerStates.value.length} 个`)
+  return parts.join(' · ')
+})
+
 const unavailable = computed(() => {
   if (!data.value) return []
   const derived = Boolean(data.value.derivedFromTimestamps)
@@ -253,11 +307,6 @@ const stability = computed(() => {
   return { label: '整体稳定', type: 'success' }
 })
 
-const sortedCategories = computed(() => {
-  const rows = [...(data.value?.byCategory || [])]
-  return rows.sort((left, right) => (right.delayRate || 0) - (left.delayRate || 0))
-})
-
 const correlationText = computed(() => {
   const value = data.value?.correlation?.deliveryVsRating
   if (value == null) return '样本不足'
@@ -267,16 +316,22 @@ const correlationText = computed(() => {
   return '正相关：需要结合业务复核'
 })
 
-const maxRate = computed(() => {
-  const rates = [
-    ...(data.value?.byMonth || []).map((item) => item.delayRate || 0),
-    ...(data.value?.byWeekday || []).map((item) => item.delayRate || 0),
-  ]
-  return Math.max(0.01, ...rates)
-})
+const maxRate = computed(() => Math.max(0.01, ...buckets.value.map((item) => item.delayRate || 0)))
+const ratingMax = computed(() => Math.max(
+  1,
+  ...(data.value?.correlation?.ratingBuckets || []).map((bucket) => Number(bucket.avgDeliveryDays || 0)),
+))
 
 function barHeight(rate) {
   return Math.max(3, ((rate || 0) / maxRate.value) * 100)
+}
+
+function ratingWidth(value) {
+  return Math.max(3, Math.min(100, (Number(value || 0) / ratingMax.value) * 100))
+}
+
+function ratingClass(score) {
+  return score <= 2 ? 'is-high' : score === 3 ? 'is-mid' : 'is-low'
 }
 
 function rateClass(rate) {
@@ -296,22 +351,20 @@ function days(value) {
   return `${Number(value).toFixed(2)} 天`
 }
 
-const ratingMax = computed(() => Math.max(
-  1,
-  ...(data.value?.correlation?.ratingBuckets || []).map((bucket) => Number(bucket.avgDeliveryDays || 0)),
-))
-
-function ratingWidth(value) {
-  return Math.max(3, Math.min(100, (Number(value || 0) / ratingMax.value) * 100))
-}
-
-function ratingClass(score) {
-  return score <= 2 ? 'is-high' : score === 3 ? 'is-mid' : 'is-low'
-}
-
 function formatNumber(value, digits = 0) {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: digits }).format(Number(value))
+}
+
+function queryParams() {
+  return {
+    groupBy: groupBy.value || undefined,
+    from: dateRange.value?.[0] || undefined,
+    to: dateRange.value?.[1] || undefined,
+    category: categories.value,
+    sellerState: sellerStates.value,
+    customerState: customerStates.value,
+  }
 }
 
 function autoPickTable(list) {
@@ -331,7 +384,8 @@ async function loadDatasets() {
     datasets.value = result?.items || []
     if (!datasets.value.length) return
     if (!datasets.value.some((dataset) => dataset.datasetId === selectedDatasetId.value)) {
-      const preferred = datasets.value.find((dataset) => /ml_ready|延误训练集|train70/i.test(dataset.name))
+      const preferred = datasets.value.find((dataset) => /含评分|ml_ready_v3|延误训练集/i.test(dataset.name))
+        || datasets.value.find((dataset) => /ml_ready/i.test(dataset.name))
       selectedDatasetId.value = (preferred || datasets.value[0]).datasetId
     }
   } catch (failure) {
@@ -347,6 +401,7 @@ async function loadCatalog() {
   catalog.value = null
   data.value = null
   error.value = ''
+  resetFilters(false)
   try {
     catalog.value = await getDatasetCatalog(selectedDatasetId.value)
     const table = autoPickTable(catalog.value?.tables)
@@ -364,15 +419,20 @@ async function loadCatalog() {
 
 async function loadAnalysis() {
   if (!selectedDatasetId.value || !selectedTableId.value) return
+  const id = ++requestId
   loading.value = true
   error.value = ''
   try {
-    data.value = await getDelayAnalysis(selectedDatasetId.value, selectedTableId.value)
+    const result = await getDelayAnalysis(selectedDatasetId.value, selectedTableId.value, queryParams())
+    if (id !== requestId) return
+    data.value = result
+    if (!groupBy.value && result?.groupBy?.key) groupBy.value = result.groupBy.key
   } catch (failure) {
+    if (id !== requestId) return
     error.value = failure.message || '延误分析失败'
     data.value = null
   } finally {
-    loading.value = false
+    if (id === requestId) loading.value = false
   }
 }
 
@@ -381,7 +441,9 @@ async function downloadReport() {
   reporting.value = true
   error.value = ''
   try {
-    const { blob, fileName } = await downloadDelayReport(selectedDatasetId.value, selectedTableId.value, reportFormat.value)
+    const { blob, fileName } = await downloadDelayReport(
+      selectedDatasetId.value, selectedTableId.value, reportFormat.value, queryParams(),
+    )
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -397,6 +459,14 @@ async function downloadReport() {
   }
 }
 
+function resetFilters(reload = true) {
+  dateRange.value = null
+  categories.value = []
+  customerStates.value = []
+  sellerStates.value = []
+  if (reload) loadAnalysis()
+}
+
 onMounted(loadDatasets)
 watch(() => auth.state.status, (status) => {
   if (status === 'authenticated') loadDatasets()
@@ -410,6 +480,9 @@ watch(() => auth.state.status, (status) => {
 })
 watch(selectedDatasetId, loadCatalog)
 watch(selectedTableId, loadAnalysis)
+watch([groupBy, dateRange, categories, customerStates, sellerStates], () => {
+  if (data.value) loadAnalysis()
+}, { deep: true })
 </script>
 
 <style scoped>
@@ -419,10 +492,15 @@ watch(selectedTableId, loadAnalysis)
 .delay-title strong { color: #26352e; font-size: 18px; font-weight: 680; }
 .delay-title span { color: #6b7a72; font-size: 11px; }
 .delay-filters { display: flex; align-items: center; gap: 8px; }
-.filter-select { width: 220px; }
+.filter-select { width: 210px; }
+.filter-panel { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; padding: 10px 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.filter-field { display: grid; gap: 4px; min-width: 150px; color: #5c6c64; font-size: 10px; }
+.filter-field.is-wide { min-width: 240px; flex: 1 1 260px; }
+.filter-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .format-select { width: 92px; }
 .delay-source { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #7b8a82; font-size: 10px; }
 .source-warn { color: #a34733; }
+.source-filter { color: #356b58; }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .kpi-grid.is-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .kpi-card { display: grid; gap: 4px; padding: 12px 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
@@ -446,11 +524,10 @@ watch(selectedTableId, loadAnalysis)
 .outcome-bar.is-delayed { background: #d9694f; }
 .outcome-value { color: #4c5f55; font-size: 10px; text-align: right; }
 .outcome-rate { color: #263d33; font-size: 11px; font-weight: 620; text-align: right; }
-.dimension-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 150px; padding-top: 14px; }
+.bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 170px; padding-top: 14px; }
 .bar-column { display: grid; flex: 1; grid-template-rows: auto minmax(0, 1fr) auto auto; align-items: end; gap: 3px; text-align: center; }
 .bar-value { color: #6b7a72; font-size: 8px; }
-.bar-track { display: flex; height: 92px; align-items: flex-end; background: #f3f6f4; border-radius: 3px; }
+.bar-track { display: flex; height: 104px; align-items: flex-end; background: #f3f6f4; border-radius: 3px; }
 .bar-fill { width: 100%; border-radius: 3px 3px 0 0; }
 .bar-fill.is-low { background: #6ea287; }
 .bar-fill.is-mid { background: #d8b25c; }
@@ -487,12 +564,13 @@ watch(selectedTableId, loadAnalysis)
 .delay-loading, .delay-empty { padding: 40px 12px; color: #859289; font-size: 11px; text-align: center; }
 @media (max-width: 1080px) {
   .kpi-grid, .kpi-grid.is-three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .dimension-grid { grid-template-columns: minmax(0, 1fr); }
+  .filter-actions { width: 100%; margin-left: 0; }
 }
 @media (max-width: 760px) {
   .kpi-grid, .kpi-grid.is-three { grid-template-columns: minmax(0, 1fr); }
   .delay-filters { flex-wrap: wrap; }
   .filter-select { width: 100%; }
+  .filter-field, .filter-field.is-wide { min-width: 100%; flex: 1 1 100%; }
   .outcome-row { grid-template-columns: 64px minmax(0, 1fr) 60px 56px; }
 }
 </style>

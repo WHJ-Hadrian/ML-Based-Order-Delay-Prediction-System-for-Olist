@@ -1,6 +1,7 @@
 package com.olist.datasets.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.olist.datasets.service.DelayAnalysisQuery;
 import com.olist.datasets.service.DelayAnalysisService;
 import java.io.IOException;
 import java.net.URI;
@@ -9,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -50,7 +52,13 @@ public class DelayReportController {
     public ResponseEntity<byte[]> report(
             @PathVariable UUID datasetId,
             @PathVariable UUID tableId,
-            @RequestParam(defaultValue = "pdf") String format) throws IOException, InterruptedException {
+            @RequestParam(defaultValue = "pdf") String format,
+            @RequestParam(required = false) String groupBy,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(required = false) List<String> category,
+            @RequestParam(required = false) List<String> sellerState,
+            @RequestParam(required = false) List<String> customerState) throws IOException, InterruptedException {
         String normalized = format == null ? "pdf" : format.toLowerCase();
         if (!normalized.equals("pdf") && !normalized.equals("docx") && !normalized.equals("html")) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "报告格式只支持 pdf、docx、html");
@@ -59,7 +67,8 @@ public class DelayReportController {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "报告服务令牌尚未配置");
         }
 
-        Map<String, Object> data = analysisService.analyze(datasetId, tableId);
+        Map<String, Object> data = analysisService.analyze(datasetId, tableId,
+                new DelayAnalysisQuery(groupBy, from, to, category, sellerState, customerState));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("title", TITLE);
         payload.put("format", normalized);
