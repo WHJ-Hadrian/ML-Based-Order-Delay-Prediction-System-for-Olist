@@ -160,8 +160,12 @@ public class AnalyticsService {
                     "查询失败：" + error.getMessage(), error);
         }
         long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        java.util.List<Map<String, Object>> columnPayload = compiled.columns().stream()
+                .map(column -> Map.<String, Object>of(
+                        "key", column.key(), "label", column.label(), "type", column.type()))
+                .toList();
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("columns", compiled.columns());
+        result.put("columns", columnPayload);
         result.put("rows", rows);
         result.put("rowCount", rows.size());
         result.put("limit", compiled.limit());

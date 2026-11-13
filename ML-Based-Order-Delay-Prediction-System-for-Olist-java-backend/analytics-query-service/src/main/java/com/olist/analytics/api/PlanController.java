@@ -1,6 +1,7 @@
 package com.olist.analytics.api;
 
 import com.olist.analytics.service.PlanService;
+import com.olist.analytics.service.ReportService;
 import com.olist.analytics.service.PlanService.PlanRequest;
 import com.olist.analytics.service.PlanService.PlanResponse;
 import com.olist.analytics.service.PlanService.RunResponse;
@@ -30,9 +31,11 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 public class PlanController {
 
     private final PlanService service;
+    private final ReportService reportService;
 
-    public PlanController(PlanService service) {
+    public PlanController(PlanService service, ReportService reportService) {
         this.service = service;
+        this.reportService = reportService;
     }
 
     @GetMapping("/plans")
@@ -75,6 +78,28 @@ public class PlanController {
                 .body(service.run(jwt.getSubject(), id, authorization));
     }
 
+    @PostMapping("/plans/{id}/report")
+    public ResponseEntity<byte[]> report(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "pdf") String format,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        PlanResponse plan = service.get(jwt.getSubject(), id);
+        if (plan.spec() == null || plan.spec().source() == null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "方案还没有绑定数据表");
+        }
+        ReportService.Rendered rendered = reportService.render(
+                jwt.getSubject(),
+                UUID.fromString(plan.spec().source().datasetVersionId()),
+                UUID.fromString(plan.spec().source().tableId()),
+                plan.spec(), format, authorization);
+        return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.parseMediaType(rendered.contentType()))
+                .header("Content-Disposition", "attachment; filename*=UTF-8''" + rendered.filename())
+                .body(rendered.body());
+    }
+
     @GetMapping("/plans/{id}/runs")
     public List<RunResponse> runs(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         return service.runs(jwt.getSubject(), id);
@@ -98,8 +123,11 @@ public class PlanController {
 
     @PostMapping("/templates/{key}/copy")
     public ResponseEntity<PlanResponse> copy(
-            @PathVariable String key, @AuthenticationPrincipal Jwt jwt) {
-        PlanResponse created = service.copyTemplate(jwt.getSubject(), key);
+            @PathVariable String key,
+            @RequestParam(required = false) UUID datasetVersionId,
+            @RequestParam(required = false) UUID tableId,
+            @AuthenticationPrincipal Jwt jwt) {
+        PlanResponse created = service.copyTemplate(jwt.getSubject(), key, datasetVersionId, tableId);
         URI location = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/api/v1/analytics/plans/{id}").buildAndExpand(created.id()).toUri();
         return ResponseEntity.created(location).body(created);

@@ -444,8 +444,18 @@ SETTINGS max_execution_time = 30, max_rows_to_read = 5000000
 
 ### 待办
 
-- P5：通用报告渲染。
 - P6：下线旧接口 + 迁移 `analysis_workspaces`。
+
+### P5（已完成）
+
+- Python：新增通用渲染入口 `POST /internal/v1/report-renders`（`app/api/report_renders.py`），复用 PDF/Word/HTML 渲染器，入参是通用文档 `{title, format, meta, sections:[{heading, paragraphs, table}]}`。
+- Java：`ReportService` 把一次分析结果组装成文档（分析口径 / 结果表 / 说明），调用渲染服务；接口：
+  - `POST /api/v1/analytics/report?format=pdf|docx|html`（按当前 spec 实时分析并出报告）
+  - `POST /api/v1/analytics/plans/{id}/report?format=...`（按已保存方案出报告）
+- 前端：分析工作台结果区增加 CSV / PDF / Word / HTML 四个导出按钮。
+- 实测：PDF 4.1KB（`%PDF-`）、Word 37KB（zip）、HTML 2.1KB（12 行数据）；模板复制（带数据表绑定）→ 运行 → 报告全链路 201/200。
+- 模板复制现在支持 `?datasetVersionId=&tableId=` 绑定数据源；未绑定的方案运行/报告会返回 422 并提示重新保存。
+
 
 ### P2 / P3 / P4（已完成）
 

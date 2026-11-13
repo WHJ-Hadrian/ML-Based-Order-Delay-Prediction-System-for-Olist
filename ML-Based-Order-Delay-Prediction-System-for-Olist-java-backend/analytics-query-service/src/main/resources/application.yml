@@ -37,6 +37,9 @@ olist:
     database: ${CLICKHOUSE_DATABASE:olist_datasets}
     username: ${CLICKHOUSE_USER:olist}
     password: ${CLICKHOUSE_PASSWORD:local-clickhouse-only}
+  report-service:
+    url: ${REPORT_SERVICE_URL:http://localhost:8090}
+    token: ${MODEL_TRAINING_INTERNAL_TOKEN:local-training-token-2026}
   analytics:
     max-rows: ${ANALYTICS_MAX_ROWS:5000}
     default-limit: ${ANALYTICS_DEFAULT_LIMIT:500}

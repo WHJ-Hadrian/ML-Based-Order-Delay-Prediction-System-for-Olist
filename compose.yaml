@@ -399,6 +399,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_analytics?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SERVER_PORT: 8086
       DATASET_SERVICE_URL: http://dataset-service:8082
+      REPORT_SERVICE_URL: http://model-serving:8090
+      MODEL_TRAINING_INTERNAL_TOKEN: ${MODEL_TRAINING_INTERNAL_TOKEN:-local-training-token-2026}
       CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123?compress=0
       CLICKHOUSE_DATABASE: olist_datasets
       CLICKHOUSE_USER: olist

@@ -105,6 +105,9 @@ public class PlanService {
         AnalysisPlanVersion version = versionRepository.findByPlanIdAndVersionNo(planId, plan.getCurrentVersion())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "方案版本缺失"));
         AnalyticsSpec spec = parse(version.getSpecJson());
+        if (spec.source() == null) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "方案还没有绑定数据表，请重新保存一次");
+        }
         return execute(ownerId, planId, version.getVersionNo(), spec, authorization);
     }
 
@@ -128,10 +131,16 @@ public class PlanService {
                 .toList();
     }
 
-    public PlanResponse copyTemplate(String ownerId, String templateKey) {
+    public PlanResponse copyTemplate(String ownerId, String templateKey, UUID datasetVersionId, UUID tableId) {
         AnalysisTemplate template = templateRepository.findById(templateKey)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "模板不存在"));
         AnalyticsSpec spec = parse(template.getSpecJson());
+        if (datasetVersionId != null && tableId != null) {
+            spec = new AnalyticsSpec(spec.schemaVersion(),
+                    new AnalyticsSpec.Source(datasetVersionId.toString(), tableId.toString()),
+                    spec.metrics(), spec.dimensions(), spec.time(), spec.filters(), spec.having(),
+                    spec.orderBy(), spec.limit(), spec.visuals(), spec.report());
+        }
         Instant now = Instant.now();
         AnalysisPlan plan = planRepository.save(new AnalysisPlan(
                 UUID.randomUUID(), ownerId, template.getName() + "（副本）", template.getDescription(),

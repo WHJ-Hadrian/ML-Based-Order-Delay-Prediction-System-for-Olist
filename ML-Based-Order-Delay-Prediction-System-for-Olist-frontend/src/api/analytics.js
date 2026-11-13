@@ -88,6 +88,42 @@ export function listAnalysisTemplates() {
   return request('/analytics/templates')
 }
 
-export function copyAnalysisTemplate(key) {
-  return request(`/analytics/templates/${encodeURIComponent(key)}/copy`, { method: 'POST' })
+export function copyAnalysisTemplate(key, datasetVersionId, tableId) {
+  const query = datasetVersionId && tableId
+    ? `?datasetVersionId=${encodeURIComponent(datasetVersionId)}&tableId=${encodeURIComponent(tableId)}`
+    : ''
+  return request(`/analytics/templates/${encodeURIComponent(key)}/copy${query}`, { method: 'POST' })
+}
+
+export async function downloadAnalyticsReport(payload, format) {
+  const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' })
+  const token = await getAccessToken()
+  if (!token) throw authenticationRequired()
+  headers.set('Authorization', `Bearer ${token}`)
+  let response
+  try {
+    response = await fetch(`${API_ROOT}/analytics/report?format=${encodeURIComponent(format)}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    })
+  } catch {
+    throw new Error('无法连接分析服务')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw authenticationRequired()
+    let detail = `报告生成失败（HTTP ${response.status}）`
+    try {
+      const body = await response.json()
+      detail = body.detail || body.message || detail
+    } catch {
+      /* 忽略非 JSON 响应 */
+    }
+    throw new Error(detail)
+  }
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  const filename = match ? decodeURIComponent(match[1]) : `分析报告.${format}`
+  return { blob, filename }
 }

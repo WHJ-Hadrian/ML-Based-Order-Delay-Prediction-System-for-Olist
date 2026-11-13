@@ -7,6 +7,7 @@ import {
   copyAnalysisTemplate,
   createAnalysisPlan,
   deleteAnalysisPlan,
+  downloadAnalyticsReport,
   getAnalyticsCapabilities,
   listAnalysisPlans,
   listAnalysisTemplates,
@@ -38,6 +39,7 @@ const templates = ref([])
 const activePlanId = ref('')
 const planName = ref('')
 const saving = ref(false)
+const reporting = ref('')
 
 const grainOptions = [
   { value: 'month', label: '按月' },
@@ -279,12 +281,38 @@ async function removePlan(plan) {
 
 async function copyTemplate(template) {
   try {
-    const plan = await copyAnalysisTemplate(template.key)
+    const plan = await copyAnalysisTemplate(template.key, datasetId.value, tableId.value)
     await loadPlans()
     applyPlan(plan)
     ElMessage.success(`已复制模板：${template.name}`)
   } catch (error) {
     ElMessage.error(error.message)
+  }
+}
+
+async function exportReport(format) {
+  if (!result.value) {
+    ElMessage.warning('请先运行一次分析')
+    return
+  }
+  reporting.value = format
+  try {
+    const spec = buildSpec()
+    const { blob, filename } = await downloadAnalyticsReport(
+      { datasetVersionId: datasetId.value, tableId: tableId.value, spec },
+      format,
+    )
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('报告已生成')
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    reporting.value = ''
   }
 }
 
@@ -466,7 +494,12 @@ onMounted(async () => {
             结果
             <small>{{ result.rowCount }} 行 · {{ result.elapsedMs }} ms</small>
           </h3>
-          <el-button size="small" :icon="DataAnalysis" @click="exportCsv">导出 CSV</el-button>
+          <div class="result-actions">
+            <el-button size="small" :icon="DataAnalysis" @click="exportCsv">CSV</el-button>
+            <el-button size="small" :loading="reporting === 'pdf'" @click="exportReport('pdf')">PDF</el-button>
+            <el-button size="small" :loading="reporting === 'docx'" @click="exportReport('docx')">Word</el-button>
+            <el-button size="small" :loading="reporting === 'html'" @click="exportReport('html')">HTML</el-button>
+          </div>
         </header>
 
         <div v-if="chartRows.length" class="chart">
@@ -642,6 +675,12 @@ onMounted(async () => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 12px;
+}
+
+.result-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .result-header {

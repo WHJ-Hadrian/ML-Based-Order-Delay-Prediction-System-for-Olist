@@ -1,6 +1,7 @@
 package com.olist.analytics.api;
 
 import com.olist.analytics.service.AnalyticsService;
+import com.olist.analytics.service.ReportService;
 import com.olist.analytics.spec.AnalyticsSpec;
 import java.util.Map;
 import java.util.UUID;
@@ -20,9 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AnalyticsController {
 
     private final AnalyticsService service;
+    private final ReportService reportService;
 
-    public AnalyticsController(AnalyticsService service) {
+    public AnalyticsController(AnalyticsService service, ReportService reportService) {
         this.service = service;
+        this.reportService = reportService;
     }
 
     public record AnalyticsRequest(UUID datasetVersionId, UUID tableId, AnalyticsSpec spec) {
@@ -56,6 +59,22 @@ public class AnalyticsController {
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         return service.query(request.datasetVersionId(), request.tableId(), request.spec(),
                 jwt.getSubject(), authorization);
+    }
+
+    @PostMapping("/report")
+    public org.springframework.http.ResponseEntity<byte[]> report(
+            @RequestBody AnalyticsRequest request,
+            @RequestParam(defaultValue = "pdf") String format,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        ReportService.Rendered rendered = reportService.render(
+                jwt.getSubject(), request.datasetVersionId(), request.tableId(),
+                request.spec(), format, authorization);
+        return org.springframework.http.ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.parseMediaType(rendered.contentType()))
+                .header("Content-Disposition",
+                        "attachment; filename*=UTF-8''" + rendered.filename())
+                .body(rendered.body());
     }
 
     @PostMapping("/values")
