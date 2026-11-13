@@ -1,6 +1,8 @@
 package com.olist.analytics.service;
 
 import com.olist.analytics.client.SnapshotClient;
+import com.olist.analytics.service.MetricService.Expr;
+import com.olist.analytics.service.MetricService.Metric;
 import com.olist.analytics.spec.AnalyticsSpec;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -48,7 +50,7 @@ public class QueryCompiler {
         this.timeoutSeconds = timeoutSeconds;
     }
 
-    public CompiledQuery compile(AnalyticsSpec spec, SnapshotClient.Table table) {
+    public CompiledQuery compile(AnalyticsSpec spec, SnapshotClient.Table table, Map<String, Metric> catalog) {
         if (spec == null) {
             throw new IllegalArgumentException("分析规格不能为空");
         }
@@ -112,7 +114,7 @@ public class QueryCompiler {
             String expression;
             String type;
             String label;
-            MetricCatalog.Metric system = metric.ref() == null ? null : MetricCatalog.byKey(metric.ref());
+            Metric system = metric.ref() == null ? null : catalog.get(metric.ref());
             if (system != null) {
                 expression = compileExpression(system.expr(), columns);
                 type = system.valueType();
@@ -202,7 +204,7 @@ public class QueryCompiler {
 
     // ------------------------------------------------------------------ expressions
 
-    private String compileExpression(MetricCatalog.Expr expr, Map<String, SnapshotClient.Column> columns) {
+    private String compileExpression(Expr expr, Map<String, SnapshotClient.Column> columns) {
         if (expr == null) {
             throw new IllegalArgumentException("指标表达式为空");
         }

@@ -3,6 +3,7 @@ import {
   Collection,
   Cpu,
   DataAnalysis,
+  DataLine,
   Grid,
   HomeFilled,
   MagicStick,
@@ -27,6 +28,10 @@ export const NAVIGATION_ITEMS = Object.freeze([
   {
     key: 'fields', path: '/fields', title: '字段定义', group: '数据', icon: Grid,
     component: () => import('@/views/FieldLibraryView.vue'),
+  },
+  {
+    key: 'analytics', path: '/analytics', title: '分析工作台', group: '数据', icon: DataLine,
+    component: () => import('@/views/AnalyticsWorkbenchView.vue'),
   },
   {
     key: 'analysis', path: '/analysis', title: '可视化分析', group: '数据', icon: DataAnalysis,

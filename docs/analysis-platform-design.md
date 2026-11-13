@@ -444,8 +444,14 @@ SETTINGS max_execution_time = 30, max_rows_to_read = 5000000
 
 ### 待办
 
-- P2：指标库落库（`metric_definitions`）+ `delay_analysis` 模板。
-- P3：方案 CRUD / 版本 / 运行记录。
-- P4：分析工作台前端 + 旧页面迁移。
 - P5：通用报告渲染。
+- P6：下线旧接口 + 迁移 `analysis_workspaces`。
+
+### P2 / P3 / P4（已完成）
+
+- **P2 指标库**：`metric_definitions` 落库（V2 种子 6 个系统指标，表达式为 JSON AST），`/capabilities` 从库里读指标；新增系统模板 `delay_analysis`（`analysis_templates`）。
+- **P3 方案**：`POST/GET/PUT/DELETE /api/v1/analytics/plans`、`POST /plans/{id}/run`、`GET /plans/{id}/runs`、`GET /runs`、`GET /templates`、`POST /templates/{key}/copy`；方案每次保存产生新版本，运行记录落 `analysis_runs`（可复现）。
+- **P4 前端**：新增「数据 → 分析工作台」`/analytics`（`AnalyticsWorkbenchView.vue`）：选数据集/表 → 勾指标 → 选维度/时间粒度/时间范围 → 加筛选（取值下拉走 `/values`）→ 运行 → 条形图 + 表格 + 导出 CSV；左侧方案库与系统模板，可保存/复制/删除/重跑。
+- 实测：`/capabilities` 返回 6 个指标；`/values` 返回类目取值；建方案→运行→历史→复制模板全链路 200/201；前端 `pnpm build` 通过。
+
 

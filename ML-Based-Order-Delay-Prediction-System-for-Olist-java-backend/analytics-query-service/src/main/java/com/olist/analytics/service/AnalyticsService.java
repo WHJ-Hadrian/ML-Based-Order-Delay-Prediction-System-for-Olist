@@ -3,6 +3,7 @@ package com.olist.analytics.service;
 import com.olist.analytics.client.SnapshotClient;
 import com.olist.analytics.config.ClickHouseConnectionFactory;
 import com.olist.analytics.config.ClickHouseProperties;
+import com.olist.analytics.service.MetricService.Metric;
 import com.olist.analytics.spec.AnalyticsSpec;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -26,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class AnalyticsService {
 
     private final SnapshotClient snapshotClient;
+    private final MetricService metricService;
     private final ClickHouseConnectionFactory clickHouseConnections;
     private final ClickHouseProperties clickHouseProperties;
     private final int maxRows;
@@ -36,6 +38,7 @@ public class AnalyticsService {
 
     public AnalyticsService(
             SnapshotClient snapshotClient,
+            MetricService metricService,
             ClickHouseConnectionFactory clickHouseConnections,
             ClickHouseProperties clickHouseProperties,
             @Value("${olist.analytics.max-rows:5000}") int maxRows,
@@ -44,6 +47,7 @@ public class AnalyticsService {
             @Value("${olist.analytics.max-metrics:40}") int maxMetrics,
             @Value("${olist.analytics.query-timeout-seconds:30}") int timeoutSeconds) {
         this.snapshotClient = snapshotClient;
+        this.metricService = metricService;
         this.clickHouseConnections = clickHouseConnections;
         this.clickHouseProperties = clickHouseProperties;
         this.maxRows = maxRows;
@@ -58,7 +62,7 @@ public class AnalyticsService {
                 maxDimensions, maxMetrics, timeoutSeconds);
     }
 
-    public Map<String, Object> capabilities(UUID datasetVersionId, UUID tableId, String authorization) {
+    public Map<String, Object> capabilities(UUID datasetVersionId, UUID tableId, String ownerId, String authorization) {
         SnapshotClient.Snapshot snapshot = snapshotClient.fetch(datasetVersionId, authorization);
         SnapshotClient.Table table = requireTable(snapshot, tableId);
         List<Map<String, Object>> dimensions = new ArrayList<>();
@@ -77,13 +81,15 @@ public class AnalyticsService {
         }
         Set<String> available = columnNames(table);
         List<Map<String, Object>> metrics = new ArrayList<>();
-        for (MetricCatalog.Metric metric : MetricCatalog.all()) {
+        List<Metric> catalog = metricService.list(ownerId);
+        for (Metric metric : catalog) {
             List<String> missing = metric.columns().stream()
                     .filter(name -> !available.contains(name))
                     .toList();
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("key", metric.key());
             item.put("name", metric.name());
+            item.put("description", metric.description());
             item.put("valueType", metric.valueType());
             item.put("available", missing.isEmpty());
             item.put("missingColumns", missing);
@@ -106,11 +112,12 @@ public class AnalyticsService {
         return result;
     }
 
-    public Map<String, Object> validate(UUID datasetVersionId, UUID tableId, AnalyticsSpec spec, String authorization) {
+    public Map<String, Object> validate(UUID datasetVersionId, UUID tableId, AnalyticsSpec spec, String ownerId, String authorization) {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             SnapshotClient.Snapshot snapshot = snapshotClient.fetch(datasetVersionId, authorization);
-            QueryCompiler.CompiledQuery compiled = compiler().compile(spec, requireTable(snapshot, tableId));
+            QueryCompiler.CompiledQuery compiled = compiler().compile(
+                    spec, requireTable(snapshot, tableId), MetricService.index(metricService.list(ownerId)));
             result.put("valid", true);
             result.put("columns", compiled.columns());
             result.put("limit", compiled.limit());
@@ -124,13 +131,14 @@ public class AnalyticsService {
         return result;
     }
 
-    public Map<String, Object> query(UUID datasetVersionId, UUID tableId, AnalyticsSpec spec, String authorization) {
+    public Map<String, Object> query(UUID datasetVersionId, UUID tableId, AnalyticsSpec spec, String ownerId, String authorization) {
         if (datasetVersionId == null || tableId == null) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "必须指定数据版本和数据表");
         }
         SnapshotClient.Snapshot snapshot = snapshotClient.fetch(datasetVersionId, authorization);
         SnapshotClient.Table table = requireTable(snapshot, tableId);
-        QueryCompiler.CompiledQuery compiled = compiler().compile(spec, table);
+        QueryCompiler.CompiledQuery compiled = compiler().compile(
+                spec, table, MetricService.index(metricService.list(ownerId)));
         long started = System.nanoTime();
         List<List<Object>> rows = new ArrayList<>();
         try (Connection connection = clickHouseConnections.open();
@@ -161,6 +169,37 @@ public class AnalyticsService {
         result.put("specHash", Integer.toHexString(compiled.sql().hashCode()));
         result.put("schemaHash", snapshot.schemaHash());
         return result;
+    }
+
+
+    /** 维度取值列表（筛选下拉用）。 */
+    public java.util.List<Map<String, Object>> values(
+            UUID datasetVersionId, UUID tableId, String column, int limit, String authorization) {
+        SnapshotClient.Snapshot snapshot = snapshotClient.fetch(datasetVersionId, authorization);
+        SnapshotClient.Table table = requireTable(snapshot, tableId);
+        SnapshotClient.Column target = table.columns().stream()
+                .filter(item -> item.sourceName() != null && item.sourceName().equals(column))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "字段不存在: " + column));
+        int size = Math.min(Math.max(limit, 1), 200);
+        String sql = "SELECT `" + target.physicalName() + "` AS value, count(*) AS orders"
+                + " FROM `" + clickHouseProperties.getDatabase() + "`.`" + table.physicalTable() + "`"
+                + " WHERE `" + target.physicalName() + "` IS NOT NULL AND `" + target.physicalName() + "` != ''"
+                + " GROUP BY value ORDER BY orders DESC LIMIT " + size;
+        java.util.List<Map<String, Object>> rows = new ArrayList<>();
+        try (Connection connection = clickHouseConnections.open();
+                Statement statement = connection.createStatement()) {
+            statement.setQueryTimeout(timeoutSeconds);
+            try (ResultSet resultSet = statement.executeQuery(sql)) {
+                while (resultSet.next()) {
+                    rows.add(Map.of("value", String.valueOf(resultSet.getObject(1)),
+                            "count", resultSet.getLong(2)));
+                }
+            }
+        } catch (java.sql.SQLException error) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "查询失败：" + error.getMessage(), error);
+        }
+        return rows;
     }
 
     private SnapshotClient.Table requireTable(SnapshotClient.Snapshot snapshot, UUID tableId) {
