@@ -331,6 +331,13 @@ public class AnalyticsService {
     /** 两个字段的相关性：皮尔逊系数 + 散点样本 + 结论。 */
     public Map<String, Object> correlation(
             UUID datasetVersionId, UUID tableId, String xColumn, String yColumn, int limit, String authorization) {
+        return correlation(datasetVersionId, tableId, xColumn, yColumn, null, limit, authorization);
+    }
+
+    /** groupColumn 不为空时，散点按该字段分组着色。 */
+    public Map<String, Object> correlation(
+            UUID datasetVersionId, UUID tableId, String xColumn, String yColumn,
+            String groupColumn, int limit, String authorization) {
         if (xColumn == null || yColumn == null || xColumn.equals(yColumn)) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "请选择两个不同的字段");
         }
@@ -361,11 +368,38 @@ public class AnalyticsService {
                 }
             }
             List<List<Object>> points = new ArrayList<>();
-            try (ResultSet resultSet = statement.executeQuery(
-                    "SELECT x, y FROM (" + filtered + ") LIMIT " + sample)) {
-                while (resultSet.next()) {
-                    points.add(List.of(resultSet.getDouble(1), resultSet.getDouble(2)));
+            List<Map<String, Object>> groups = new ArrayList<>();
+            String groupPhysical = groupColumn == null || groupColumn.isBlank()
+                    ? null : columns(table).get(groupColumn);
+            if (groupPhysical != null) {
+                String groupedBase = "SELECT " + quote(groupPhysical) + " AS g,"
+                        + " toFloat64OrNull(" + quote(x) + ") AS x, toFloat64OrNull(" + quote(y) + ") AS y"
+                        + " FROM " + quote(clickHouseProperties.getDatabase()) + "." + quote(table.physicalTable());
+                String grouped = "SELECT g, x, y FROM (" + groupedBase + ")"
+                        + " WHERE x IS NOT NULL AND y IS NOT NULL AND g IS NOT NULL AND g != ''"
+                        + " LIMIT " + sample;
+                Map<String, List<List<Object>>> byGroup = new LinkedHashMap<>();
+                try (ResultSet resultSet = statement.executeQuery(grouped)) {
+                    while (resultSet.next()) {
+                        String label = String.valueOf(resultSet.getObject(1));
+                        byGroup.computeIfAbsent(label, key -> new ArrayList<>())
+                                .add(List.of(resultSet.getDouble(2), resultSet.getDouble(3)));
+                    }
                 }
+                byGroup.entrySet().stream()
+                        .sorted((left, right) -> right.getValue().size() - left.getValue().size())
+                        .limit(6)
+                        .forEach(entry -> groups.add(Map.of("label", entry.getKey(), "points", entry.getValue())));
+                result.put("groups", groups);
+                result.put("groupColumn", groupColumn);
+            } else {
+                try (ResultSet resultSet = statement.executeQuery(
+                        "SELECT x, y FROM (" + filtered + ") LIMIT " + sample)) {
+                    while (resultSet.next()) {
+                        points.add(List.of(resultSet.getDouble(1), resultSet.getDouble(2)));
+                    }
+                }
+                result.put("groups", List.of());
             }
             result.put("n", count);
             result.put("r", r);
@@ -377,6 +411,93 @@ public class AnalyticsService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "相关性计算失败：" + error.getMessage(), error);
         }
+        return result;
+    }
+
+
+    /** 多字段相关性矩阵：一次扫描算出所有两两皮尔逊系数。 */
+    public Map<String, Object> correlationMatrix(
+            UUID datasetVersionId, UUID tableId, List<String> fields, String authorization) {
+        if (fields == null || fields.size() < 2) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "至少选择两个字段");
+        }
+        if (fields.size() > 8) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "最多同时分析 8 个字段");
+        }
+        List<String> distinct = fields.stream().distinct().toList();
+        SnapshotClient.Snapshot snapshot = snapshotClient.fetch(datasetVersionId, authorization);
+        SnapshotClient.Table table = requireTable(snapshot, tableId);
+        Map<String, String> columnMap = columns(table);
+        List<String> physical = new ArrayList<>();
+        for (String field : distinct) {
+            String name = columnMap.get(field);
+            if (name == null) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "字段不存在: " + field);
+            }
+            physical.add(quote(name));
+        }
+        StringBuilder inner = new StringBuilder("SELECT ");
+        for (int index = 0; index < physical.size(); index++) {
+            if (index > 0) {
+                inner.append(", ");
+            }
+            inner.append("toFloat64OrNull(").append(physical.get(index)).append(") AS x").append(index);
+        }
+        inner.append(" FROM ").append(quote(clickHouseProperties.getDatabase()))
+                .append('.').append(quote(table.physicalTable()));
+        StringBuilder where = new StringBuilder(" WHERE ");
+        for (int index = 0; index < physical.size(); index++) {
+            if (index > 0) {
+                where.append(" AND ");
+            }
+            where.append("x").append(index).append(" IS NOT NULL");
+        }
+        String filtered = "SELECT * FROM (" + inner + ")" + where;
+        StringBuilder select = new StringBuilder("SELECT count(*) AS n");
+        for (int left = 0; left < physical.size(); left++) {
+            for (int right = left + 1; right < physical.size(); right++) {
+                select.append(", corr(x").append(left).append(", x").append(right).append(") AS c")
+                        .append(left).append('_').append(right);
+            }
+        }
+        select.append(" FROM (").append(filtered).append(')');
+
+        int size = physical.size();
+        Double[][] matrix = new Double[size][size];
+        long count = 0;
+        try (Connection connection = clickHouseConnections.open(); Statement statement = connection.createStatement()) {
+            statement.setQueryTimeout(timeoutSeconds);
+            try (ResultSet resultSet = statement.executeQuery(select.toString())) {
+                if (resultSet.next()) {
+                    count = resultSet.getLong(1);
+                    int columnIndex = 2;
+                    for (int left = 0; left < size; left++) {
+                        for (int right = left + 1; right < size; right++) {
+                            double value = resultSet.getDouble(columnIndex++);
+                            if (resultSet.wasNull() || !Double.isFinite(value)) {
+                                continue;
+                            }
+                            matrix[left][right] = value;
+                            matrix[right][left] = value;
+                        }
+                    }
+                }
+            }
+        } catch (java.sql.SQLException error) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "相关性矩阵计算失败：" + error.getMessage(), error);
+        }
+        for (int index = 0; index < size; index++) {
+            matrix[index][index] = 1.0;
+        }
+        List<List<Double>> rows = new ArrayList<>();
+        for (Double[] row : matrix) {
+            rows.add(java.util.Arrays.asList(row));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("fields", distinct);
+        result.put("matrix", rows);
+        result.put("n", count);
         return result;
     }
 

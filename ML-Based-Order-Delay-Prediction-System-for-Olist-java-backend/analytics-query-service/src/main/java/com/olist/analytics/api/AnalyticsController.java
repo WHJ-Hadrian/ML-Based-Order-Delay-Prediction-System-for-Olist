@@ -62,7 +62,20 @@ public class AnalyticsController {
     }
 
     public record CorrelationRequest(
-            UUID datasetVersionId, UUID tableId, String xColumn, String yColumn, Integer limit) {
+            UUID datasetVersionId, UUID tableId, String xColumn, String yColumn,
+            String groupBy, Integer limit) {
+    }
+
+    public record CorrelationMatrixRequest(
+            UUID datasetVersionId, UUID tableId, java.util.List<String> fields) {
+    }
+
+    @PostMapping("/correlation-matrix")
+    public Map<String, Object> correlationMatrix(
+            @RequestBody CorrelationMatrixRequest request,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        return service.correlationMatrix(request.datasetVersionId(), request.tableId(),
+                request.fields(), authorization);
     }
 
     @PostMapping("/correlation")
@@ -71,7 +84,7 @@ public class AnalyticsController {
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         int limit = request.limit() == null ? 2000 : request.limit();
         return service.correlation(request.datasetVersionId(), request.tableId(),
-                request.xColumn(), request.yColumn(), limit, authorization);
+                request.xColumn(), request.yColumn(), request.groupBy(), limit, authorization);
     }
 
     @PostMapping("/execute")

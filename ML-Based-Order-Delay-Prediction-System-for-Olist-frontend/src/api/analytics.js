@@ -59,6 +59,10 @@ export function analyzeCorrelation(payload) {
   return request('/analytics/correlation', { method: 'POST', body: JSON.stringify(payload) })
 }
 
+export function correlationMatrix(payload) {
+  return request('/analytics/correlation-matrix', { method: 'POST', body: JSON.stringify(payload) })
+}
+
 export function validateAnalytics(payload) {
   return request('/analytics/validate', { method: 'POST', body: JSON.stringify(payload) })
 }

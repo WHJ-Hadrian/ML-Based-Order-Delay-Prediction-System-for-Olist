@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataAnalysis, Delete, Document, FolderOpened, Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { BarChart, HeatmapChart, LineChart, PieChart, ScatterChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { getDatasetCatalog, listDatasets } from '@/api/datasets'
 import {
@@ -12,6 +12,8 @@ import {
   createAnalysisPlan,
   deleteAnalysisPlan,
   downloadAnalyticsReport,
+  analyzeCorrelation,
+  correlationMatrix,
   executeAnalytics,
   getAnalyticsCapabilities,
   listAnalysisPlans,
@@ -20,7 +22,7 @@ import {
   updateAnalysisPlan,
 } from '@/api/analytics'
 
-echarts.use([BarChart, LineChart, PieChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
+echarts.use([BarChart, LineChart, PieChart, ScatterChart, HeatmapChart, VisualMapComponent, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
 const datasets = ref([])
 const datasetId = ref('')
@@ -49,6 +51,18 @@ const saving = ref(false)
 const reporting = ref('')
 
 const charts = new Map()
+
+const correlationOpen = ref(false)
+const corrFields = ref([])
+const corrMatrix = ref(null)
+const corrPair = ref(null)
+const corrGroup = ref('')
+const corrResult = ref(null)
+const corrLoading = ref(false)
+const corrMatrixEl = ref(null)
+const corrScatterEl = ref(null)
+let corrMatrixChart = null
+let corrScatterChart = null
 
 const grainOptions = [
   { value: 'month', label: '按月' },
@@ -110,6 +124,156 @@ function defaultVisuals() {
   }
   list.push({ id: 'detail', type: 'table', title: '明细', width: 'full' })
   return list
+}
+
+
+const PREFERRED_FIELDS = ['total_delivery_days', 'review_score', 'delay_days', 'total_price', 'freight_value']
+
+function openCorrelation() {
+  correlationOpen.value = true
+  if (!corrFields.value.length) {
+    const available = fieldOptions.value.map((item) => item.name)
+    const preferred = PREFERRED_FIELDS.filter((name) => available.includes(name))
+    corrFields.value = (preferred.length ? preferred : available).slice(0, 4)
+  }
+  nextTick(() => {
+    if (corrMatrix.value) renderCorrelationMatrix()
+    if (corrResult.value) renderCorrelationScatter()
+  })
+}
+
+function closeCorrelation() {
+  correlationOpen.value = false
+  corrMatrixChart?.dispose()
+  corrScatterChart?.dispose()
+  corrMatrixChart = null
+  corrScatterChart = null
+}
+
+async function computeMatrix() {
+  if (corrFields.value.length < 2) {
+    ElMessage.warning('至少选择两个字段')
+    return
+  }
+  corrLoading.value = true
+  try {
+    corrMatrix.value = await correlationMatrix({
+      datasetVersionId: datasetId.value,
+      tableId: tableId.value,
+      fields: corrFields.value,
+    })
+    let best = null
+    const matrix = corrMatrix.value.matrix || []
+    for (let row = 0; row < matrix.length; row++) {
+      for (let col = row + 1; col < matrix[row].length; col++) {
+        const value = matrix[row][col]
+        if (value == null) continue
+        if (!best || Math.abs(value) > Math.abs(best.value)) best = { row, col, value }
+      }
+    }
+    if (best) {
+      await selectPair(corrMatrix.value.fields[best.row], corrMatrix.value.fields[best.col])
+    }
+    await nextTick()
+    renderCorrelationMatrix()
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    corrLoading.value = false
+  }
+}
+
+async function selectPair(xField, yField) {
+  corrPair.value = { x: xField, y: yField }
+  corrLoading.value = true
+  try {
+    corrResult.value = await analyzeCorrelation({
+      datasetVersionId: datasetId.value,
+      tableId: tableId.value,
+      xColumn: xField,
+      yColumn: yField,
+      groupBy: corrGroup.value || null,
+      limit: 2000,
+    })
+    await nextTick()
+    renderCorrelationScatter()
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    corrLoading.value = false
+  }
+}
+
+function renderCorrelationMatrix() {
+  if (!corrMatrixEl.value || !corrMatrix.value) return
+  if (!corrMatrixChart) corrMatrixChart = echarts.init(corrMatrixEl.value)
+  const fields = corrMatrix.value.fields || []
+  const cells = []
+  for (let row = 0; row < fields.length; row++) {
+    for (let col = 0; col < fields.length; col++) {
+      const value = corrMatrix.value.matrix?.[row]?.[col]
+      cells.push([col, fields.length - 1 - row, value == null ? '-' : Number(value.toFixed(2))])
+    }
+  }
+  corrMatrixChart.setOption({
+    tooltip: {
+      formatter: (params) => `${fields[params.value[1]]} × ${fields[fields.length - 1 - params.value[0]]}: ${params.value[2]}`,
+    },
+    grid: { left: 110, right: 20, top: 20, bottom: 90 },
+    xAxis: { type: 'category', data: fields, axisLabel: { rotate: 40, fontSize: 10 } },
+    yAxis: { type: 'category', data: [...fields].reverse(), axisLabel: { fontSize: 10 } },
+    visualMap: {
+      min: -1, max: 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
+      inRange: { color: ['#c0392b', '#f6f6f0', '#2e7d5b'] },
+      textStyle: { fontSize: 10 },
+    },
+    series: [{
+      type: 'heatmap',
+      data: cells,
+      label: { show: true, fontSize: 9, color: '#2b3b33' },
+      emphasis: { itemStyle: { shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.25)' } },
+    }],
+  }, true)
+  corrMatrixChart.off('click')
+  corrMatrixChart.on('click', (params) => {
+    const rowField = fields[fields.length - 1 - params.value[1]]
+    const colField = fields[params.value[0]]
+    if (rowField && colField && rowField !== colField) selectPair(rowField, colField)
+  })
+}
+
+function renderCorrelationScatter() {
+  if (!corrScatterEl.value || !corrResult.value) return
+  if (!corrScatterChart) corrScatterChart = echarts.init(corrScatterEl.value)
+  const value = corrResult.value
+  const groups = value.groups?.length
+    ? value.groups
+    : [{ label: '样本', points: value.points || [] }]
+  corrScatterChart.setOption({
+    color: ['#2e7d5b', '#e08b4f', '#5b8ec0', '#b06ab3', '#c0504d', '#7f9a3c'],
+    grid: { left: 60, right: 24, top: 30, bottom: 48 },
+    tooltip: {
+      formatter: (params) => `${params.seriesName}<br/>${value.xColumn}: ${formatNumber(params.value[0])}`
+        + `<br/>${value.yColumn}: ${formatNumber(params.value[1])}`,
+    },
+    legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 10 } } : undefined,
+    xAxis: {
+      type: 'value', name: value.xColumn, nameLocation: 'middle', nameGap: 26,
+      nameTextStyle: { fontSize: 10, color: '#7a8a80' },
+      axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { color: '#eef4f0' } },
+    },
+    yAxis: {
+      type: 'value', name: value.yColumn, nameTextStyle: { fontSize: 10, color: '#7a8a80' },
+      axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { color: '#eef4f0' } },
+    },
+    series: groups.map((group) => ({
+      name: String(group.label),
+      type: 'scatter',
+      symbolSize: 6,
+      itemStyle: { opacity: 0.65 },
+      data: (group.points || []).map((point) => [Number(point[0]), Number(point[1])]),
+    })),
+  }, true)
 }
 
 async function loadDatasets() {
@@ -614,6 +778,7 @@ onBeforeUnmount(() => {
           <el-input v-model="planName" placeholder="方案名称" style="width: 160px" />
           <el-button :icon="Refresh" @click="resetState">重置</el-button>
           <el-button :icon="Document" :loading="saving" @click="savePlan">保存</el-button>
+          <el-button :icon="DataAnalysis" @click="openCorrelation">相关性分析</el-button>
           <el-button type="primary" :icon="VideoPlay" :loading="running" @click="run">运行分析</el-button>
         </div>
       </header>
@@ -785,6 +950,55 @@ onBeforeUnmount(() => {
       </section>
 
       <el-empty v-else-if="!running" description="选择指标和维度后点「运行分析」，图表按上面的可视化设置生成" />
+
+
+      <el-drawer v-model="correlationOpen" title="相关性分析" size="72%" @closed="closeCorrelation">
+        <div class="corr-config">
+          <el-select
+            v-model="corrFields"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="选择字段（2-8 个）"
+            style="flex: 1"
+          >
+            <el-option v-for="field in fieldOptions" :key="field.name" :label="field.name" :value="field.name" />
+          </el-select>
+          <el-button type="primary" :loading="corrLoading" @click="computeMatrix">计算相关系数</el-button>
+        </div>
+
+        <div v-if="corrMatrix" class="corr-matrix">
+          <div ref="corrMatrixEl" class="heatmap" />
+          <p class="hint">
+            {{ corrMatrix.fields.length }} 个字段 · 有效样本 {{ corrMatrix.n }} 条 · 点击方格查看该对字段的散点
+          </p>
+        </div>
+
+        <div v-if="corrPair" class="corr-detail">
+          <header class="card-header">
+            <h3>{{ corrPair.x }} × {{ corrPair.y }}</h3>
+            <el-select
+              v-model="corrGroup"
+              clearable
+              placeholder="按维度着色（可选）"
+              style="width: 220px"
+              @change="selectPair(corrPair.x, corrPair.y)"
+            >
+              <el-option v-for="column in dimensionOptions" :key="column.name" :label="column.name" :value="column.name" />
+            </el-select>
+          </header>
+          <div ref="corrScatterEl" class="scatter" />
+          <div v-if="corrResult" class="conclusion">
+            <strong>结论：</strong>{{ corrResult.interpretation }}
+            <span v-if="corrResult.r != null" class="conclusion-meta">
+              r = {{ Number(corrResult.r).toFixed(3) }} · {{ corrResult.strength }} · n = {{ corrResult.n }}
+            </span>
+          </div>
+        </div>
+      </el-drawer>
+
+
     </main>
   </section>
 </template>
@@ -1031,6 +1245,29 @@ onBeforeUnmount(() => {
 .table-wrap {
   max-height: 400px;
   overflow: auto;
+}
+
+.corr-config {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.corr-matrix .heatmap {
+  width: 100%;
+  height: 420px;
+}
+
+.hint {
+  margin: 4px 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.corr-detail .scatter {
+  width: 100%;
+  height: 380px;
 }
 
 .conclusion {
