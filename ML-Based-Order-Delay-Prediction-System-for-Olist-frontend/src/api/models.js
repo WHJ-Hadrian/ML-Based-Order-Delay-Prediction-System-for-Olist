@@ -131,6 +131,26 @@ export function explainModelSample(modelId, payload) {
   })
 }
 
+export function submitModelPrediction(payload) {
+  return request('/models/predictions', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function listModelPredictions() {
+  return request('/models/predictions')
+}
+
+export function getModelPrediction(id) {
+  return request(`/models/predictions/${encodeURIComponent(id)}`)
+}
+
+export function deleteModelPrediction(id) {
+  return request(`/models/predictions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function clearModelPredictions() {
+  return request('/models/predictions', { method: 'DELETE' })
+}
+
 export async function downloadModelReport(modelId, payload) {
   const token = await getAccessToken()
   if (!token) throw authenticationRequired()

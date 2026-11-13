@@ -151,6 +151,7 @@ def explain_sample(
     task: str,
     threshold: float | None = None,
     background: pd.DataFrame | None = None,
+    include_counterfactuals: bool = True,
 ) -> dict[str, Any]:
     """Explain one raw feature row and suggest counterfactual flips."""
     frame = _prepare_sample(sample, feature_types)
@@ -172,9 +173,13 @@ def explain_sample(
     )
     label = _prediction_label(predicted, task, classes)
     narrative = _narrative(label, probability, threshold, contributions, task)
-    counterfactuals = _counterfactuals(
-        pipeline, frame, feature_types, task, threshold, probability, predicted,
-        classes, background,
+    counterfactuals = (
+        _counterfactuals(
+            pipeline, frame, feature_types, task, threshold, probability, predicted,
+            classes, background,
+        )
+        if include_counterfactuals
+        else []
     )
     return {
         "task": task,

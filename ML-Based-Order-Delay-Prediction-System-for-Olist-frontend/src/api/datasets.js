@@ -88,6 +88,12 @@ export function getDatasetCatalog(id) {
   return request(`${API_BASE}/${encodeURIComponent(id)}/catalog`)
 }
 
+export function getDelayAnalysis(datasetId, tableId) {
+  return request(
+    `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/delay-analysis`,
+  )
+}
+
 export function getDatasetVersionCatalog(id) {
   return request(`/api/v1/dataset-versions/${encodeURIComponent(id)}/catalog`)
 }

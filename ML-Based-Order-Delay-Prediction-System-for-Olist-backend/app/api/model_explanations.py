@@ -86,6 +86,7 @@ def explain_rows(
                 task=task,
                 threshold=threshold,
                 background=background,
+                include_counterfactuals=request.include_counterfactuals,
             )
         except (TypeError, ValueError) as error:
             raise HTTPException(

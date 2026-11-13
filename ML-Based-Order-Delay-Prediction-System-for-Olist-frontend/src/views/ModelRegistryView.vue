@@ -50,8 +50,11 @@ watch(() => auth.state.status, (status) => {
       </el-table-column>
       <el-table-column prop="targetColumn" label="目标字段" min-width="120" show-overflow-tooltip />
       <el-table-column label="创建时间" width="180"><template #default="{ row }">{{ formatTime(row.createdAt) }}</template></el-table-column>
-      <el-table-column label="操作" width="124" fixed="right">
-        <template #default="{ row }"><el-button link type="primary" @click="router.push({ path: '/evaluation', query: { modelId: row.id } })">评估/预测</el-button></template>
+      <el-table-column label="操作" width="176" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="router.push({ path: '/evaluation', query: { modelId: row.id } })">评估/预测</el-button>
+          <el-button v-if="row.task === 'classification'" link type="primary" @click="router.push({ path: '/prediction', query: { modelId: row.id } })">单笔预测</el-button>
+        </template>
       </el-table-column>
     </el-table>
     <div v-if="!loading && !error && !models.length" class="registry-empty">暂无模型版本 <el-button link type="primary" @click="router.push('/experiments')">新建实验</el-button></div>

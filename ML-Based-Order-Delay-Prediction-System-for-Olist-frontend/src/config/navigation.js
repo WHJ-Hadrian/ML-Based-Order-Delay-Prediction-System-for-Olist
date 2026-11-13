@@ -1,4 +1,5 @@
 import {
+  Aim,
   Collection,
   Cpu,
   DataAnalysis,
@@ -7,6 +8,7 @@ import {
   MagicStick,
   SetUp,
   Timer,
+  TrendCharts,
 } from '@element-plus/icons-vue'
 
 export const NAVIGATION_ITEMS = Object.freeze([
@@ -31,12 +33,20 @@ export const NAVIGATION_ITEMS = Object.freeze([
     component: () => import('@/views/AnalysisWorkspaceView.vue'),
   },
   {
+    key: 'delay-analysis', path: '/delay-analysis', title: '延误分析', group: '数据', icon: TrendCharts,
+    component: () => import('@/views/DelayAnalysisView.vue'),
+  },
+  {
     key: 'experiments', path: '/experiments', title: '建模实验', group: '建模', icon: Cpu,
     component: () => import('@/views/ModelWorkspaceView.vue'),
   },
   {
     key: 'evaluation', path: '/evaluation', title: '评估与预测', group: '建模', icon: DataAnalysis,
     component: () => import('@/views/ModelTrialView.vue'),
+  },
+  {
+    key: 'prediction', path: '/prediction', title: '订单预测', group: '建模', icon: Aim,
+    component: () => import('@/views/PredictionView.vue'),
   },
   {
     key: 'registry', path: '/registry', title: '模型版本', group: '建模', icon: MagicStick,
