@@ -176,7 +176,18 @@
             关联 {{ data.correlation.scope.slice(7) }} 计算
           </small>
         </div>
-        <p v-else class="panel-note">{{ data.correlation.reason }}</p>
+        <div v-if="data.correlation.ratingBuckets?.length" class="rating-list">
+          <div v-for="bucket in data.correlation.ratingBuckets" :key="bucket.score" class="rating-row">
+            <span class="rating-label">{{ bucket.score }} 星</span>
+            <div class="rating-track">
+              <div class="rating-bar" :class="ratingClass(bucket.score)" :style="{ width: `${ratingWidth(bucket.avgDeliveryDays)}%` }" />
+            </div>
+            <span class="rating-days">{{ days(bucket.avgDeliveryDays) }}</span>
+            <span class="rating-orders">{{ formatNumber(bucket.orders) }} 单</span>
+          </div>
+          <p class="panel-note">评分越低、平均配送耗时越长，这就是负相关系数的直观来源。</p>
+        </div>
+        <p v-if="!data.correlation.available" class="panel-note">{{ data.correlation.reason }}</p>
       </section>
     </template>
 
@@ -273,6 +284,19 @@ function percent(value) {
 function days(value) {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return `${Number(value).toFixed(2)} 天`
+}
+
+const ratingMax = computed(() => Math.max(
+  1,
+  ...(data.value?.correlation?.ratingBuckets || []).map((bucket) => Number(bucket.avgDeliveryDays || 0)),
+))
+
+function ratingWidth(value) {
+  return Math.max(3, Math.min(100, (Number(value || 0) / ratingMax.value) * 100))
+}
+
+function ratingClass(score) {
+  return score <= 2 ? 'is-high' : score === 3 ? 'is-mid' : 'is-low'
 }
 
 function formatNumber(value, digits = 0) {
@@ -416,6 +440,16 @@ watch(selectedTableId, loadAnalysis)
 .correlation-value strong { color: #26352e; font-size: 26px; font-weight: 700; }
 .correlation-value span { color: #6b7a72; font-size: 11px; }
 .correlation-value small { color: #93a29a; font-size: 9px; }
+.rating-list { display: grid; gap: 6px; margin-top: 12px; }
+.rating-row { display: grid; grid-template-columns: 46px minmax(0, 1fr) 74px 66px; align-items: center; gap: 8px; }
+.rating-label { color: #5c6c64; font-size: 10px; }
+.rating-track { height: 10px; overflow: hidden; background: #edf2ef; border-radius: 5px; }
+.rating-bar { height: 100%; border-radius: 5px; }
+.rating-bar.is-low { background: #6ea287; }
+.rating-bar.is-mid { background: #d8b25c; }
+.rating-bar.is-high { background: #cf6a4f; }
+.rating-days { color: #4c5f55; font-size: 10px; text-align: right; }
+.rating-orders { color: #93a29a; font-size: 9px; text-align: right; }
 .delay-message { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: #8d3c35; background: #fff4f0; border: 1px solid #f1d2c8; border-radius: 6px; font-size: 11px; }
 .delay-message span { flex: 1; }
 .delay-loading, .delay-empty { padding: 40px 12px; color: #859289; font-size: 11px; text-align: center; }

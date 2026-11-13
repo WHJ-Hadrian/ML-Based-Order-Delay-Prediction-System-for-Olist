@@ -195,46 +195,62 @@ public class DelayAnalysisService {
             String review,
             String orderId) {
         Map<String, Object> correlation = new LinkedHashMap<>();
-        String sql = null;
+        String days = (purchaseAt != null && deliveredAt != null)
+                ? textDiffDays(purchaseAt, deliveredAt)
+                : deliveryDays;
+        String source = null;
         String scope = null;
-        if (review != null) {
-            sql = "SELECT corr(" + deliveryDays + ", toFloat64OrNull(" + quote(review) + "))"
-                    + " FROM " + tableSql + " WHERE " + deliveryDays + " IS NOT NULL";
+        if (review != null && days != null) {
+            source = "SELECT " + days + " AS days, toFloat64OrNull(" + quote(review) + ") AS score"
+                    + " FROM " + tableSql
+                    + " WHERE " + days + " IS NOT NULL AND toFloat64OrNull(" + quote(review) + ") IS NOT NULL";
             scope = "same-table";
-        } else if (orderId != null) {
+        } else if (orderId != null && days != null) {
             ExecutionSnapshotVO.SnapshotTableVO reviews = findSibling(snapshot, table, "review_score");
             if (reviews != null) {
                 String reviewOrder = sourceColumn(reviews, "order_id");
                 String reviewScore = sourceColumn(reviews, "review_score");
                 if (reviewOrder != null && reviewScore != null) {
-                    String days = (purchaseAt != null && deliveredAt != null)
-                            ? textDiffDays(purchaseAt, deliveredAt)
-                            : deliveryDays;
-                    if (days != null) {
-                        sql = "SELECT corr(days, score) FROM ("
-                                + "SELECT " + days + " AS days, toFloat64OrNull(r." + quote(reviewScore) + ") AS score"
-                                + " FROM " + tableSql + " AS o"
-                                + " INNER JOIN " + database + "." + quote(reviews.physicalTable()) + " AS r"
-                                + " ON r." + quote(reviewOrder) + " = o." + quote(orderId)
-                                + " WHERE " + days + " IS NOT NULL"
-                                + " AND toFloat64OrNull(r." + quote(reviewScore) + ") IS NOT NULL)";
-                        scope = "joined:" + reviews.tableName();
-                    }
+                    source = "SELECT " + days + " AS days, toFloat64OrNull(r." + quote(reviewScore) + ") AS score"
+                            + " FROM " + tableSql + " AS o"
+                            + " INNER JOIN " + database + "." + quote(reviews.physicalTable()) + " AS r"
+                            + " ON r." + quote(reviewOrder) + " = o." + quote(orderId)
+                            + " WHERE " + days + " IS NOT NULL"
+                            + " AND toFloat64OrNull(r." + quote(reviewScore) + ") IS NOT NULL";
+                    scope = "joined:" + reviews.tableName();
                 }
             }
         }
-        if (sql == null) {
+        if (source == null) {
             correlation.put("available", false);
             correlation.put("deliveryVsRating", null);
+            correlation.put("ratingBuckets", List.of());
             correlation.put("reason", "当前数据表没有 review_score 字段，且同一数据集里没有可关联的评价表");
             return correlation;
         }
-        Double value = doubleAt(firstRow(client.query(sql)), 0);
+        Double value = doubleAt(firstRow(client.query("SELECT corr(days, score) FROM (" + source + ")")), 0);
         correlation.put("available", value != null);
         correlation.put("deliveryVsRating", value);
         correlation.put("scope", scope);
         correlation.put("reason", value == null ? "样本不足，无法计算相关系数" : null);
+        correlation.put("ratingBuckets", buckets(client, source));
         return correlation;
+    }
+
+    /** 每个评分档（1–5 星）的平均配送天数与订单量，用来解释相关系数的来源。 */
+    private List<Map<String, Object>> buckets(ClickHouseClient client, String source) {
+        String sql = "SELECT toInt32(round(assumeNotNull(score))) AS bucket, count(*) AS orders, avg(days) AS avg_days"
+                + " FROM (" + source + ")"
+                + " WHERE score BETWEEN 1 AND 5 GROUP BY bucket ORDER BY bucket";
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (List<Object> row : client.query(sql)) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("score", (int) numeric(row.get(0)));
+            item.put("orders", longAt(row, 1));
+            item.put("avgDeliveryDays", doubleAt(row, 2));
+            rows.add(item);
+        }
+        return rows;
     }
 
     private ExecutionSnapshotVO.SnapshotTableVO findSibling(
