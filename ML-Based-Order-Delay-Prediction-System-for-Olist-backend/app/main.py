@@ -3,6 +3,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.api.analysis_reports import router as analysis_reports_router
 from app.api.health import router as health_router
 from app.api.model_artifacts import router as model_artifacts_router
 from app.api.model_explanations import router as model_explanations_router
@@ -23,6 +24,7 @@ app.include_router(model_trial_router, tags=["internal-model-trial"])
 app.include_router(model_artifacts_router, tags=["internal-model-artifacts"])
 app.include_router(model_explanations_router, tags=["internal-model-explanations"])
 app.include_router(model_reports_router, tags=["internal-model-reports"])
+app.include_router(analysis_reports_router, tags=["internal-analysis-reports"])
 
 http_requests = Counter(
     "http_requests_total",

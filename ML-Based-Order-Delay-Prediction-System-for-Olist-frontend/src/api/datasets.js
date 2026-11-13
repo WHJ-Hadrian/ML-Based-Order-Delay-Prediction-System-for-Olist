@@ -94,6 +94,40 @@ export function getDelayAnalysis(datasetId, tableId) {
   )
 }
 
+export async function downloadDelayReport(datasetId, tableId, format = 'pdf') {
+  const token = await getAccessToken()
+  if (!token) throw authenticationRequired()
+  const url = `${API_BASE}/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}`
+    + `/delay-analysis/report?format=${encodeURIComponent(format)}`
+  let response
+  try {
+    response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  } catch {
+    throw new Error('无法连接报告服务，请检查数据集服务状态')
+  }
+  if (!response.ok) {
+    const text = await response.text()
+    let message = `报告生成失败（HTTP ${response.status}）`
+    try {
+      message = JSON.parse(text)?.detail || message
+    } catch {
+      // keep default message
+    }
+    throw new Error(message)
+  }
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  let fileName = `analysis-report.${format}`
+  if (encoded) {
+    try {
+      fileName = decodeURIComponent(encoded[1])
+    } catch {
+      // keep fallback
+    }
+  }
+  return { blob: await response.blob(), fileName }
+}
+
 export function getDatasetVersionCatalog(id) {
   return request(`/api/v1/dataset-versions/${encodeURIComponent(id)}/catalog`)
 }

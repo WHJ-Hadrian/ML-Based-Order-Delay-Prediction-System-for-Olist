@@ -318,6 +318,7 @@ services:
       RULE_WORKER_INTERNAL_TOKEN: ${RULE_WORKER_INTERNAL_TOKEN:-}
       WORKFLOW_WORKER_INTERNAL_TOKEN: ${WORKFLOW_WORKER_INTERNAL_TOKEN:-local-workflow-worker-change-me}
       MODEL_TRAINING_INTERNAL_TOKEN: ${MODEL_TRAINING_INTERNAL_TOKEN:-}
+      OLIST_REPORT_SERVICE_URL: http://model-serving:8090
     depends_on:
       mysql:
         condition: service_healthy

@@ -20,6 +20,14 @@
             <small class="option-meta">{{ formatNumber(table.rowCount) }} 行</small>
           </el-option>
         </el-select>
+        <el-select v-model="reportFormat" size="small" class="format-select" :disabled="!data">
+          <el-option label="PDF" value="pdf" />
+          <el-option label="Word" value="docx" />
+          <el-option label="HTML" value="html" />
+        </el-select>
+        <el-button size="small" type="primary" :icon="Document" :loading="reporting" :disabled="!data" @click="downloadReport">
+          生成报告
+        </el-button>
         <el-button circle size="small" :icon="Refresh" :loading="loading" aria-label="刷新分析" title="刷新" @click="loadAnalysis" />
       </div>
     </header>
@@ -199,8 +207,8 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { Refresh, Warning } from '@element-plus/icons-vue'
-import { getDatasetCatalog, getDelayAnalysis, listDatasets } from '@/api/datasets'
+import { Refresh, Warning, Document } from '@element-plus/icons-vue'
+import { downloadDelayReport, getDatasetCatalog, getDelayAnalysis, listDatasets } from '@/api/datasets'
 import { useAuth } from '@/auth/keycloak'
 
 const auth = useAuth()
@@ -212,6 +220,8 @@ const data = ref(null)
 const loading = ref(false)
 const loadingDatasets = ref(false)
 const loadingCatalog = ref(false)
+const reporting = ref(false)
+const reportFormat = ref('pdf')
 const error = ref('')
 
 const tables = computed(() => catalog.value?.tables || [])
@@ -366,6 +376,27 @@ async function loadAnalysis() {
   }
 }
 
+async function downloadReport() {
+  if (!data.value || reporting.value) return
+  reporting.value = true
+  error.value = ''
+  try {
+    const { blob, fileName } = await downloadDelayReport(selectedDatasetId.value, selectedTableId.value, reportFormat.value)
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+  } catch (failure) {
+    error.value = failure.message || '报告生成失败'
+  } finally {
+    reporting.value = false
+  }
+}
+
 onMounted(loadDatasets)
 watch(() => auth.state.status, (status) => {
   if (status === 'authenticated') loadDatasets()
@@ -389,6 +420,7 @@ watch(selectedTableId, loadAnalysis)
 .delay-title span { color: #6b7a72; font-size: 11px; }
 .delay-filters { display: flex; align-items: center; gap: 8px; }
 .filter-select { width: 220px; }
+.format-select { width: 92px; }
 .delay-source { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #7b8a82; font-size: 10px; }
 .source-warn { color: #a34733; }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
