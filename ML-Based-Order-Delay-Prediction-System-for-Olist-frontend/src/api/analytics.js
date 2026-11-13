@@ -51,6 +51,14 @@ export function queryAnalytics(payload) {
   return request('/analytics/query', { method: 'POST', body: JSON.stringify(payload) })
 }
 
+export function executeAnalytics(payload) {
+  return request('/analytics/execute', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function analyzeCorrelation(payload) {
+  return request('/analytics/correlation', { method: 'POST', body: JSON.stringify(payload) })
+}
+
 export function validateAnalytics(payload) {
   return request('/analytics/validate', { method: 'POST', body: JSON.stringify(payload) })
 }

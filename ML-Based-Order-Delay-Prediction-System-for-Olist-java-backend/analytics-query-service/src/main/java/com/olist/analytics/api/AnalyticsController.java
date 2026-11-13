@@ -61,6 +61,28 @@ public class AnalyticsController {
                 jwt.getSubject(), authorization);
     }
 
+    public record CorrelationRequest(
+            UUID datasetVersionId, UUID tableId, String xColumn, String yColumn, Integer limit) {
+    }
+
+    @PostMapping("/correlation")
+    public Map<String, Object> correlation(
+            @RequestBody CorrelationRequest request,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        int limit = request.limit() == null ? 2000 : request.limit();
+        return service.correlation(request.datasetVersionId(), request.tableId(),
+                request.xColumn(), request.yColumn(), limit, authorization);
+    }
+
+    @PostMapping("/execute")
+    public Map<String, Object> execute(
+            @RequestBody AnalyticsRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        return service.execute(request.datasetVersionId(), request.tableId(), request.spec(),
+                jwt.getSubject(), authorization);
+    }
+
     @PostMapping("/report")
     public org.springframework.http.ResponseEntity<byte[]> report(
             @RequestBody AnalyticsRequest request,

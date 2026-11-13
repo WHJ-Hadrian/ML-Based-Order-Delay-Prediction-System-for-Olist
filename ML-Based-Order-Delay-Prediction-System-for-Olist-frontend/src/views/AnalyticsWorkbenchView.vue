@@ -1,19 +1,9 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  DataAnalysis,
-  DataLine,
-  Delete,
-  Document,
-  FolderOpened,
-  PieChart,
-  Plus,
-  Refresh,
-  VideoPlay,
-} from '@element-plus/icons-vue'
+import { DataAnalysis, Delete, Document, FolderOpened, Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, PieChart as EchartsPieChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { getDatasetCatalog, listDatasets } from '@/api/datasets'
@@ -22,15 +12,15 @@ import {
   createAnalysisPlan,
   deleteAnalysisPlan,
   downloadAnalyticsReport,
+  executeAnalytics,
   getAnalyticsCapabilities,
   listAnalysisPlans,
   listAnalysisTemplates,
   listAnalyticsValues,
-  queryAnalytics,
   updateAnalysisPlan,
 } from '@/api/analytics'
 
-echarts.use([BarChart, LineChart, EchartsPieChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
+echarts.use([BarChart, LineChart, PieChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
 const datasets = ref([])
 const datasetId = ref('')
@@ -46,15 +36,10 @@ const dateRange = ref([])
 const filters = ref([{ column: '', values: [] }])
 const limit = ref(200)
 
-const kpi = ref(null)
-const trend = ref(null)
-const distribution = ref(null)
-const detail = ref(null)
+const visuals = ref([])
+const results = ref([])
 const running = ref(false)
 const errorMessage = ref('')
-
-const distributionType = ref('bar')
-const trendType = ref('line')
 
 const plans = ref([])
 const templates = ref([])
@@ -63,10 +48,7 @@ const planName = ref('')
 const saving = ref(false)
 const reporting = ref('')
 
-const trendRef = ref(null)
-const distributionRef = ref(null)
-let trendChart = null
-let distributionChart = null
+const charts = new Map()
 
 const grainOptions = [
   { value: 'month', label: '按月' },
@@ -78,27 +60,23 @@ const grainOptions = [
   { value: 'hour', label: '按小时' },
 ]
 
+const visualTypes = [
+  { value: 'kpi', label: '指标卡' },
+  { value: 'line', label: '折线图' },
+  { value: 'bar', label: '柱状/条形' },
+  { value: 'pie', label: '占比环图' },
+  { value: 'scatter', label: '散点（相关性）' },
+  { value: 'table', label: '明细表' },
+]
+
 const availableMetrics = computed(() => (capabilities.value?.metrics || []).filter((item) => item.available))
 const dimensionOptions = computed(() => capabilities.value?.dimensions || [])
 const timeOptions = computed(() => capabilities.value?.timeColumns || [])
+const fieldOptions = computed(() => capabilities.value?.fields || [])
 
-const metricByKey = computed(() => {
-  const map = {}
-  for (const metric of availableMetrics.value) map[metric.key] = metric
-  return map
-})
-
-const kpiCards = computed(() => {
-  if (!kpi.value) return []
-  return kpi.value.columns.map((column, index) => ({
-    label: column.label,
-    value: formatMetric(column.type, kpi.value.rows[0]?.[index]),
-    hint: metricByKey.value[selectedMetrics.value[index]]?.description || '',
-  }))
-})
-
-const detailColumns = computed(() => detail.value?.columns || [])
-const detailRows = computed(() => detail.value?.rows || [])
+function metricName(key) {
+  return availableMetrics.value.find((item) => item.key === key)?.name || key
+}
 
 function formatNumber(value) {
   const number = Number(value)
@@ -106,19 +84,32 @@ function formatNumber(value) {
   return number.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
-function formatMetric(type, value) {
-  if (value == null || value === '') return '—'
-  if (type === 'percent') return `${(Number(value) * 100).toFixed(2)}%`
-  if (type === 'duration') return `${Number(value).toFixed(2)} 天`
-  return formatNumber(value)
-}
-
 function formatCell(column, cell) {
   if (cell == null) return '—'
-  if (column.type === 'percent') return `${(Number(cell) * 100).toFixed(2)}%`
-  if (column.type === 'duration') return `${Number(cell).toFixed(2)}`
+  if (column?.type === 'percent') return `${(Number(cell) * 100).toFixed(2)}%`
+  if (column?.type === 'duration') return `${Number(cell).toFixed(2)}`
   if (typeof cell === 'number') return formatNumber(cell)
   return String(cell)
+}
+
+function defaultVisuals() {
+  const list = [{ id: 'kpi', type: 'kpi', title: '核心指标', width: 'full' }]
+  const metric = selectedMetrics.value[0]
+  if (timeColumn.value) {
+    list.push({ id: 'trend', type: 'line', title: '趋势', metric, dimension: '__time__', width: 'half' })
+  }
+  if (selectedDimensions.value.length) {
+    list.push({
+      id: 'distribution',
+      type: 'bar',
+      title: '分布',
+      metric,
+      dimension: selectedDimensions.value[0],
+      width: 'half',
+    })
+  }
+  list.push({ id: 'detail', type: 'table', title: '明细', width: 'full' })
+  return list
 }
 
 async function loadDatasets() {
@@ -159,6 +150,7 @@ async function loadCapabilities() {
       .filter((item) => item.available)
       .slice(0, 3)
       .map((item) => item.key)
+    visuals.value = defaultVisuals()
   } catch (error) {
     errorMessage.value = error.message
   }
@@ -207,22 +199,173 @@ function baseSpec() {
   if (active.length) {
     spec.filters = active.map((item) => ({ column: item.column, op: 'IN', values: item.values }))
   }
+  if (selectedDimensions.value.length) {
+    spec.dimensions = selectedDimensions.value.map((column) => ({ column }))
+  }
+  spec.visuals = visuals.value.map((visual) => ({
+    id: visual.id,
+    type: visual.type,
+    title: visual.title,
+    metric: visual.metric,
+    dimension: visual.dimension,
+    width: visual.width,
+  }))
   return spec
 }
 
-async function runQuery(spec) {
-  return queryAnalytics({ datasetVersionId: datasetId.value, tableId: tableId.value, spec })
+function addVisual() {
+  const metric = selectedMetrics.value[0]
+  visuals.value.push({
+    id: `v${Date.now()}`,
+    type: 'bar',
+    title: '新图表',
+    metric,
+    dimension: selectedDimensions.value[0] || dimensionOptions.value[0]?.name,
+    width: 'half',
+  })
+}
+
+function removeVisual(index) {
+  visuals.value.splice(index, 1)
+}
+
+function moveVisual(index, delta) {
+  const target = index + delta
+  if (target < 0 || target >= visuals.value.length) return
+  const [item] = visuals.value.splice(index, 1)
+  visuals.value.splice(target, 0, item)
 }
 
 function clearResults() {
-  kpi.value = null
-  trend.value = null
-  distribution.value = null
-  detail.value = null
-  trendChart?.dispose()
-  distributionChart?.dispose()
-  trendChart = null
-  distributionChart = null
+  results.value = []
+  disposeCharts()
+}
+
+function disposeCharts() {
+  for (const chart of charts.values()) chart.dispose()
+  charts.clear()
+}
+
+function setChartEl(id, el) {
+  if (!el) charts.delete(id)
+}
+
+function renderAll() {
+  disposeCharts()
+  for (const visual of results.value) {
+    if (!['line', 'bar', 'pie', 'scatter'].includes(visual.type)) continue
+    const element = document.querySelector(`[data-visual="${visual.id}"]`)
+    if (!element || !visual.rows?.length) continue
+    const chart = echarts.init(element)
+    charts.set(visual.id, chart)
+    renderChart(chart, visual)
+  }
+}
+
+function renderChart(chart, visual) {
+  const columns = visual.columns || []
+  const rows = visual.rows || []
+  const metricIndex = columns.findIndex((column) => column.key?.startsWith('m'))
+  const dimensionIndex = columns.findIndex((column) => column.key?.startsWith('d'))
+
+  if (visual.type === 'scatter') {
+    chart.setOption({
+      grid: { left: 56, right: 24, top: 24, bottom: 44 },
+      tooltip: {
+        formatter: (params) => `${visual.dimension}: ${formatNumber(params.value[0])}<br/>`
+          + `${visual.metric}: ${formatNumber(params.value[1])}`,
+      },
+      xAxis: {
+        type: 'value',
+        name: visual.dimension,
+        nameLocation: 'middle',
+        nameGap: 26,
+        nameTextStyle: { fontSize: 11, color: '#7a8a80' },
+        axisLabel: { fontSize: 10 },
+        splitLine: { lineStyle: { color: '#eef4f0' } },
+      },
+      yAxis: {
+        type: 'value',
+        name: visual.metric,
+        nameTextStyle: { fontSize: 11, color: '#7a8a80' },
+        axisLabel: { fontSize: 10 },
+        splitLine: { lineStyle: { color: '#eef4f0' } },
+      },
+      series: [{
+        type: 'scatter',
+        symbolSize: 6,
+        itemStyle: { color: 'rgba(79,143,120,0.55)' },
+        data: rows.map((row) => [Number(row[0]), Number(row[1])]),
+      }],
+    }, true)
+    return
+  }
+
+  if (visual.type === 'pie') {
+    chart.setOption({
+      tooltip: { trigger: 'item' },
+      legend: { type: 'scroll', bottom: 0, textStyle: { fontSize: 10 } },
+      series: [{
+        type: 'pie',
+        radius: ['42%', '68%'],
+        center: ['50%', '44%'],
+        itemStyle: { borderColor: '#fff', borderWidth: 2 },
+        label: { fontSize: 10, formatter: '{b}\n{d}%' },
+        data: rows.map((row) => ({
+          name: String(row[dimensionIndex] ?? '—'),
+          value: Number(row[metricIndex] ?? 0),
+        })),
+      }],
+    }, true)
+    return
+  }
+
+  if (visual.type === 'line') {
+    const categories = rows.map((row) => String(row[dimensionIndex] ?? ''))
+    const series = columns
+      .map((column, index) => ({ column, index }))
+      .filter((item) => item.column.key?.startsWith('m'))
+      .slice(0, 2)
+      .map(({ column, index }) => ({
+        name: column.label,
+        type: 'line',
+        smooth: true,
+        symbolSize: 5,
+        areaStyle: { opacity: 0.12 },
+        data: rows.map((row) => Number(row[index])),
+      }))
+    chart.setOption({
+      grid: { left: 48, right: 20, top: 34, bottom: 30 },
+      tooltip: { trigger: 'axis' },
+      legend: { top: 4, right: 8, textStyle: { fontSize: 11 } },
+      xAxis: { type: 'category', data: categories, axisLabel: { fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { color: '#eef4f0' } } },
+      series,
+    }, true)
+    return
+  }
+
+  if (visual.type === 'bar') {
+    const labels = rows.map((row) => String(row[dimensionIndex] ?? ''))
+    const values = rows.map((row) => Number(row[metricIndex] ?? 0))
+    chart.setOption({
+      grid: { left: 92, right: 28, top: 16, bottom: 24 },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      xAxis: { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { color: '#eef4f0' } } },
+      yAxis: {
+        type: 'category',
+        data: labels,
+        inverse: true,
+        axisLabel: { fontSize: 10, width: 84, overflow: 'truncate' },
+      },
+      series: [{
+        type: 'bar',
+        barMaxWidth: 14,
+        itemStyle: { borderRadius: [0, 4, 4, 0], color: '#4f8f78' },
+        data: values,
+      }],
+    }, true)
+  }
 }
 
 async function run() {
@@ -230,142 +373,26 @@ async function run() {
   running.value = true
   try {
     const spec = baseSpec()
-    const tasks = [runQuery({ ...spec, dimensions: undefined, time: undefined, orderBy: undefined, limit: 1 })]
-    const withTime = Boolean(timeColumn.value)
-    const withDimension = selectedDimensions.value.length > 0
-
-    if (withTime) {
-      tasks.push(runQuery({
-        ...spec,
-        dimensions: [],
-        orderBy: [{ key: 'd1', dir: 'asc' }],
-        limit: 500,
-      }))
-    }
-    if (withDimension) {
-      tasks.push(runQuery({
-        ...spec,
-        time: undefined,
-        dimensions: [{ column: selectedDimensions.value[0], alias: dimensionLabel(selectedDimensions.value[0]) }],
-        orderBy: [{ key: metricName(selectedMetrics.value[0]), dir: 'desc' }],
-        limit: Math.min(limit.value, 100),
-      }))
-    }
-    tasks.push(runQuery(spec))
-
-    const [kpiResult, ...rest] = await Promise.all(tasks)
-    let index = 0
-    kpi.value = kpiResult
-    trend.value = withTime ? rest[index++] : null
-    distribution.value = withDimension ? rest[index++] : null
-    detail.value = rest[index] || null
+    const body = await executeAnalytics({
+      datasetVersionId: datasetId.value,
+      tableId: tableId.value,
+      spec,
+    })
+    results.value = body.visuals || []
     await nextTick()
-    renderCharts()
-    ElMessage.success(`完成：${detail.value?.rowCount ?? 0} 行`)
+    renderAll()
+    const failed = results.value.filter((item) => item.error)
+    if (failed.length) {
+      ElMessage.warning(`${failed.length} 个图表失败：${failed[0].error}`)
+    } else {
+      ElMessage.success('分析完成')
+    }
   } catch (error) {
     errorMessage.value = error.message
     ElMessage.error(error.message)
   } finally {
     running.value = false
   }
-}
-
-function metricName(key) {
-  return metricByKey.value[key]?.name || key
-}
-
-function dimensionLabel(column) {
-  return column
-}
-
-function renderCharts() {
-  renderTrend()
-  renderDistribution()
-}
-
-function renderTrend() {
-  if (!trendRef.value || !trend.value?.rows?.length) return
-  if (!trendChart) trendChart = echarts.init(trendRef.value)
-  const columns = trend.value.columns
-  const dimensionIndex = 0
-  const categories = trend.value.rows.map((row) => String(row[dimensionIndex] ?? ''))
-  const series = columns
-    .map((column, index) => ({ column, index }))
-    .filter((item, index) => item.column.key.startsWith('m') && index < 2)
-    .map(({ column, index }) => ({
-      name: column.label,
-      type: trendType.value === 'bar' ? 'bar' : 'line',
-      smooth: trendType.value !== 'bar',
-      symbolSize: 6,
-      areaStyle: trendType.value === 'bar' ? undefined : { opacity: 0.12 },
-      data: trend.value.rows.map((row) => Number(row[index])),
-    }))
-  trendChart.setOption({
-    grid: { left: 44, right: 16, top: 34, bottom: 28 },
-    tooltip: { trigger: 'axis' },
-    legend: { top: 4, right: 8, textStyle: { fontSize: 11 } },
-    xAxis: {
-      type: 'category',
-      data: categories,
-      axisLabel: { fontSize: 10, color: '#7a8a80' },
-      axisLine: { lineStyle: { color: '#d8e2da' } },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { fontSize: 10, color: '#7a8a80' },
-      splitLine: { lineStyle: { color: '#eef4f0' } },
-    },
-    series,
-  }, true)
-}
-
-function renderDistribution() {
-  if (!distributionRef.value || !distribution.value?.rows?.length) return
-  if (!distributionChart) distributionChart = echarts.init(distributionRef.value)
-  const columns = distribution.value.columns
-  const dimensionIndex = 0
-  const metricIndex = columns.findIndex((column) => column.key.startsWith('m'))
-  const rows = distribution.value.rows.slice(0, 12)
-  const labels = rows.map((row) => String(row[dimensionIndex] ?? ''))
-  const values = rows.map((row) => Number(row[metricIndex] ?? 0))
-  const metricLabel = columns[metricIndex]?.label || ''
-
-  if (distributionType.value === 'pie') {
-    distributionChart.setOption({
-      tooltip: { trigger: 'item', valueFormatter: (value) => formatNumber(value) },
-      legend: { type: 'scroll', bottom: 0, textStyle: { fontSize: 10 } },
-      series: [{
-        type: 'pie',
-        radius: ['42%', '68%'],
-        center: ['50%', '44%'],
-        avoidLabelOverlap: true,
-        itemStyle: { borderColor: '#fff', borderWidth: 2 },
-        label: { fontSize: 10, formatter: '{b}\n{d}%' },
-        data: labels.map((label, index) => ({ name: label, value: values[index] })),
-      }],
-    }, true)
-    return
-  }
-
-  distributionChart.setOption({
-    grid: { left: 96, right: 28, top: 16, bottom: 24 },
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    xAxis: { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { color: '#eef4f0' } } },
-    yAxis: {
-      type: 'category',
-      data: labels,
-      inverse: true,
-      axisLabel: { fontSize: 10, color: '#4c5a52', width: 90, overflow: 'truncate' },
-      axisLine: { lineStyle: { color: '#d8e2da' } },
-    },
-    series: [{
-      name: metricLabel,
-      type: 'bar',
-      barMaxWidth: 14,
-      itemStyle: { borderRadius: [0, 4, 4, 0], color: '#4f8f78' },
-      data: values,
-    }],
-  }, true)
 }
 
 async function loadPlans() {
@@ -396,6 +423,7 @@ function resetState() {
   timeGrain.value = 'month'
   dateRange.value = []
   filters.value = [{ column: '', values: [] }]
+  visuals.value = defaultVisuals()
   clearResults()
 }
 
@@ -411,6 +439,7 @@ function applyPlan(plan) {
   filters.value = (spec.filters || []).map((item) => ({ column: item.column, values: [...(item.values || [])] }))
   if (!filters.value.length) filters.value = [{ column: '', values: [] }]
   limit.value = spec.limit || 200
+  visuals.value = (spec.visuals || []).length ? spec.visuals.map((item) => ({ ...item })) : defaultVisuals()
   for (const filter of filters.value) {
     if (filter.column) loadValues(filter)
   }
@@ -470,7 +499,7 @@ async function copyTemplate(template) {
 }
 
 async function exportReport(format) {
-  if (!detail.value) {
+  if (!results.value.length) {
     ElMessage.warning('请先运行一次分析')
     return
   }
@@ -495,31 +524,26 @@ async function exportReport(format) {
   }
 }
 
-function exportCsv() {
-  if (!detail.value) return
-  const columns = detail.value.columns
+function exportCsv(visual) {
+  const columns = visual.columns || []
   const header = columns.map((column) => column.label).join(',')
-  const lines = detail.value.rows.map((row) => columns.map((column, index) => {
-    const cell = row[index]
-    const text = cell == null ? '' : formatCell(column, cell)
+  const lines = (visual.rows || []).map((row) => columns.map((column, index) => {
+    const text = row[index] == null ? '' : formatCell(column, row[index])
     return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
   }).join(','))
   const blob = new Blob([`\ufeff${[header, ...lines].join('\n')}`], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `分析结果_${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.csv`
+  anchor.download = `${visual.title || '分析结果'}.csv`
   anchor.click()
   URL.revokeObjectURL(url)
 }
 
 function resizeCharts() {
-  trendChart?.resize()
-  distributionChart?.resize()
+  for (const chart of charts.values()) chart.resize()
 }
 
-watch(distributionType, () => renderDistribution())
-watch(trendType, () => renderTrend())
 watch(datasetId, async () => {
   await loadCatalog()
   await loadCapabilities()
@@ -539,8 +563,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeCharts)
-  trendChart?.dispose()
-  distributionChart?.dispose()
+  disposeCharts()
 })
 </script>
 
@@ -579,15 +602,15 @@ onBeforeUnmount(() => {
     <main class="board">
       <header class="board-header">
         <div class="source">
-          <el-select v-model="datasetId" placeholder="选择数据集" style="width: 250px">
+          <el-select v-model="datasetId" placeholder="选择数据集" style="width: 240px">
             <el-option v-for="item in datasets" :key="item.datasetId" :label="item.name" :value="item.datasetId" />
           </el-select>
-          <el-select v-model="tableId" placeholder="选择数据表" style="width: 190px">
+          <el-select v-model="tableId" placeholder="选择数据表" style="width: 180px">
             <el-option v-for="item in catalog?.tables || []" :key="item.tableId" :label="item.tableName" :value="item.tableId" />
           </el-select>
         </div>
         <div class="actions">
-          <el-input v-model="planName" placeholder="方案名称" style="width: 170px" />
+          <el-input v-model="planName" placeholder="方案名称" style="width: 160px" />
           <el-button :icon="Refresh" @click="resetState">重置</el-button>
           <el-button :icon="Document" :loading="saving" @click="savePlan">保存</el-button>
           <el-button type="primary" :icon="VideoPlay" :loading="running" @click="run">运行分析</el-button>
@@ -605,14 +628,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="config-block">
           <label>分组维度（最多 3 个）</label>
-          <el-select
-            v-model="selectedDimensions"
-            multiple
-            :multiple-limit="3"
-            collapse-tags
-            placeholder="按维度分组"
-            style="width: 100%"
-          >
+          <el-select v-model="selectedDimensions" multiple :multiple-limit="3" collapse-tags placeholder="按维度分组" style="width: 100%">
             <el-option v-for="column in dimensionOptions" :key="column.name" :label="column.name" :value="column.name" />
           </el-select>
         </div>
@@ -644,15 +660,7 @@ onBeforeUnmount(() => {
             <el-select v-model="filter.column" placeholder="字段" style="width: 140px" @change="loadValues(filter)">
               <el-option v-for="column in dimensionOptions" :key="column.name" :label="column.name" :value="column.name" />
             </el-select>
-            <el-select
-              v-model="filter.values"
-              multiple
-              collapse-tags
-              filterable
-              placeholder="取值"
-              style="flex: 1"
-              :disabled="!filter.column"
-            >
+            <el-select v-model="filter.values" multiple collapse-tags filterable placeholder="取值" style="flex: 1" :disabled="!filter.column">
               <el-option
                 v-for="option in filter.options || []"
                 :key="option.value"
@@ -675,67 +683,107 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
-
-      <section v-if="kpiCards.length" class="kpis">
-        <article v-for="card in kpiCards" :key="card.label" class="kpi">
-          <span class="kpi-label">{{ card.label }}</span>
-          <strong class="kpi-value">{{ card.value }}</strong>
-          <small v-if="card.hint" class="kpi-hint">{{ card.hint }}</small>
-        </article>
-      </section>
-
-      <section v-if="kpiCards.length" class="grid-two">
-        <article class="card" v-if="trend && trend.rows.length">
-          <header class="card-header">
-            <h3>趋势</h3>
-            <el-radio-group v-model="trendType" size="small">
-              <el-radio-button value="line">折线</el-radio-button>
-              <el-radio-button value="bar">柱状</el-radio-button>
-            </el-radio-group>
-          </header>
-          <div ref="trendRef" class="chart" />
-        </article>
-        <article class="card" v-if="distribution && distribution.rows.length">
-          <header class="card-header">
-            <h3>{{ dimensionOptions.length ? '分布' : '结果' }}</h3>
-            <el-radio-group v-model="distributionType" size="small">
-              <el-radio-button value="bar">条形</el-radio-button>
-              <el-radio-button value="pie">占比</el-radio-button>
-            </el-radio-group>
-          </header>
-          <div ref="distributionRef" class="chart" />
-        </article>
-      </section>
-
-      <section v-if="detail" class="card detail">
+      <section class="visual-config">
         <header class="card-header">
-          <h3>
-            明细
-            <small>{{ detail.rowCount }} 行 · {{ detail.elapsedMs }} ms</small>
-          </h3>
-          <div class="result-actions">
-            <el-button size="small" :icon="DataAnalysis" @click="exportCsv">CSV</el-button>
-            <el-button size="small" :loading="reporting === 'pdf'" @click="exportReport('pdf')">PDF</el-button>
-            <el-button size="small" :loading="reporting === 'docx'" @click="exportReport('docx')">Word</el-button>
-            <el-button size="small" :loading="reporting === 'html'" @click="exportReport('html')">HTML</el-button>
+          <h3>可视化设置 <small>按分析内容自定义图表</small></h3>
+          <div class="visual-actions">
+            <el-button size="small" :icon="Plus" @click="addVisual">添加图表</el-button>
+            <el-button size="small" :icon="Refresh" text @click="visuals = defaultVisuals()">恢复默认</el-button>
           </div>
         </header>
-        <el-table :data="detailRows" size="small" border max-height="420">
-          <el-table-column
-            v-for="(column, index) in detailColumns"
-            :key="column.key"
-            :label="column.label"
-            :min-width="130"
-          >
-            <template #default="{ row }">{{ formatCell(column, row[index]) }}</template>
-          </el-table-column>
-        </el-table>
+        <div v-for="(visual, index) in visuals" :key="visual.id" class="visual-row">
+          <el-input v-model="visual.title" placeholder="标题" style="width: 150px" />
+          <el-select v-model="visual.type" style="width: 140px">
+            <el-option v-for="type in visualTypes" :key="type.value" :label="type.label" :value="type.value" />
+          </el-select>
+
+          <template v-if="visual.type === 'scatter'">
+            <el-select v-model="visual.dimension" placeholder="X 字段" filterable style="width: 190px">
+              <el-option v-for="field in fieldOptions" :key="field.name" :label="field.name" :value="field.name" />
+            </el-select>
+            <el-select v-model="visual.metric" placeholder="Y 字段" filterable style="width: 190px">
+              <el-option v-for="field in fieldOptions" :key="field.name" :label="field.name" :value="field.name" />
+            </el-select>
+          </template>
+          <template v-else-if="['line', 'bar', 'pie'].includes(visual.type)">
+            <el-select v-model="visual.metric" placeholder="指标" style="width: 150px">
+              <el-option v-for="metric in availableMetrics" :key="metric.key" :label="metric.name" :value="metric.key" />
+            </el-select>
+            <el-select v-if="visual.type !== 'line'" v-model="visual.dimension" placeholder="维度" clearable style="width: 170px">
+              <el-option label="时间维度" value="__time__" />
+              <el-option v-for="column in dimensionOptions" :key="column.name" :label="column.name" :value="column.name" />
+            </el-select>
+          </template>
+
+          <el-select v-model="visual.width" style="width: 90px">
+            <el-option label="半宽" value="half" />
+            <el-option label="整行" value="full" />
+          </el-select>
+
+          <div class="visual-buttons">
+            <el-button size="small" text :disabled="index === 0" @click="moveVisual(index, -1)">↑</el-button>
+            <el-button size="small" text :disabled="index === visuals.length - 1" @click="moveVisual(index, 1)">↓</el-button>
+            <el-button size="small" text :icon="Delete" @click="removeVisual(index)" />
+          </div>
+        </div>
       </section>
 
-      <el-empty v-else-if="!running" description="选择指标和维度后点「运行分析」，会生成 KPI、趋势、分布和明细">
-        <el-icon><DataLine /></el-icon>
-      </el-empty>
+      <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
+
+      <section v-if="results.length" class="visual-grid">
+        <article
+          v-for="visual in results"
+          :key="visual.id"
+          class="card"
+          :class="{ full: visual.width === 'full', half: visual.width !== 'full' }"
+        >
+          <header class="card-header">
+            <h3>{{ visual.title || visual.id }}</h3>
+            <div class="result-actions">
+              <el-button v-if="visual.type === 'table'" size="small" :icon="DataAnalysis" @click="exportCsv(visual)">CSV</el-button>
+              <el-button size="small" :loading="reporting === 'pdf'" @click="exportReport('pdf')">PDF</el-button>
+              <el-button size="small" :loading="reporting === 'docx'" @click="exportReport('docx')">Word</el-button>
+              <el-button size="small" :loading="reporting === 'html'" @click="exportReport('html')">HTML</el-button>
+            </div>
+          </header>
+
+          <el-alert v-if="visual.error" :title="visual.error" type="warning" :closable="false" show-icon />
+
+          <template v-else>
+            <div v-if="visual.type === 'kpi'" class="kpis">
+              <div v-for="(column, index) in visual.columns" :key="column.key" class="kpi">
+                <span class="kpi-label">{{ column.label }}</span>
+                <strong class="kpi-value">{{ formatCell(column, visual.rows?.[0]?.[index]) }}</strong>
+              </div>
+            </div>
+
+            <div
+              v-else-if="visual.type === 'table'"
+              class="table-wrap"
+            >
+              <el-table :data="visual.rows || []" size="small" border max-height="380">
+                <el-table-column v-for="(column, index) in visual.columns" :key="column.key" :label="column.label" :min-width="120">
+                  <template #default="{ row }">{{ formatCell(column, row[index]) }}</template>
+                </el-table-column>
+              </el-table>
+            </div>
+
+            <template v-else-if="visual.type === 'scatter'">
+              <div :data-visual="visual.id" class="chart" />
+              <div class="conclusion">
+                <strong>结论：</strong>{{ visual.interpretation }}
+                <span v-if="visual.r != null" class="conclusion-meta">
+                  r = {{ Number(visual.r).toFixed(3) }} · {{ visual.strength }} · n = {{ visual.n }}
+                </span>
+              </div>
+            </template>
+
+            <div v-else :data-visual="visual.id" class="chart" />
+          </template>
+        </article>
+      </section>
+
+      <el-empty v-else-if="!running" description="选择指标和维度后点「运行分析」，图表按上面的可视化设置生成" />
     </main>
   </section>
 </template>
@@ -743,7 +791,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .workbench {
   display: grid;
-  grid-template-columns: 250px 1fr;
+  grid-template-columns: 240px 1fr;
   gap: 16px;
   height: 100%;
 }
@@ -764,7 +812,6 @@ onBeforeUnmount(() => {
 .plans h3 {
   font-size: 13px;
   margin: 0;
-  color: var(--el-text-color-primary);
 }
 
 .plan-list {
@@ -846,7 +893,8 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.config {
+.config,
+.visual-config {
   display: grid;
   gap: 12px;
   padding: 14px;
@@ -885,43 +933,29 @@ onBeforeUnmount(() => {
   max-width: 140px;
 }
 
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+.visual-config .card-header {
+  margin: 0;
 }
 
-.kpi {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 10px;
-  padding: 14px 16px;
-  background: linear-gradient(180deg, #fbfdfc, #ffffff);
+.visual-actions {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
-.kpi-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+.visual-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
-.kpi-value {
-  font-size: 24px;
-  line-height: 1.2;
-  color: #28503f;
-  font-variant-numeric: tabular-nums;
+.visual-buttons {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
 }
 
-.kpi-hint {
-  font-size: 11px;
-  color: var(--el-text-color-placeholder);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.grid-two {
+.visual-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
@@ -932,6 +966,10 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   padding: 14px;
   background: var(--el-fill-color-blank);
+}
+
+.card.full {
+  grid-column: 1 / -1;
 }
 
 .card-header {
@@ -952,24 +990,65 @@ onBeforeUnmount(() => {
   margin-left: 6px;
 }
 
-.chart {
-  width: 100%;
-  height: 260px;
-}
-
-.detail {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .result-actions {
   display: flex;
   gap: 6px;
 }
 
+.chart {
+  width: 100%;
+  height: 280px;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfdfc, #ffffff);
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.kpi-value {
+  font-size: 22px;
+  color: #28503f;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-wrap {
+  max-height: 400px;
+  overflow: auto;
+}
+
+.conclusion {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f4f8f5;
+  color: #33433b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.conclusion-meta {
+  margin-left: 8px;
+  color: #7b8a82;
+}
+
 @media (max-width: 1200px) {
-  .grid-two {
+  .visual-grid {
     grid-template-columns: 1fr;
   }
 }

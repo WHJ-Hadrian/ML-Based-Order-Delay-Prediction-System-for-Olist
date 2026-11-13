@@ -56,7 +56,9 @@ public record AnalyticsSpec(
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record VisualSpec(String type, String x, String y, String series, List<String> columns) {
+    public record VisualSpec(
+            String id, String type, String title, String metric, String dimension, String width,
+            String x, String y, String series, List<String> columns) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
