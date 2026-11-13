@@ -255,7 +255,8 @@ function renderAll() {
   for (const visual of results.value) {
     if (!['line', 'bar', 'pie', 'scatter'].includes(visual.type)) continue
     const element = document.querySelector(`[data-visual="${visual.id}"]`)
-    if (!element || !visual.rows?.length) continue
+    const dataRows = visual.type === 'scatter' ? visual.points : visual.rows
+    if (!element || !dataRows?.length) continue
     const chart = echarts.init(element)
     charts.set(visual.id, chart)
     renderChart(chart, visual)
@@ -264,7 +265,7 @@ function renderAll() {
 
 function renderChart(chart, visual) {
   const columns = visual.columns || []
-  const rows = visual.rows || []
+  const rows = visual.type === 'scatter' ? (visual.points || []) : (visual.rows || [])
   const metricIndex = columns.findIndex((column) => column.key?.startsWith('m'))
   const dimensionIndex = columns.findIndex((column) => column.key?.startsWith('d'))
 
