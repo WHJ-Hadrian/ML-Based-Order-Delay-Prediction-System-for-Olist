@@ -1,0 +1,16 @@
+# 本地（IDEA）运行配置：用 --spring.profiles.active=ide 即可。
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3308/olist_jobs?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
+    username: olist
+    password: local-only-change-me
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+jobs:
+  runner: local
+  dataset-service-url: http://localhost:8082
+  workflow-worker:
+    internal-token: local-workflow-worker-change-me
+  temporal:
+    worker:
+      enabled: false

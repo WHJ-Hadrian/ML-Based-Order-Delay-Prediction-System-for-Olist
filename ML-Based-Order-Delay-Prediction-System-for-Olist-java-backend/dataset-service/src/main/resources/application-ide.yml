@@ -1,0 +1,30 @@
+# 本地（IDEA）运行配置：用 --spring.profiles.active=ide 即可，无需再配一堆环境变量。
+# 环境变量优先级仍高于本文件，需要临时覆盖时照常设置环境变量即可。
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3308/olist_datasets?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
+    username: olist
+    password: local-only-change-me
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+olist:
+  clickhouse:
+    enabled: true
+    url: jdbc:clickhouse://localhost:8123?compress=0
+    database: olist_datasets
+    username: olist
+    password: local-clickhouse-only
+  storage:
+    type: s3
+    s3:
+      endpoint: http://localhost:4566
+      bucket: olist-artifacts
+      region: us-east-1
+      access-key: test
+      secret-key: test
+  workflow-worker:
+    internal-token: local-workflow-worker-change-me
+  rule-worker:
+    internal-token: local-rule-worker-2026
+  model-training:
+    internal-token: local-training-token-2026
