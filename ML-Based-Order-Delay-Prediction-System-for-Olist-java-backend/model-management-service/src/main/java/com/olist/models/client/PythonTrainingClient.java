@@ -3,11 +3,13 @@ package com.olist.models.client;
 import com.olist.models.api.ModelTrainingRequest;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.http.HttpClient;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -24,7 +26,13 @@ public class PythonTrainingClient {
             RestClient.Builder builder,
             @Value("${olist.model-training.model-serving-url:http://localhost:8090}") String baseUrl,
             @Value("${olist.model-training.internal-token:}") String internalToken) {
-        this.client = builder.baseUrl(baseUrl).build();
+        // Python/uvicorn 不支持 h2c 升级：JDK HttpClient 默认会先发 HTTP/2 升级请求，
+        // 会被 uvicorn 以 400 "Invalid HTTP request received" 拒绝，因此强制 HTTP/1.1。
+        this.client = builder
+                .baseUrl(baseUrl)
+                .requestFactory(new JdkClientHttpRequestFactory(
+                        HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()))
+                .build();
         this.internalToken = internalToken;
     }
 
