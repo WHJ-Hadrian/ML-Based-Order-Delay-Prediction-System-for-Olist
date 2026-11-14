@@ -1,0 +1,7 @@
+# 本地（IDEA）运行配置：Run Configuration 里设置 Active profiles = ide。
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3308/olist_predictions?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
+    username: olist
+    password: local-only-change-me
+    driver-class-name: com.mysql.cj.jdbc.Driver

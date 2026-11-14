@@ -1,0 +1,16 @@
+# 本地（IDEA）运行配置：Run Configuration 里设置 Active profiles = ide。
+# 网关默认就连本机各服务（8081-8086），这里只把 Redis / Keycloak / 邮件显式写出来。
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  mail:
+    host: localhost
+    port: 1025
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/olist
+          jwk-set-uri: http://localhost:8180/realms/olist/protocol/openid-connect/certs
