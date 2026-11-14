@@ -1,6 +1,8 @@
 spring:
   application:
     name: model-management-service
+  profiles:
+    default: ide
   task:
     scheduling:
       pool:

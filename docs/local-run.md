@@ -1,23 +1,24 @@
 # 本地（IDEA）启动说明
 
-所有 Java 服务都有 **`ide` profile**：在 IDEA 的 Run Configuration 里把 **Active profiles** 填成 `ide`
-（就是 Spring Boot 配置页里的那个输入框，不是环境变量），就会自动连本机 MySQL / ClickHouse / LocalStack，
-不需要再填任何环境变量。
+所有 Java 服务都**默认使用 `ide` profile**（`spring.profiles.default: ide`）：IDEA 里直接 Run 就行，
+不需要配置任何环境变量，也不需要填 Active profiles。需要显式指定时可以用 `-Dspring.profiles.active=ide`。
+
+Docker 部署时 compose 会设置 `SPRING_PROFILES_ACTIVE=docker`，走容器内的主机名和环境变量，不受影响。
 
 > 为什么不用 `local`：dataset-service 里 `local` / `test` 是保留给单元测试的（会关闭 JWT、使用固定的本地 owner），
 > 用它启动会让数据归属错乱，所以统一用 `ide`。
 
 ## 全部服务与端口
 
-| 服务 | 端口 | Active profiles | 连的库 |
+| 服务 | 端口 | profile | 连的库 |
 |---|---|---|---|
-| api-gateway | 8080 | `ide` | Redis 6379 / Keycloak 8180 |
-| order-service | 8081 | `ide` | `olist_orders` |
-| dataset-service | 8082 | `ide` | `olist_datasets` + ClickHouse + LocalStack S3 |
-| job-service | 8083 | `ide` | `olist_jobs` |
-| prediction-service | 8084 | `ide` | `olist_predictions` |
-| model-management-service | 8085 | `ide` | `olist_models` |
-| analytics-query-service | 8086 | `ide` | `olist_analytics` + ClickHouse |
+| api-gateway | 8080 | 默认 `ide` | Redis 6379 / Keycloak 8180 |
+| order-service | 8081 | 默认 `ide` | `olist_orders` |
+| dataset-service | 8082 | 默认 `ide` | `olist_datasets` + ClickHouse + LocalStack S3 |
+| job-service | 8083 | 默认 `ide` | `olist_jobs` |
+| prediction-service | 8084 | 默认 `ide` | `olist_predictions` |
+| model-management-service | 8085 | 默认 `ide` | `olist_models` |
+| analytics-query-service | 8086 | 默认 `ide` | `olist_analytics` + ClickHouse |
 | model-serving（Python） | 8090 | 不需要 | 自己的环境变量 |
 | 前端 | 5173 | 不需要 | `pnpm dev` |
 

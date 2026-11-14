@@ -283,6 +283,7 @@ services:
       args:
         SERVICE_MODULE: order-service
     environment: &java-service-environment
+      SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/olist_orders?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-olist}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-local-only-change-me}

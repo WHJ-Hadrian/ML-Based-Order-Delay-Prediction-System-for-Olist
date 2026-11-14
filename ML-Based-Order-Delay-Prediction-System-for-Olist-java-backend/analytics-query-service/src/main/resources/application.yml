@@ -1,6 +1,8 @@
 spring:
   application:
     name: analytics-query-service
+  profiles:
+    default: ide
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3308/olist_analytics?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false}
     username: ${SPRING_DATASOURCE_USERNAME:olist}

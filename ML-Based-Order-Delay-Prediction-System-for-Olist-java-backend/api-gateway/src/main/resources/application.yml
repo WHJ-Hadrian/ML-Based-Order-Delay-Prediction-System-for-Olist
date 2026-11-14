@@ -1,6 +1,8 @@
 spring:
   application:
     name: api-gateway
+  profiles:
+    default: ide
   config:
     import:
       - optional:file:../../.env[.properties]

@@ -1,6 +1,8 @@
 spring:
   application:
     name: prediction-service
+  profiles:
+    default: ide
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:olist_predictions;MODE=MySQL;DB_CLOSE_DELAY=-1}
     username: ${SPRING_DATASOURCE_USERNAME:sa}
